@@ -65,15 +65,25 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = [
-    "apps",
-    "agent",
-    "domains",
-    "infrastructure",
-    "shared",
-    "general_agent",
-    "general_agent.toolkit",
+py-modules = ["main"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "apps*",
+    "agent*",
+    "domains*",
+    "infrastructure*",
+    "shared*",
+    "general_agent*",
+    "skills*",
+    "static*",
 ]
+
+[tool.setuptools.package-data]
+skills = ["*/*.md"]
+static = ["templates/*.xlsx"]
 
 [project.optional-dependencies]
 dev = [
