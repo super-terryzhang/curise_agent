@@ -37,5 +37,7 @@
 - 第二轮后端完整回归：`1721 passed, 79 skipped, 4 warnings`；跳过项仍仅为受控外部环境矩阵。
 - 第二轮前端：`89 passed`，TypeScript 通过，生产构建通过并生成 15 个路由。
 - 最终 Docker 镜像 `curise-backend:consolidation-final` 构建成功；容器内应用导入、标准询价模板和 `/health` 均通过。
-- 最终 diff 为 23 个源码/配置文件、242 行增加、116 行删除；未包含数据库迁移、生产配置、凭证或真实业务文件。
+- 当前 review diff 为 33 个文件、442 行增加、145 行删除（包含 4 份收敛文档）；未包含数据库迁移、生产配置、凭证或真实业务文件。
+- 首次 GitHub runner 发现测试依赖本机 `.env`、真实 PDF 和绝对路径；`f6158ad` 将这些依赖改为显式假 key、仓库相对路径及受控 fixture 缺失时 skip。
+- 在无 `.env`、无 `test-orders` 的干净 worktree 重跑首次 CI 的全部失败集合：`40 passed, 14 skipped`；跳过原因逐项显示为受控真实样本缺失。
 - 本轮仍未部署生产；用户 review 和合并之前，不进入下一轮 feature。
