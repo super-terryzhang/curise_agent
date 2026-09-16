@@ -197,7 +197,7 @@ def create_from_document(
     With `settings.ASYNC_CREATE_ORDER` (the default), this returns as
     soon as the Order row exists with `status="matching"`. The actual
     Gemini-backed matching pipeline runs in the background via
-    `apps.jobs.runner` so the HTTP call finishes in well under a second.
+    `infrastructure.jobs.runner` so the HTTP call finishes in well under a second.
     The frontend navigates to the order detail page immediately; that
     page already polls `/orders/{id}` every 2s and surfaces
     `status="ready"` / `"error"` as soon as the worker flips it.
@@ -273,7 +273,7 @@ async def _run_matching_for_order(order_id: int) -> None:
     Opens a fresh `SessionLocal` because the original HTTP request's
     session is already closed by the time this runs. Mirrors the
     contract of `domains.document.workflow.run_document_pipeline` so
-    the existing `apps.jobs.runner` schedules it uniformly.
+    the existing `infrastructure.jobs.runner` schedules it uniformly.
 
     Errors are swallowed at the boundary (logged + recorded on
     `order.processing_error`) so a transient Gemini outage surfaces in

@@ -43,7 +43,7 @@ from agent.runtime.tools.propose import emit_resolved
 from agent.storage.models import ChatMessage, ChatSession
 from apps.http import _chat_streams
 from apps.http._deps import CurrentUser, DbDep, Writer
-from apps.jobs.runner import get_job_runner
+from infrastructure.jobs.runner import get_job_runner
 
 logger = logging.getLogger(__name__)
 

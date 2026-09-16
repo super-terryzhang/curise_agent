@@ -484,8 +484,8 @@ def fetch_exchange_rates(body: FetchRatesRequest, db: DbDep, _admin: Admin) -> d
 from fastapi.responses import Response  # noqa: E402
 
 from apps.http._deps import CurrentUser  # noqa: E402
-from apps.jobs.runner import get_job_runner  # noqa: E402
 from domains.masterdata.images import bulk_service, bulk_upload  # noqa: E402
+from infrastructure.jobs.runner import get_job_runner  # noqa: E402
 
 
 def _translate_bulk(exc: bulk_service.BulkImageError) -> HTTPException:
