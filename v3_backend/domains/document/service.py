@@ -7,7 +7,6 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from apps.jobs.runner import get_job_runner
 from domains.document import repository, workflow
 from domains.document.models import Document
 from domains.document.schemas import (
@@ -16,6 +15,7 @@ from domains.document.schemas import (
     OrderPayloadResponse,
     PaginatedDocumentsResponse,
 )
+from infrastructure.jobs.runner import get_job_runner
 from infrastructure.storage import get_storage
 
 logger = logging.getLogger(__name__)

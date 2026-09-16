@@ -119,4 +119,15 @@ def auto_group_order(db, order_id):
     except Exception:
         db.rollback()
         logger.exception("automatic grouping failed for order %s", order_id)
-        return None
+        return {
+            "groups": [],
+            "created_groups": 0,
+            "assigned_orders": 0,
+            "skipped": [
+                {
+                    "order_id": order_id,
+                    "reason": "自动归组失败，订单已进入未分类，请人工选择供船安排",
+                }
+            ],
+            "reason": "自动归组失败，订单已进入未分类，请人工选择供船安排",
+        }

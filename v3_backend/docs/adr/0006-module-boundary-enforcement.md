@@ -17,7 +17,7 @@ v2 的代码边界靠"约定"维护，结果：
 
 **边界由 CI 自动执行，违反就阻断 PR 合并。**
 
-### 四条硬规则（全部机器可查）
+### 六条硬规则（全部机器可查）
 
 1. **业务 → Agent 禁止**
    - 正则: `^from agent(\.|\s)` 出现在 `domains/**/*.py` 或 `shared/**/*.py` → 失败
@@ -35,6 +35,14 @@ v2 的代码边界靠"约定"维护，结果：
 4. **shared/ 不得依赖业务**
    - `from domains.*`、`from agent.*`、`from apps.*`、`from infrastructure.*` 出现在 `shared/**/*.py` → 失败
    - shared 只放纯函数（无 I/O、无状态、无业务概念）
+
+5. **LINE 入口不得依赖 HTTP 入口**
+   - `from apps.http.*` 出现在 `apps/line/**/*.py` → 失败
+   - 两者是并列应用入口；共用逻辑必须下沉到 domain、agent 或 infrastructure
+
+6. **Domain 不得依赖应用入口**
+   - `from apps.*` 或 `import apps.*` 出现在 `domains/**/*.py` → 失败
+   - 定时任务、HTTP 和 LINE 可以调用 domain；domain 不能反向调用入口层
 
 ### 落地：`scripts/check_arch.py`
 
@@ -90,10 +98,10 @@ v2 的代码边界靠"约定"维护，结果：
 
 ## 验证
 
-- [ ] `scripts/check_arch.py` 存在，跑 `python scripts/check_arch.py` 返回 0
+- [x] `scripts/check_arch.py` 存在，跑 `python scripts/check_arch.py` 返回 0
 - [ ] CI pipeline 包含 arch-check job
-- [ ] 故意制造违规（如在 domains/ 加 `from agent.runtime`）能被检测到
-- [ ] 预提交 hook 工作
+- [x] 规则单元测试会故意制造违规并验证能够检测
+- [x] 预提交 hook 已配置 arch-check
 
 ## 演进
 

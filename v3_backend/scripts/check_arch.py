@@ -19,6 +19,8 @@ Rules enforced:
   5. apps/line/** must not import apps/http/** — the LINE entry-point
      and the web HTTP entry-point are siblings, not parent/child.
      Sharing belongs in domains, agent, or infrastructure.
+  6. domains/** must not import apps/**. Business rules must not depend
+     on HTTP, LINE, scheduled-job, or other application entry points.
 """
 
 from __future__ import annotations
@@ -51,6 +53,10 @@ RULE_4_SHARED_LEAK = re.compile(
 )
 RULE_5_LINE_HTTP_LEAK = re.compile(
     r"^\s*(?:from|import)\s+apps\.http(?:\.|\s|$)",
+    re.MULTILINE,
+)
+RULE_6_DOMAIN_APPS_LEAK = re.compile(
+    r"^\s*(?:from|import)\s+apps(?:\.|\s|$)",
     re.MULTILINE,
 )
 
@@ -186,6 +192,15 @@ def check_rule_5() -> list[Violation]:
     return out
 
 
+def check_rule_6() -> list[Violation]:
+    """domains/** must not depend on application entry points."""
+    out: list[Violation] = []
+    for path in _iter_py(["domains"]):
+        for line_no, line in _scan(path, RULE_6_DOMAIN_APPS_LEAK):
+            out.append(Violation("RULE-6 domain→apps", path, line_no, line))
+    return out
+
+
 # ─── Entry ─────────────────────────────────────────────────────
 
 
@@ -196,6 +211,7 @@ def main() -> int:
     violations.extend(check_rule_3())
     violations.extend(check_rule_4())
     violations.extend(check_rule_5())
+    violations.extend(check_rule_6())
 
     if not violations:
         print("arch-check: OK (0 violations)")

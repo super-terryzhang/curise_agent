@@ -1,114 +1,60 @@
 # Cruise Backend v3
 
-v3 rebuild of the cruise procurement backend. See [`PLAN.md`](./PLAN.md) for the 9-phase
-execution plan and [`AGENT_JOURNAL.md`](./AGENT_JOURNAL.md) for the live progress log.
+邮轮采购系统后端，基于 FastAPI、SQLAlchemy 和 Alembic。当前实现覆盖 PO
+导入与自动处理、供船安排、产品与价格期间、批量上传、询价单生成、AI 工作台及
+LINE 入口；实际生产基线与待办以仓库根目录的 `PROGRESS.md` 和部署核验记录为准。
 
-## Status
+## 本地启动
 
-**Phase 0 — 地基**：skeleton, auth, CI/CD, ADRs. See `PLAN.md` §3 for the current state.
-
-## Quickstart (local, 30 min)
-
-### 1. Python + venv
+要求 Python 3.11。环境变量从 `.env.example` 开始配置；不要提交 `.env`、真实密钥、
+客户文件或生产数据库。
 
 ```bash
-cd curise_agent/v3_backend
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-```
-
-### 2. Environment
-
-```bash
 cp .env.example .env
-# For local dev, the SQLite default in .env.example works out of the box.
-# No changes needed for Phase 0.
-```
-
-### 3. Create tables (SQLite, dev only)
-
-```bash
-python - <<'PY'
-from infrastructure.db.base import Base
-from infrastructure.db.engine import engine
-from domains.identity import models  # noqa: F401 (registers mappers)
-Base.metadata.create_all(bind=engine)
-print("tables created:", list(Base.metadata.tables))
-PY
-```
-
-Phase 1+ uses Alembic migrations — never call `create_all` in production.
-
-### 4. Seed an admin user
-
-```bash
-python - <<'PY'
-from infrastructure.db.session import SessionLocal
-from infrastructure.security import hash_password
-from domains.identity.models import User
-
-with SessionLocal() as db:
-    if not db.query(User).filter_by(email="admin@example.com").first():
-        db.add(User(
-            email="admin@example.com",
-            hashed_password=hash_password("adminpassword"),
-            full_name="Admin",
-            role="superadmin",
-            is_active=True,
-        ))
-        db.commit()
-        print("seeded admin@example.com / adminpassword")
-    else:
-        print("admin already exists")
-PY
-```
-
-### 5. Run
-
-```bash
+alembic upgrade head
 uvicorn main:app --reload --port 8000
 ```
 
-### 6. Verify
+本地健康检查为 `http://localhost:8000/health`。Swagger 只在 `DEBUG=true` 时开放于
+`http://localhost:8000/docs`；生产迁移必须作为独立发布步骤执行，不能由自动扩容实例并发执行。
 
-- Swagger: http://localhost:8000/docs
-- Health: `curl http://localhost:8000/health`
-- Login: `curl -X POST http://localhost:8000/api/auth/login -H 'Content-Type: application/json' -d '{"email":"admin@example.com","password":"adminpassword"}'`
-
-## Tests
+## 验证
 
 ```bash
-pytest tests/unit           # fast, no I/O
-pytest tests/integration    # with SQLite in-memory DB
-pytest tests/                # all
+# 当前本地可重复的完整行为回归（外部环境测试会明确 skip）
+pytest
+
+# 架构边界
+python scripts/check_arch.py
+
+# 构建 Python wheel；Docker 是正式服务部署产物
+python -m pip wheel . --no-deps --no-build-isolation --wheel-dir /tmp/cruise-wheel
+
+# 容器构建
+docker build -t cruise-backend-v3 .
 ```
 
-## Quality checks
+真实 LLM、一次性 PostgreSQL、Oracle、LINE、GCS 和真实 PO 样本属于受控外部验收，
+不能用默认跳过结果替代。全仓 Ruff 与 strict mypy 仍有已登记的历史基线债务；在完成
+分批收敛前，应对改动文件增量检查，不能声称这两项已经全仓绿色。
 
-```bash
-ruff check .                         # lint
-ruff format --check .                # formatting
-mypy domains/ infrastructure/ apps/  # types
-python scripts/check_arch.py         # module boundaries (ADR-0006)
-```
+## 代码结构
 
-## Architecture
+- `apps/`：HTTP、LINE、定时任务等应用入口与装配。
+- `domains/`：文档、订单、询价、主数据、身份和设置等业务规则。
+- `infrastructure/`：数据库、文件存储、Oracle 和后台任务执行适配器。
+- `agent/`、`general_agent/`：AI 工作台运行时、工具与审批。
+- `test_v2/`：当前唯一有效的 pytest 测试树。
+- `docs/adr/`：架构决策；模块边界由 `scripts/check_arch.py` 强制执行。
 
-See [`PLAN.md`](./PLAN.md) for the full target structure and the 9-phase plan.
+关键边界包括：Agent 只能通过领域服务访问业务；跨领域访问只能经过公开服务契约；
+领域层不得反向依赖 `apps/`；后台任务抽象位于 `infrastructure/jobs/runner.py`。
 
-Key points (see `docs/adr/` for full rationale):
+## 当前收敛工作
 
-- **Document is the parent type; Order is one of its subtypes** (ADR-0001)
-- **Agent calls business via service contracts, never the DB directly** (ADR-0002)
-- **API contract frozen to v2's current shape** (ADR-0003)
-- **v3 shares Supabase with v2; schema evolves expand/contract** (ADR-0004)
-- **Background tasks go through `apps/jobs/runner.py`** (ADR-0005)
-- **Module boundaries enforced by `scripts/check_arch.py`** (ADR-0006)
-
-## For new contributors
-
-1. Read `PLAN.md` §0–3 (why we're doing this, and where we are now)
-2. Read the ADR you'll be touching (`docs/adr/`)
-3. Check `AGENT_JOURNAL.md` for the live state of current Phase work
-4. Follow the Definition of Done for the current Phase (in PLAN.md)
+本轮系统复核、验证矩阵和技术债务证据记录在
+`../docs/consolidation/2026-09-16/`。该工作只重构内部结构，不改变 API、数据库 schema、
+权限、业务规则或用户流程，也不代表已部署生产。

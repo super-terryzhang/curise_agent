@@ -97,7 +97,7 @@ def test_tool_call_to_dict_no_extras_when_absent() -> None:
     assert "extra_content" not in d
 
 
-def test_streaming_path_captures_extra_content() -> None:
+def test_streaming_path_captures_extra_content(monkeypatch) -> None:
     """Streaming path regression — production failed here in v37.
 
     `_complete_streaming` accumulates tool_calls from stream chunks into
@@ -114,6 +114,8 @@ def test_streaming_path_captures_extra_content() -> None:
     from types import SimpleNamespace
 
     from general_agent.llm import LLM, LLMConfig, StreamCallbacks
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-no-network")
 
     # Build streaming chunks shaped like Gemini 3's actual response:
     # tool_call_delta carries `extra_content.google.thought_signature`.
@@ -249,10 +251,11 @@ def test_split_pass_through_preserves_signature() -> None:
     )
     view = _View(names=["known_tool"])
 
-    out = _split_malformed_tool_calls([tc], view)
+    input_calls = [tc]
+    out = _split_malformed_tool_calls(input_calls, view)
 
     # _split returns a NEW list (intentional — drives the rebuild downstream)
-    assert out is not [tc]
+    assert out is not input_calls
     assert len(out) == 1
     # The tc object passed through unchanged → signature is still on it
     assert out[0].extra_content == {"google": {"thought_signature": sig}}

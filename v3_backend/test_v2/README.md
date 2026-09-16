@@ -74,7 +74,7 @@ test_v2/
 
 ## E2E 测试用的样本 PDF
 
-`fixtures/samples/` 链接到 `/Users/yichuanzhang/Desktop/curise_system_2/curise_agent/test-orders/`，包含 7 个真实采购订单 PDF：
+真实样本从仓库相邻的 `test-orders/` 目录按文件名加载，包含 7 个采购订单 PDF；公开仓库和 CI 不保存客户文件，缺少整组受控样本时相关测试会明确 skip：
 
 | 文件 | 描述 |
 |---|---|

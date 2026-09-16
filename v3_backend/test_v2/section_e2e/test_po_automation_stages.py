@@ -251,6 +251,31 @@ def test_missing_loading_date_stops_at_step_6_not_before(db, seed_user):
     assert any(row["code"] == "LOADING_DATE_REQUIRED" for row in order.anomaly_data["findings"])
 
 
+def test_grouping_failure_keeps_order_ready_for_manual_classification(
+    db, seed_user, monkeypatch
+):
+    """A grouping infrastructure failure must not discard a valid matched order."""
+    _seed_scope(db, seed_user)
+    doc = _document(db, seed_user, po="PO-GROUPING-FAILURE")
+    monkeypatch.setattr(
+        "domains.orders.automation.auto_group_order",
+        lambda _db, _order_id: None,
+    )
+
+    order_id = automatic_from_document(doc.id)
+
+    db.expire_all()
+    order = db.get(Order, order_id)
+    trace = {row["step"]: row for row in order.anomaly_data["pipeline"]}
+    assert order.status == "ready"
+    assert order.group_id is None
+    assert trace[6]["status"] == "needs_review"
+    assert trace[6]["error_code"] == "ARRANGEMENT_REQUIRED"
+    assert "自动归组失败" in trace[6]["message"]
+    assert trace[7]["status"] == "skipped"
+    assert trace[8]["status"] == "needs_review"
+
+
 def test_anomaly_rules_are_extensible_and_stage_aware(db, seed_user):
     _seed_scope(db, seed_user)
     doc = _document(db, seed_user, po="PO-CUSTOM-RULE")

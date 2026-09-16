@@ -14,7 +14,6 @@ from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile,
 from fastapi.responses import StreamingResponse
 
 from apps.http._deps import CurrentUser, DbDep, Writer
-from apps.jobs.runner import get_job_runner
 from domains.document import service as document_service
 from domains.orders import repository as orders_repo
 from domains.orders import service
@@ -27,6 +26,7 @@ from domains.orders.schemas import (
     OrderUpdateRequest,
 )
 from infrastructure.db import SessionLocal
+from infrastructure.jobs.runner import get_job_runner
 from infrastructure.storage import get_storage
 
 logger = logging.getLogger(__name__)

@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 import pytest
 from openpyxl import Workbook
@@ -31,7 +32,6 @@ from domains.masterdata.upload import (
 )
 from domains.masterdata.upload.models import StagingProduct
 from test_v2.fixtures.helpers import make_excel, seed_product
-
 
 # ─── C1: product_name 必填行为 ───────────────────────────
 
@@ -341,8 +341,10 @@ def test_example_rows_left_in_template_resolve_against_real_masterdata(db):
 
     # 直接复用真实模板 + 在它末尾追加 2 行用户数据
     template_path = (
-        "/Users/yichuanzhang/Desktop/curise_system_2/curise_agent/v3_backend/"
-        "static/templates/product_upload_template.xlsx"
+        Path(__file__).resolve().parents[2]
+        / "static"
+        / "templates"
+        / "product_upload_template.xlsx"
     )
     from openpyxl import load_workbook
 

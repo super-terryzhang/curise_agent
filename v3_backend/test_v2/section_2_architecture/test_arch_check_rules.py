@@ -1,4 +1,4 @@
-"""Section 2 — Architecture: scripts/check_arch.py 的 5 条规则.
+"""Section 2 — Architecture: scripts/check_arch.py 的 6 条规则.
 
 测试目标：
     守门脚本必须 (a) 抓到真违规、(b) 不冤枉合法代码、(c) 尊重白名单。
@@ -221,6 +221,27 @@ def test_rule5_allows_line_importing_domain_or_infra(fake_repo, check_arch_modul
     assert check_arch_module.check_rule_5() == []
 
 
+# ─── RULE 6: domains/** must NOT import apps/** ────────────────
+
+
+def test_rule6_catches_domain_importing_apps(fake_repo, check_arch_module):
+    fake_repo.write(
+        "domains/document/service.py",
+        "from apps.jobs.runner import get_job_runner\n",
+    )
+    violations = check_arch_module.check_rule_6()
+    assert len(violations) == 1
+    assert "RULE-6" in violations[0].rule
+
+
+def test_rule6_allows_domain_importing_infrastructure(fake_repo, check_arch_module):
+    fake_repo.write(
+        "domains/document/service.py",
+        "from infrastructure.jobs.runner import get_job_runner\n",
+    )
+    assert check_arch_module.check_rule_6() == []
+
+
 # ─── main() exit code ──────────────────────────────────────────
 
 
@@ -244,7 +265,7 @@ def test_main_returns_1_when_any_violation_exists(fake_repo, check_arch_module, 
 
 
 def test_real_repo_has_zero_violations(check_arch_module):
-    """The current v3 codebase MUST pass all 5 rules. If this ever fails,
+    """The current v3 codebase MUST pass all 6 rules. If this ever fails,
     something landed in main that violates architecture — fix the code,
     not this test."""
     all_violations = (
@@ -253,5 +274,6 @@ def test_real_repo_has_zero_violations(check_arch_module):
         + check_arch_module.check_rule_3()
         + check_arch_module.check_rule_4()
         + check_arch_module.check_rule_5()
+        + check_arch_module.check_rule_6()
     )
     assert all_violations == [], "\n".join(v.format() for v in all_violations)

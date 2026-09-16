@@ -371,8 +371,8 @@ def create_order_from_document(
     Mirrors the pattern used by document upload (line 103) for
     `run_document_pipeline`.
     """
-    from apps.jobs.runner import get_job_runner
     from infrastructure.config import settings
+    from infrastructure.jobs.runner import get_job_runner
 
     try:
         detail = orders_service.create_from_document(

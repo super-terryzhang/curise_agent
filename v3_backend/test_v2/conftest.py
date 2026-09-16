@@ -38,7 +38,6 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 
 # Side-effect imports: register ORM models so create_all sees them
 from agent.storage import models as _agent_storage_models  # noqa: F401, E402
-from apps.jobs import runner as job_runner  # noqa: E402
 from domains.document import models as _document_models  # noqa: F401, E402
 from domains.identity.models import User  # noqa: E402
 from domains.line import models as _line_models  # noqa: F401, E402
@@ -47,9 +46,9 @@ from domains.masterdata.upload import models as _masterdata_upload_models  # noq
 from infrastructure import storage as storage_module  # noqa: E402
 from infrastructure.db.base import Base  # noqa: E402
 from infrastructure.db.session import get_db  # noqa: E402
+from infrastructure.jobs import runner as job_runner  # noqa: E402
 from infrastructure.security import hash_password  # noqa: E402
 from main import app  # noqa: E402
-
 
 # ─── Autouse: enforce test-safe defaults ─────────────────────
 
@@ -207,12 +206,18 @@ _SAMPLE_PDF_INDEX: dict[str, str] = {
 def sample_pdfs() -> dict[str, bytes]:
     """Map of {name: file_bytes} for real cruise procurement PDFs.
 
-    Loaded once per session for E2E tests. If a file is missing the entry
-    is omitted; tests should handle missing samples gracefully (skip / xfail).
+    Loaded once per session for E2E tests. The files contain controlled business
+    data and are not stored in the public repository, so the entire dependent
+    test group is skipped unless all named samples are available locally.
     """
     out: dict[str, bytes] = {}
     for name, fname in _SAMPLE_PDF_INDEX.items():
         path = _SAMPLE_PDF_DIR / fname
         if path.exists():
             out[name] = path.read_bytes()
+    missing = sorted(set(_SAMPLE_PDF_INDEX) - set(out))
+    if missing:
+        pytest.skip(
+            "controlled real PDF fixtures are unavailable: " + ", ".join(missing)
+        )
     return out

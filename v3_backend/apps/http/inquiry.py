@@ -22,7 +22,6 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 
 from apps.http import _inquiry_streams
 from apps.http._deps import CurrentUser, DbDep, Writer
-from apps.jobs.runner import get_job_runner
 from domains.inquiry import orchestrator
 from domains.inquiry import service as inquiry_service
 from domains.inquiry.errors import BadRequest, InquiryError, NotFound
@@ -30,6 +29,7 @@ from domains.inquiry.template_contract import normalized_contract
 from domains.orders.errors import NotFound as OrderNotFound
 from domains.orders.errors import OrderError
 from domains.orders.service import get_order
+from infrastructure.jobs.runner import get_job_runner
 
 logger = logging.getLogger(__name__)
 

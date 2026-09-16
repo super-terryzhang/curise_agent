@@ -22,7 +22,6 @@ synthetic follow-up agent turn after dispatch.
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -30,7 +29,7 @@ from openai.types.chat import ChatCompletionMessage
 from sqlalchemy.orm import sessionmaker
 
 from agent.runtime.approvals import ACTION_DISPATCH, ActionSpec, register_action
-from agent.storage.models import ChatMessage, ChatSession, PendingAction
+from agent.storage.models import ChatMessage, PendingAction
 from test_v2.fixtures.helpers import login, seed_user
 
 
@@ -117,8 +116,7 @@ async def test_approve_triggers_followup_agent_turn(
 ):
     """Approve decision → dispatch runs → synthetic user message + agent
     follow-up message persist into v3_chat_messages."""
-    monkeypatch.setenv("STUB_LLM_KEY", "fake")
-    monkeypatch.setattr("agent.runtime.llm.GEMINI_API_KEY_ENV", "STUB_LLM_KEY")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-no-network")
 
     auth, uid = _login_employee(client, session_factory)
     sid = _make_session(client, auth)
@@ -176,8 +174,7 @@ async def test_reject_also_triggers_followup_with_cancellation_phrasing(
     _fake_dispatch_action,
 ):
     """Reject path: agent should announce cancellation, not dispatch."""
-    monkeypatch.setenv("STUB_LLM_KEY", "fake")
-    monkeypatch.setattr("agent.runtime.llm.GEMINI_API_KEY_ENV", "STUB_LLM_KEY")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-no-network")
 
     auth, uid = _login_employee(client, session_factory)
     sid = _make_session(client, auth)
@@ -246,8 +243,7 @@ async def test_dispatch_failure_does_not_trigger_followup(
     )
     register_action(spec)
 
-    monkeypatch.setenv("STUB_LLM_KEY", "fake")
-    monkeypatch.setattr("agent.runtime.llm.GEMINI_API_KEY_ENV", "STUB_LLM_KEY")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-no-network")
     try:
         auth, uid = _login_employee(client, session_factory)
         sid = _make_session(client, auth)

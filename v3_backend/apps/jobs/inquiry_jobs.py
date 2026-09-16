@@ -8,10 +8,10 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import and_, or_
 
-from apps.jobs.runner import get_job_runner
 from domains.inquiry.models import Inquiry
 from domains.inquiry.orchestrator import run_inquiry_for_group
 from infrastructure.db import session as session_module
+from infrastructure.jobs.runner import get_job_runner
 
 logger = logging.getLogger(__name__)
 

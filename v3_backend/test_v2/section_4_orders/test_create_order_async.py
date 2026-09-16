@@ -4,7 +4,7 @@
     Prod 用户报告"点击建单按钮卡住 30 秒才有反应"。根因是
     `create_from_document` 同步调 `run_matching`（含 Gemini LLM 调用，
     单次 8-30s），projection 内部还 *额外* 跑一次同样的 matching，HTTP
-    请求挂住直到全部完成。修复方案：把 matching 推到 `apps.jobs.runner`
+    请求挂住直到全部完成。修复方案：把 matching 推到 `infrastructure.jobs.runner`
     后台，endpoint 立刻返回 `status="matching"` 的 Order，前端订单页
     既有 2s 轮询自动接管。
 
