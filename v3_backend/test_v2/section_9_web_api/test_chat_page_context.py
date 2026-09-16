@@ -29,8 +29,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from agent.runtime.factory import (
     _PAGE_CONTEXT_FOOTER,
     _PAGE_CONTEXT_HEADER,
@@ -74,11 +72,13 @@ def test_overlay_strips_trailing_whitespace():
 # ─── Factory-level overlay placement ─────────────────────────
 
 
-def test_factory_appends_page_context_to_system_prompt(db, seed_user):
+def test_factory_appends_page_context_to_system_prompt(db, seed_user, monkeypatch):
     """create_v3_chat_agent must include the overlay in the AgentConfig
     system_prompt when page_context is non-empty. Without this the
     overlay never reaches the LLM."""
     from agent.runtime.factory import create_v3_chat_agent
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-no-network")
 
     agent = create_v3_chat_agent(
         db=db,
@@ -94,11 +94,13 @@ def test_factory_appends_page_context_to_system_prompt(db, seed_user):
     assert "user is viewing order #999" in prompt
 
 
-def test_factory_omits_overlay_when_page_context_is_none(db, seed_user):
+def test_factory_omits_overlay_when_page_context_is_none(db, seed_user, monkeypatch):
     """Default (no page_context) — overlay must not appear, otherwise
     every legacy caller that doesn't pass the new arg pollutes the
     prompt with empty delimiters."""
     from agent.runtime.factory import create_v3_chat_agent
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-no-network")
 
     agent = create_v3_chat_agent(
         db=db,
@@ -110,7 +112,7 @@ def test_factory_omits_overlay_when_page_context_is_none(db, seed_user):
     assert _PAGE_CONTEXT_FOOTER not in prompt
 
 
-def test_factory_overlay_order_page_before_memory(db, seed_user):
+def test_factory_overlay_order_page_before_memory(db, seed_user, monkeypatch):
     """Locks the order: base prompt → page context → memory preamble.
     Putting page after memory would push it into attention's tail —
     long-prompt failure mode where LLMs forget mid-context items.
@@ -120,6 +122,8 @@ def test_factory_overlay_order_page_before_memory(db, seed_user):
         create_v3_chat_agent,
     )
     from agent.storage.models import AgentMemory
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-no-network")
 
     # Seed a memory row directly — bypasses the MemoryStore facade so
     # the test stays focused on the prompt-composition contract.

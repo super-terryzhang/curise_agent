@@ -32,7 +32,6 @@ from sqlalchemy.orm import sessionmaker
 from agent.storage.models import ChatMessage, ChatSession
 from test_v2.fixtures.helpers import login, seed_user
 
-
 # ─── Helpers ────────────────────────────────────────────────
 
 
@@ -158,8 +157,7 @@ def test_post_message_runs_agent_and_returns_ok(
     client: TestClient, session_factory: sessionmaker, monkeypatch
 ):
     """POST /sessions/{id}/messages with scripted LLM → 200, persists rows."""
-    monkeypatch.setenv("STUB_LLM_KEY", "fake")
-    monkeypatch.setattr("agent.runtime.llm.GEMINI_API_KEY_ENV", "STUB_LLM_KEY")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-no-network")
 
     auth = _login_employee(client, session_factory)
     sid = client.post(
@@ -182,8 +180,7 @@ def test_post_message_persists_user_and_assistant_messages(
 ):
     """The user prompt and the assistant reply must both land in
     v3_chat_messages."""
-    monkeypatch.setenv("STUB_LLM_KEY", "fake")
-    monkeypatch.setattr("agent.runtime.llm.GEMINI_API_KEY_ENV", "STUB_LLM_KEY")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-no-network")
 
     auth = _login_employee(client, session_factory)
     sid = client.post(
@@ -216,8 +213,7 @@ def test_post_message_persists_user_and_assistant_messages(
 
 
 def test_post_message_cross_user_returns_404(client, session_factory, monkeypatch):
-    monkeypatch.setenv("STUB_LLM_KEY", "fake")
-    monkeypatch.setattr("agent.runtime.llm.GEMINI_API_KEY_ENV", "STUB_LLM_KEY")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-no-network")
 
     auth_a = _login_employee(client, session_factory, email="a-msg@example.com")
     auth_b = _login_employee(client, session_factory, email="b-msg@example.com")

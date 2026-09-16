@@ -206,12 +206,18 @@ _SAMPLE_PDF_INDEX: dict[str, str] = {
 def sample_pdfs() -> dict[str, bytes]:
     """Map of {name: file_bytes} for real cruise procurement PDFs.
 
-    Loaded once per session for E2E tests. If a file is missing the entry
-    is omitted; tests should handle missing samples gracefully (skip / xfail).
+    Loaded once per session for E2E tests. The files contain controlled business
+    data and are not stored in the public repository, so the entire dependent
+    test group is skipped unless all named samples are available locally.
     """
     out: dict[str, bytes] = {}
     for name, fname in _SAMPLE_PDF_INDEX.items():
         path = _SAMPLE_PDF_DIR / fname
         if path.exists():
             out[name] = path.read_bytes()
+    missing = sorted(set(_SAMPLE_PDF_INDEX) - set(out))
+    if missing:
+        pytest.skip(
+            "controlled real PDF fixtures are unavailable: " + ", ".join(missing)
+        )
     return out
