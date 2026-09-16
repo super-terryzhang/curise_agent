@@ -7,10 +7,22 @@ _URL_CREDENTIAL = re.compile(r"((?:https?://[^\s?\"'<>]+|/uploads/[^\s?\"'<>]+))
 _BEARER = re.compile(r"Bearer\s+[A-Za-z0-9._~-]+", re.IGNORECASE)
 
 
+def _redact(value: str) -> str:
+    value = _URL_CREDENTIAL.sub(r"\1?[redacted]", value)
+    return _BEARER.sub("Bearer [redacted]", value)
+
+
 class CredentialFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        message = _URL_CREDENTIAL.sub(r"\1?[redacted]", record.getMessage())
-        record.msg = _BEARER.sub("Bearer [redacted]", message)
+        if record.name == "uvicorn.access" and isinstance(record.args, tuple):
+            record.msg = _redact(str(record.msg))
+            record.args = tuple(
+                _redact(value) if isinstance(value, str) else value
+                for value in record.args
+            )
+            return True
+
+        record.msg = _redact(record.getMessage())
         record.args = ()
         return True
 

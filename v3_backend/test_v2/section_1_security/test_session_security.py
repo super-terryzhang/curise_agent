@@ -373,6 +373,40 @@ def test_access_log_filter_removes_download_and_bearer_credentials():
     assert "synthetic-token" not in record.getMessage()
 
 
+def test_access_log_filter_preserves_uvicorn_formatter_arguments():
+    """Clearing access-log args breaks Uvicorn's real five-field formatter."""
+    import logging
+
+    from uvicorn.logging import AccessFormatter
+
+    from infrastructure.log_redaction import CredentialFilter
+
+    record = logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        "",
+        0,
+        '%s - "%s %s HTTP/%s" %d',
+        (
+            "127.0.0.1:12345",
+            "GET",
+            "/uploads/file.pdf?expires=123&signature=synthetic-signature",
+            "1.1",
+            200,
+        ),
+        None,
+    )
+    CredentialFilter().filter(record)
+
+    rendered = AccessFormatter(
+        '%(client_addr)s - "%(request_line)s" %(status_code)s',
+        use_colors=False,
+    ).format(record)
+
+    assert "GET /uploads/file.pdf?[redacted] HTTP/1.1" in rendered
+    assert "synthetic-signature" not in rendered
+
+
 def test_production_configuration_accepts_explicit_safe_values():
     safe = {
         "_env_file": None,
