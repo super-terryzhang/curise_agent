@@ -1,0 +1,63 @@
+import type { User } from "./api";
+
+const TOKEN_KEY = "v2_access_token";
+const REFRESH_TOKEN_KEY = "v2_refresh_token";
+const USER_KEY = "v2_user";
+
+export function saveAuth(token: string, user: User, refreshToken?: string) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  if (refreshToken) {
+    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  } else {
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+  }
+}
+
+export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function getRefreshToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(REFRESH_TOKEN_KEY);
+}
+
+export function getUser(): User | null {
+  if (typeof window === "undefined") return null;
+  const raw = localStorage.getItem(USER_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function clearAuth() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+export function isAuthenticated(): boolean {
+  return !!getToken();
+}
+
+/**
+ * Per-user capability check. Mirrors the backend `require_capability`
+ * semantics — superadmin auto-passes; everyone else must have the key
+ * in their `capabilities` array. Use this whenever you'd otherwise
+ * write `user.role === "superadmin" || user.capabilities?.includes(...)`.
+ *
+ * `null` user returns false (defensive against a torn-down auth state).
+ */
+export function hasCapability(
+  user: User | null,
+  capability: string,
+): boolean {
+  if (!user) return false;
+  if (user.role === "superadmin") return true;
+  return Array.isArray(user.capabilities) && user.capabilities.includes(capability);
+}
