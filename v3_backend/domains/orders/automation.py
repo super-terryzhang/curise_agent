@@ -109,6 +109,10 @@ def automatic_order_pipeline(
             _mark(pipeline, 6, "running")
             _save_order_trace(db, order, pipeline)
             classification = auto_group_order(db, order.id)
+            if classification is None:
+                classification = {
+                    "reason": "自动归组失败，订单已进入未分类，请人工选择供船安排"
+                }
             db.refresh(order)
             if order.group_id is None:
                 reason = classification.get("reason") or "缺少装船日或唯一目标港口"
