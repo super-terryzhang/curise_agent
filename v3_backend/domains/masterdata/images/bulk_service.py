@@ -509,8 +509,41 @@ def sweep_stale_batches(
     }
     if dry_run:
         return result
+    # Candidate queries are intentionally cheap snapshots. Before mutating,
+    # compete for the same row lock used by upload/validate/commit/cancel and
+    # re-check every predicate; otherwise GC could act on stale state after a
+    # live worker has already completed.
+    result["stale_batches"] = 0
+    result["stuck_batches"] = 0
 
-    for b in stale_batches:
+    for candidate in stale_batches:
+        b = db.execute(
+            select(BulkImageBatch)
+            .where(BulkImageBatch.id == candidate.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one()
+        if (
+            b.status not in ("preview_ready", "uploading", "error", "cancelled", "completed")
+            or b.created_at >= stale_cutoff
+        ):
+            continue
+        has_storage = b.zip_storage_key is not None
+        if b.source_type == "direct" and not has_storage:
+            has_storage = bool(
+                db.scalar(
+                    select(func.count(BulkImageStaging.id)).where(
+                        BulkImageStaging.batch_id == b.id,
+                        or_(
+                            BulkImageStaging.storage_key.is_not(None),
+                            BulkImageStaging.preview_storage_key.is_not(None),
+                        ),
+                    )
+                )
+            )
+        if not has_storage:
+            continue
+        result["stale_batches"] += 1
         if b.zip_storage_key:
             if _cleanup_storage_key(b.zip_storage_key):
                 b.zip_storage_key = None
@@ -529,7 +562,20 @@ def sweep_stale_batches(
             ) + f" [GC {now.isoformat()}: abandoned after {ttl_hours}h]"
         if b.source_type == "direct":
             _cleanup_direct_storage(db, b.id)
-    for b in stuck_batches:
+    for candidate in stuck_batches:
+        b = db.execute(
+            select(BulkImageBatch)
+            .where(BulkImageBatch.id == candidate.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one()
+        if (
+            b.status != "processing"
+            or b.updated_at is None
+            or b.updated_at >= stuck_cutoff
+        ):
+            continue
+        result["stuck_batches"] += 1
         if b.zip_storage_key:
             if _cleanup_storage_key(b.zip_storage_key):
                 b.zip_storage_key = None
@@ -539,7 +585,7 @@ def sweep_stale_batches(
         b.status = "error"
         b.error_message = (
             f"任务卡住超过 {stuck_minutes} 分钟无进度，GC 自动标记失败。"
-            "请重新上传。"
+            "暂存文件仍保留，可从历史记录恢复。"
         )
         # A stuck direct job is recoverable: keep its per-row source objects
         # until explicit cancellation or the normal 24-hour TTL sweep.

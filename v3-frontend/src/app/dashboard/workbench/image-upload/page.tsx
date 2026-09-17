@@ -172,7 +172,8 @@ export default function ProductImageUploadPage() {
         setPorts(portRows);
         if (active) {
           setBatch(active);
-          setStep(active.status === "processing" ? 4 : active.status === "preview_ready" ? 2 : 1);
+          setSelectedPlanId(active.plans?.[0]?.product_id ?? null);
+          setStep(active.status === "processing" ? 4 : active.requires_order_review ? 3 : active.status === "preview_ready" ? 2 : 1);
         }
       })
       .catch((error) => toast.error(error instanceof Error ? error.message : "页面读取失败"));
@@ -393,7 +394,7 @@ export default function ProductImageUploadPage() {
       const selected = await getBulkImageBatch(batchId);
       setBatch(selected);
       setSelectedPlanId(selected.plans?.[0]?.product_id ?? null);
-      setStep(selected.status === "uploading" ? 1 : selected.status === "preview_ready" ? 2 : 4);
+      setStep(selected.status === "uploading" ? 1 : selected.requires_order_review ? 3 : selected.status === "preview_ready" ? 2 : 4);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "读取批次失败");
     } finally {
@@ -539,7 +540,9 @@ export default function ProductImageUploadPage() {
             {step === 2 && batch && (
               <div className="space-y-4">
                 <ResultSummary batch={batch} />
-                {issues.length === 0 ? (
+                {batch.status === "preview_ready" && batch.error_message && !batch.requires_order_review ? (
+                  <div className="rounded-md border bg-background p-8 text-center"><AlertCircle className="mx-auto h-8 w-8 text-amber-600" /><h2 className="mt-3 text-sm font-semibold">图库发生变化，需要重新检查</h2><p className="mx-auto mt-2 max-w-2xl text-xs text-muted-foreground">{batch.error_message}</p><Button className="mt-5" disabled={busy} onClick={() => void checkBatch()}><RefreshCw className="mr-1 h-4 w-4" />重新检查并生成顺序</Button></div>
+                ) : issues.length === 0 ? (
                   <div className="flex min-h-52 flex-col items-center justify-center rounded-md border bg-background text-center"><CheckCircle2 className="h-8 w-8 text-emerald-600" /><h2 className="mt-3 text-sm font-semibold">全部图片通过检查</h2><p className="mt-1 text-xs text-muted-foreground">下一步核对每个产品的主图和最终显示顺序。</p></div>
                 ) : batch.status === "processing" ? (
                   <div className="rounded-md border bg-background p-10 text-center"><Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" /><h2 className="mt-3 text-sm font-semibold">正在更新产品图库</h2><p className="mt-2 text-xs text-muted-foreground">可以离开页面；再次进入时系统会继续显示处理进度。</p></div>
