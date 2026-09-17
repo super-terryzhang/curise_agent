@@ -100,7 +100,8 @@ def test_validate_plan_commit_makes_first_item_primary_and_is_idempotent(client,
                 f"staged:{second['id']}",
                 f"existing:{existing['id']}",
                 f"staged:{first['id']}",
-            ]
+            ],
+            "expected_revision": checked.json()["plans"][0]["revision"],
         },
         headers=headers,
     )
@@ -224,6 +225,50 @@ def test_failed_commit_row_can_retry_without_duplicate(client, db, monkeypatch):
     assert db.query(ProductImage).filter_by(product_id=product.id).count() == 1
 
 
+def test_retry_restores_all_failed_rows_for_same_product_atomically(
+    client, db, monkeypatch
+):
+    _user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    staged = []
+    for index in range(2):
+        staged.append(
+            client.post(
+                f"/api/data/bulk-images/{batch_id}/files",
+                data={"product_id": str(product.id)},
+                files={
+                    "file": (
+                        f"retry-{index}.png",
+                        _png((index + 1, 20, 30)),
+                        "image/png",
+                    )
+                },
+                headers=headers,
+            ).json()
+        )
+    client.post(f"/api/data/bulk-images/{batch_id}/validate", headers=headers)
+    original = direct_service.image_service.add_product_image
+    monkeypatch.setattr(
+        direct_service.image_service,
+        "add_product_image",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("temporary error")),
+    )
+    failed = client.post(f"/api/data/bulk-images/{batch_id}/commit", headers=headers)
+    assert failed.json()["failed_count"] == 2
+
+    monkeypatch.setattr(direct_service.image_service, "add_product_image", original)
+    retried = client.post(
+        f"/api/data/bulk-images/{batch_id}/rows/{staged[0]['id']}/retry",
+        headers=headers,
+    )
+    assert retried.status_code == 200, retried.text
+    current = client.get(f"/api/data/bulk-images/{batch_id}", headers=headers).json()
+    assert current["failed_count"] == 0
+    assert current["ingested_count"] == 2
+    assert all(row["status"] == "committed" for row in current["rows"])
+    assert db.query(ProductImage).filter_by(product_id=product.id).count() == 2
+
+
 def test_gc_cleans_abandoned_direct_staging_files(client, db):
     _user, product, headers = _setup(db, client)
     batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
@@ -242,5 +287,283 @@ def test_gc_cleans_abandoned_direct_staging_files(client, db):
     row = db.query(BulkImageStaging).filter_by(batch_id=batch_id).one()
     assert result["stale_batches"] == 1
     assert db.get(BulkImageBatch, batch_id).status == "cancelled"
+    assert row.storage_key is None
+    assert row.preview_storage_key is None
+
+
+def test_retry_recovers_durable_source_marker_without_duplicate(client, db):
+    user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    staged = client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"product_id": str(product.id)},
+        files={"file": ("once.png", _png(), "image/png")},
+        headers=headers,
+    ).json()
+    client.post(f"/api/data/bulk-images/{batch_id}/validate", headers=headers)
+    formal = ProductImage(
+        product_id=product.id,
+        storage_key="formal/full",
+        thumbnail_key="formal/thumb",
+        medium_key="formal/medium",
+        filename="once.png",
+        file_type="image/jpeg",
+        file_size_bytes=20,
+        display_order=0,
+        uploaded_by_user_id=user.id,
+        source_bulk_staging_id=staged["id"],
+    )
+    db.add(formal)
+    row = db.get(BulkImageStaging, staged["id"])
+    row.status = "committed_failed"
+    db.commit()
+
+    response = client.post(
+        f"/api/data/bulk-images/{batch_id}/rows/{staged['id']}/retry", headers=headers
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["committed_image_id"] == formal.id
+    assert db.query(ProductImage).filter_by(product_id=product.id).count() == 1
+
+
+def test_concurrent_gallery_change_returns_batch_to_review(client, db):
+    _user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"product_id": str(product.id)},
+        files={"file": ("planned.png", _png(), "image/png")},
+        headers=headers,
+    )
+    client.post(f"/api/data/bulk-images/{batch_id}/validate", headers=headers)
+    client.post(
+        f"/api/data/products/{product.id}/images",
+        files={"file": ("concurrent.png", _png((90, 80, 70)), "image/png")},
+        headers=headers,
+    )
+
+    response = client.post(f"/api/data/bulk-images/{batch_id}/commit", headers=headers)
+    assert response.status_code == 202
+    assert response.json()["status"] == "preview_ready"
+    assert "其他用户" in response.json()["error_message"]
+    assert db.query(ProductImage).filter_by(product_id=product.id).count() == 1
+
+
+def test_processing_direct_batch_cannot_be_force_cancelled(client, db):
+    _user, _product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    batch = db.get(BulkImageBatch, batch_id)
+    batch.status = "processing"
+    db.commit()
+    response = client.delete(
+        f"/api/data/bulk-images/{batch_id}?force=true", headers=headers
+    )
+    assert response.status_code == 409
+
+
+def test_stuck_direct_batch_keeps_retryable_source_files(client, db):
+    _user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"product_id": str(product.id)},
+        files={"file": ("stuck.png", _png(), "image/png")},
+        headers=headers,
+    )
+    batch = db.get(BulkImageBatch, batch_id)
+    batch.status = "processing"
+    batch.updated_at = datetime.utcnow() - timedelta(minutes=20)
+    db.commit()
+
+    bulk_service.sweep_stale_batches(db, stuck_minutes=15)
+    db.expire_all()
+    row = db.query(BulkImageStaging).filter_by(batch_id=batch_id).one()
+    assert db.get(BulkImageBatch, batch_id).status == "error"
+    assert row.storage_key is not None
+    assert row.preview_storage_key is not None
+
+
+def test_declared_mime_extension_and_actual_format_must_agree(client, db):
+    _user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    response = client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"product_id": str(product.id)},
+        files={"file": ("looks-like-jpeg.jpg", _png(), "image/jpeg")},
+        headers=headers,
+    )
+    assert response.status_code == 201
+    assert response.json()["issue_code"] == "format_mismatch"
+
+
+def test_invalid_row_can_be_replaced_and_then_pass_validation(client, db):
+    _user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    row = client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"product_id": str(product.id)},
+        files={"file": ("broken.png", b"not-an-image", "image/png")},
+        headers=headers,
+    ).json()
+
+    replaced = client.put(
+        f"/api/data/bulk-images/{batch_id}/rows/{row['id']}/file",
+        files={"file": ("fixed.png", _png(), "image/png")},
+        headers=headers,
+    )
+    assert replaced.status_code == 200, replaced.text
+    assert replaced.json()["can_continue"] is True
+    assert replaced.json()["rows"][0]["status"] == "ready"
+    assert replaced.json()["rows"][0]["image_filename"] == "fixed.png"
+
+
+def test_replacing_valid_row_with_invalid_file_stays_blocked(client, db):
+    _user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    row = client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"product_id": str(product.id)},
+        files={"file": ("valid.png", _png(), "image/png")},
+        headers=headers,
+    ).json()
+    replaced = client.put(
+        f"/api/data/bulk-images/{batch_id}/rows/{row['id']}/file",
+        files={"file": ("invalid.png", b"broken", "image/png")},
+        headers=headers,
+    )
+    assert replaced.status_code == 200
+    assert replaced.json()["can_continue"] is False
+    assert replaced.json()["rows"][0]["issue_code"] == "invalid_image"
+
+
+def test_partial_staging_upload_is_cleaned_and_reported(
+    client, db, monkeypatch, _local_storage
+):
+    _user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    real_upload = _local_storage.upload
+    calls = 0
+
+    def fail_second_upload(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("preview storage unavailable")
+        return real_upload(*args, **kwargs)
+
+    monkeypatch.setattr(_local_storage, "upload", fail_second_upload)
+    response = client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"product_id": str(product.id)},
+        files={"file": ("partial.png", _png(), "image/png")},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "暂存失败" in response.json()["detail"]
+    assert not [path for path in _local_storage.root.rglob("*") if path.is_file()]
+
+
+def test_plan_revision_rejects_stale_order_write(client, db):
+    _user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"product_id": str(product.id)},
+        files={"file": ("order.png", _png(), "image/png")},
+        headers=headers,
+    )
+    checked = client.post(
+        f"/api/data/bulk-images/{batch_id}/validate", headers=headers
+    ).json()
+    plan = checked["plans"][0]
+    first = client.put(
+        f"/api/data/bulk-images/{batch_id}/plans/{product.id}",
+        json={"items": plan["ordered_items"], "expected_revision": plan["revision"]},
+        headers=headers,
+    )
+    assert first.status_code == 200
+    stale = client.put(
+        f"/api/data/bulk-images/{batch_id}/plans/{product.id}",
+        json={"items": plan["ordered_items"], "expected_revision": plan["revision"]},
+        headers=headers,
+    )
+    assert stale.status_code == 409
+    assert "其他页面" in stale.json()["detail"]
+
+
+def test_stuck_batch_can_resume_from_unfinished_product(client, db):
+    _user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"product_id": str(product.id)},
+        files={"file": ("resume.png", _png(), "image/png")},
+        headers=headers,
+    )
+    client.post(f"/api/data/bulk-images/{batch_id}/validate", headers=headers)
+    batch = db.get(BulkImageBatch, batch_id)
+    batch.status = "error"
+    batch.error_message = "simulated worker interruption"
+    db.commit()
+
+    resumed = client.post(f"/api/data/bulk-images/{batch_id}/resume", headers=headers)
+    assert resumed.status_code == 202, resumed.text
+    assert resumed.json()["status"] == "completed"
+    assert resumed.json()["ingested_count"] == 1
+    assert db.query(ProductImage).filter_by(product_id=product.id).count() == 1
+
+
+def test_non_owner_cannot_read_or_mutate_direct_batch(client, db):
+    _user, _product, owner_headers = _setup(db, client)
+    batch_id = client.post(
+        "/api/data/bulk-images/direct", headers=owner_headers
+    ).json()["id"]
+    seed_user(db, email="other-images@x.test", role="employee")
+    other_headers = login(client, "other-images@x.test")
+
+    assert client.get(
+        f"/api/data/bulk-images/{batch_id}", headers=other_headers
+    ).status_code == 404
+    assert client.delete(
+        f"/api/data/bulk-images/{batch_id}", headers=other_headers
+    ).status_code == 404
+
+
+def test_completed_cleanup_failure_keeps_keys_for_gc_retry(
+    client, db, monkeypatch, _local_storage
+):
+    _user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"product_id": str(product.id)},
+        files={"file": ("cleanup.png", _png(), "image/png")},
+        headers=headers,
+    )
+    client.post(f"/api/data/bulk-images/{batch_id}/validate", headers=headers)
+    real_delete = _local_storage.delete
+    monkeypatch.setattr(
+        _local_storage,
+        "delete",
+        lambda _key: (_ for _ in ()).throw(RuntimeError("temporary delete failure")),
+    )
+
+    committed = client.post(f"/api/data/bulk-images/{batch_id}/commit", headers=headers)
+    assert committed.status_code == 202
+    assert committed.json()["status"] == "completed"
+    db.expire_all()
+    row = db.query(BulkImageStaging).filter_by(batch_id=batch_id).one()
+    assert row.storage_key is not None
+    assert row.preview_storage_key is not None
+
+    monkeypatch.setattr(_local_storage, "delete", real_delete)
+    batch = db.get(BulkImageBatch, batch_id)
+    batch.created_at = datetime.utcnow() - timedelta(hours=25)
+    db.commit()
+    swept = bulk_service.sweep_stale_batches(db, ttl_hours=24)
+    db.expire_all()
+    row = db.query(BulkImageStaging).filter_by(batch_id=batch_id).one()
+    assert swept["stale_batches"] == 1
+    assert db.get(BulkImageBatch, batch_id).status == "completed"
     assert row.storage_key is None
     assert row.preview_storage_key is None

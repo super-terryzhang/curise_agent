@@ -28,7 +28,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from domains.masterdata import _product_images_service as image_service
@@ -405,6 +405,8 @@ def cancel_batch(
     allowed = ("preview_ready", "uploading", "error")
     if force:
         allowed = allowed + ("processing",)
+    if batch.source_type == "direct" and batch.status == "processing":
+        raise StatusConflict("图片正在写入产品图库，不能强制取消；请等待任务完成")
     if batch.status not in allowed:
         raise StatusConflict(f"无法取消处于 {batch.status} 状态的批次")
     if _cleanup_storage_key(batch.zip_storage_key):
@@ -457,7 +459,7 @@ def sweep_stale_batches(
         select(BulkImageBatch)
         .where(
             BulkImageBatch.status.in_(
-                ("preview_ready", "uploading", "error", "cancelled")
+                ("preview_ready", "uploading", "error", "cancelled", "completed")
             )
         )
         .where(BulkImageBatch.created_at < stale_cutoff)
@@ -466,7 +468,17 @@ def sweep_stale_batches(
         .where(
             or_(
                 BulkImageBatch.zip_storage_key.is_not(None),
-                BulkImageBatch.source_type == "direct",
+                and_(
+                    BulkImageBatch.source_type == "direct",
+                    BulkImageBatch.id.in_(
+                        select(BulkImageStaging.batch_id).where(
+                            or_(
+                                BulkImageStaging.storage_key.is_not(None),
+                                BulkImageStaging.preview_storage_key.is_not(None),
+                            )
+                        )
+                    ),
+                ),
             )
         )
     )
@@ -505,7 +517,7 @@ def sweep_stale_batches(
         # the ZIP. `preview_ready` / `uploading` / `error` we mark
         # `cancelled` so subsequent GET /batch/{id} clearly shows
         # "abandoned by GC".
-        if b.status != "cancelled":
+        if b.status not in ("cancelled", "completed"):
             b.status = "cancelled"
             b.error_message = (
                 b.error_message or ""
@@ -524,8 +536,8 @@ def sweep_stale_batches(
             f"任务卡住超过 {stuck_minutes} 分钟无进度，GC 自动标记失败。"
             "请重新上传。"
         )
-        if b.source_type == "direct":
-            _cleanup_direct_storage(db, b.id)
+        # A stuck direct job is recoverable: keep its per-row source objects
+        # until explicit cancellation or the normal 24-hour TTL sweep.
     db.commit()
     return result
 

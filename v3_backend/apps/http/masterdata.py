@@ -195,6 +195,7 @@ def list_products(
     _reader: Writer,
     search: str | None = Query(None),
     country_id: int | None = Query(None),
+    port_id: int | None = Query(None),
     category_id: int | None = Query(None),
     supplier_id: int | None = Query(None),
     is_effective: bool | None = Query(
@@ -212,6 +213,7 @@ def list_products(
         db,
         search=search,
         country_id=country_id,
+        port_id=port_id,
         category_id=category_id,
         supplier_id=supplier_id,
         is_effective=is_effective,
@@ -483,7 +485,6 @@ def fetch_exchange_rates(body: FetchRatesRequest, db: DbDep, _admin: Admin) -> d
 
 from fastapi.responses import Response  # noqa: E402
 
-from apps.http._deps import CurrentUser  # noqa: E402
 from domains.masterdata.images import bulk_service, bulk_upload, direct_service  # noqa: E402
 from infrastructure.jobs.runner import get_job_runner  # noqa: E402
 
@@ -505,6 +506,7 @@ class DirectImageRowUpdate(BaseModel):
 
 class DirectImagePlanUpdate(BaseModel):
     items: list[str] = Field(min_length=1, max_length=30)
+    expected_revision: int = Field(ge=1)
 
 
 @router.post("/bulk-images/direct", status_code=201)
@@ -594,6 +596,29 @@ def update_direct_image_row(
         raise _translate_bulk(exc) from exc
 
 
+@router.put("/bulk-images/{batch_id}/rows/{row_id}/file")
+async def replace_direct_image_row_file(
+    batch_id: int,
+    row_id: int,
+    db: DbDep,
+    user: ProductUploader,
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    try:
+        return direct_service.replace_row_file(
+            db,
+            batch_id=batch_id,
+            row_id=row_id,
+            user_id=user.id,
+            is_admin=user.role in ("superadmin", "admin"),
+            filename=file.filename or "image",
+            content=await file.read(),
+            content_type=file.content_type or "application/octet-stream",
+        )
+    except bulk_service.BulkImageError as exc:
+        raise _translate_bulk(exc) from exc
+
+
 @router.put("/bulk-images/{batch_id}/plans/{product_id}")
 def save_direct_image_plan(
     batch_id: int,
@@ -610,6 +635,7 @@ def save_direct_image_plan(
             user_id=user.id,
             is_admin=user.role in ("superadmin", "admin"),
             items=body.items,
+            expected_revision=body.expected_revision,
         )
     except bulk_service.BulkImageError as exc:
         raise _translate_bulk(exc) from exc
@@ -631,10 +657,36 @@ def retry_direct_image_row(
         raise _translate_bulk(exc) from exc
 
 
+@router.post("/bulk-images/{batch_id}/resume", status_code=202)
+def resume_direct_image_batch(
+    batch_id: int, db: DbDep, user: ProductUploader
+) -> dict[str, Any]:
+    try:
+        direct_service.resume_batch(
+            db,
+            batch_id=batch_id,
+            user_id=user.id,
+            is_admin=user.role in ("superadmin", "admin"),
+        )
+    except bulk_service.BulkImageError as exc:
+        raise _translate_bulk(exc) from exc
+    get_job_runner().submit(bulk_service._run_commit_async, batch_id)
+    # The production runner returns before the worker starts. The synchronous
+    # test runner can finish in another session before returning, so expire the
+    # request session to avoid serializing its stale identity-map values.
+    db.expire_all()
+    return bulk_service.list_batch(
+        db,
+        batch_id=batch_id,
+        user_id=user.id,
+        is_admin=user.role in ("superadmin", "admin"),
+    )
+
+
 @router.get("/bulk-images/template")
 def download_bulk_image_template(
     db: DbDep,
-    user: Writer,
+    user: ProductUploader,
     country_ids: list[int] | None = Query(None),
     port_ids: list[int] | None = Query(None),
     only_missing_images: bool = Query(False),
@@ -670,7 +722,7 @@ def download_bulk_image_template(
 @router.post("/bulk-images/preview")
 async def preview_bulk_image_upload(
     db: DbDep,
-    user: Writer,
+    user: ProductUploader,
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
     """Upload ZIP → parse + stage → return batch_id + counts.
@@ -705,7 +757,7 @@ async def preview_bulk_image_upload(
 
 @router.get("/bulk-images/{batch_id}")
 def get_bulk_image_batch(
-    batch_id: int, db: DbDep, user: CurrentUser
+    batch_id: int, db: DbDep, user: ProductUploader
 ) -> dict[str, Any]:
     try:
         return bulk_service.list_batch(
@@ -720,7 +772,7 @@ def get_bulk_image_batch(
 
 @router.post("/bulk-images/{batch_id}/commit", status_code=202)
 def commit_bulk_image_batch(
-    batch_id: int, db: DbDep, user: Writer
+    batch_id: int, db: DbDep, user: ProductUploader
 ) -> dict[str, Any]:
     """Flip status to `processing` synchronously, schedule the
     ingestion job, return 202 + the batch state.
@@ -740,6 +792,7 @@ def commit_bulk_image_batch(
         raise _translate_bulk(exc) from exc
 
     get_job_runner().submit(bulk_service._run_commit_async, batch_id)
+    db.expire_all()
     return bulk_service.list_batch(
         db,
         batch_id=batch_id,
@@ -752,7 +805,7 @@ def commit_bulk_image_batch(
 def cancel_bulk_image_batch(
     batch_id: int,
     db: DbDep,
-    user: Writer,
+    user: ProductUploader,
     force: bool = Query(
         False,
         description=(

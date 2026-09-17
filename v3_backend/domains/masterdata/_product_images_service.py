@@ -53,7 +53,7 @@ from domains.masterdata.images import (
     UnsupportedImageFormatError,
     generate_thumbnails,
 )
-from domains.masterdata.models import ProductImage
+from domains.masterdata.models import Product, ProductImage
 from domains.masterdata.schemas import ProductImageReorderEntry
 from infrastructure.storage import get_storage
 
@@ -172,7 +172,7 @@ def batch_image_projections(
         .where(ProductImage.product_id.in_(product_ids))
         .group_by(ProductImage.product_id)
     ).all()
-    counts: dict[int, int] = {pid: cnt for pid, cnt in count_rows}
+    counts: dict[int, int] = dict(count_rows)
 
     # Query 2: primary (display_order=0) thumbnail key per product.
     # The `_compact_display_order_after_delete` helper keeps display_order
@@ -184,7 +184,7 @@ def batch_image_projections(
             ProductImage.display_order == 0,
         )
     ).all()
-    primaries: dict[int, str] = {pid: key for pid, key in primary_rows}
+    primaries: dict[int, str] = dict(primary_rows)
 
     out: dict[int, tuple[str | None, int]] = {}
     for pid in product_ids:
@@ -221,6 +221,8 @@ def add_product_image(
     filename: str,
     content_type: str,
     user_id: int,
+    source_bulk_staging_id: int | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """Upload one image. Returns the serialized image row.
 
@@ -229,7 +231,7 @@ def add_product_image(
         BadRequest: size > limit / MIME not supported / max per product
             reached / decoder failure.
     """
-    _require_product_exists(db, product_id)
+    _lock_product_for_image_write(db, product_id)
 
     # Cheap header checks first — no point in decoding 5 MB of garbage.
     if not content:
@@ -300,10 +302,34 @@ def add_product_image(
         display_order=existing_count,  # 0-based append
         alt_text=None,
         uploaded_by_user_id=user_id,
+        source_bulk_staging_id=source_bulk_staging_id,
     )
     db.add(row)
-    db.commit()
-    db.refresh(row)
+    if commit:
+        try:
+            db.commit()
+            db.refresh(row)
+        except Exception:
+            db.rollback()
+            for key in (full_key, thumb_key, med_key):
+                try:
+                    storage.delete(key)
+                except Exception:
+                    logger.warning("failed to clean image blob after DB rollback: %s", key)
+            raise
+    else:
+        try:
+            db.flush()
+        except Exception:
+            db.rollback()
+            for key in (full_key, thumb_key, med_key):
+                try:
+                    storage.delete(key)
+                except Exception:
+                    logger.warning(
+                        "failed to clean image blob after DB flush failure: %s", key
+                    )
+            raise
     return _serialize_image(row)
 
 
@@ -336,7 +362,7 @@ def reorder_product_images(
     top" should compute the full new order client-side and send the
     whole list. This keeps the contract simple and the audit clear.
     """
-    _require_product_exists(db, product_id)
+    _lock_product_for_image_write(db, product_id)
 
     existing_rows = (
         db.execute(
@@ -373,6 +399,7 @@ def delete_product_image(
     Order matters: DB first, storage second. If storage delete fails
     we just log — the user's intent is satisfied (the image is gone
     from their app), and the blob is an inert orphan."""
+    _lock_product_for_image_write(db, product_id)
     row = _load_image_for_product(db, product_id, image_id)
     keys = (row.storage_key, row.thumbnail_key, row.medium_key)
     deleted_order = row.display_order
@@ -404,6 +431,21 @@ def delete_product_image(
 
 def _require_product_exists(db: Session, product_id: int) -> None:
     if repo.get_product(db, product_id) is None:
+        raise NotFound("产品不存在")
+
+
+def _lock_product_for_image_write(db: Session, product_id: int) -> None:
+    """Serialize every image mutation for one product.
+
+    PostgreSQL holds the product-row lock until commit/rollback. SQLite ignores
+    ``FOR UPDATE`` but its single-writer behavior is sufficient for tests.
+    All upload/reorder/delete paths call this helper, so direct batch commits
+    cannot race a normal gallery edit between snapshot validation and reorder.
+    """
+    product = db.execute(
+        select(Product).where(Product.id == product_id).with_for_update()
+    ).scalar_one_or_none()
+    if product is None:
         raise NotFound("产品不存在")
 
 

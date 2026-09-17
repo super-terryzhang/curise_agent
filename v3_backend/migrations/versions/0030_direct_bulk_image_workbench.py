@@ -31,6 +31,23 @@ def upgrade() -> None:
         "v3_bulk_image_batches",
         sa.Column("failed_count", sa.Integer(), nullable=False, server_default="0"),
     )
+    op.create_check_constraint(
+        "ck_bulk_image_batch_source_type",
+        "v3_bulk_image_batches",
+        "source_type IN ('zip', 'direct')",
+    )
+    op.create_index(
+        "uq_bulk_image_direct_active_user",
+        "v3_bulk_image_batches",
+        ["user_id"],
+        unique=True,
+        postgresql_where=sa.text(
+            "source_type = 'direct' AND status IN ('uploading', 'preview_ready', 'processing')"
+        ),
+        sqlite_where=sa.text(
+            "source_type = 'direct' AND status IN ('uploading', 'preview_ready', 'processing')"
+        ),
+    )
 
     for column in (
         sa.Column("storage_key", sa.String(length=500), nullable=True),
@@ -51,6 +68,21 @@ def upgrade() -> None:
         ["id"],
         ondelete="SET NULL",
     )
+    op.create_check_constraint(
+        "ck_bulk_image_staging_decision",
+        "v3_bulk_image_staging",
+        "decision IN ('include', 'exclude')",
+    )
+    op.add_column(
+        "v3_product_images",
+        sa.Column("source_bulk_staging_id", sa.Integer(), nullable=True),
+    )
+    op.create_index(
+        "ix_v3_product_images_source_bulk_staging_id",
+        "v3_product_images",
+        ["source_bulk_staging_id"],
+        unique=True,
+    )
 
     op.create_table(
         "v3_bulk_image_product_plans",
@@ -69,6 +101,7 @@ def upgrade() -> None:
         ),
         sa.Column("expected_existing_image_ids", sa.Text(), nullable=False, server_default="[]"),
         sa.Column("ordered_items", sa.Text(), nullable=False, server_default="[]"),
+        sa.Column("revision", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
         sa.UniqueConstraint("batch_id", "product_id", name="uq_bulk_image_plan_batch_product"),
@@ -89,6 +122,16 @@ def downgrade() -> None:
     op.drop_index("ix_bulk_image_product_plans_product_id", table_name="v3_bulk_image_product_plans")
     op.drop_index("ix_bulk_image_product_plans_batch_id", table_name="v3_bulk_image_product_plans")
     op.drop_table("v3_bulk_image_product_plans")
+    op.drop_index(
+        "ix_v3_product_images_source_bulk_staging_id",
+        table_name="v3_product_images",
+    )
+    op.drop_column("v3_product_images", "source_bulk_staging_id")
+    op.drop_constraint(
+        "ck_bulk_image_staging_decision",
+        "v3_bulk_image_staging",
+        type_="check",
+    )
     op.drop_constraint(
         "fk_bulk_image_staging_committed_image",
         "v3_bulk_image_staging",
@@ -107,4 +150,10 @@ def downgrade() -> None:
         op.drop_column("v3_bulk_image_staging", column)
     op.drop_column("v3_bulk_image_batches", "failed_count")
     op.drop_column("v3_bulk_image_batches", "excluded_count")
+    op.drop_index("uq_bulk_image_direct_active_user", table_name="v3_bulk_image_batches")
+    op.drop_constraint(
+        "ck_bulk_image_batch_source_type",
+        "v3_bulk_image_batches",
+        type_="check",
+    )
     op.drop_column("v3_bulk_image_batches", "source_type")

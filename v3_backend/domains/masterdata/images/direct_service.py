@@ -7,13 +7,16 @@ review order and idempotent commit state.
 
 from __future__ import annotations
 
+import io
 import json
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from domains.masterdata import _product_images_service as image_service
@@ -25,10 +28,16 @@ from domains.masterdata.images.bulk_models import (
 )
 from domains.masterdata.images.bulk_service import BadRequest, NotFound, StatusConflict
 from domains.masterdata.models import Product, ProductImage
-from domains.masterdata.schemas import ProductImageReorderEntry
 from infrastructure.storage import get_storage
 
 ACTIVE_STATUSES = ("uploading", "preview_ready", "processing")
+FILE_ISSUE_CODES = {
+    "empty_file",
+    "file_too_large",
+    "unsupported_format",
+    "invalid_image",
+    "format_mismatch",
+}
 
 
 def create_batch(db: Session, *, user_id: int) -> dict[str, Any]:
@@ -51,7 +60,21 @@ def create_batch(db: Session, *, user_id: int) -> dict[str, Any]:
         status="uploading",
     )
     db.add(batch)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = db.execute(
+            select(BulkImageBatch)
+            .where(BulkImageBatch.user_id == user_id)
+            .where(BulkImageBatch.source_type == "direct")
+            .where(BulkImageBatch.status.in_(ACTIVE_STATUSES))
+            .order_by(BulkImageBatch.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if existing is None:
+            raise
+        return serialize_batch(db, existing)
     db.refresh(batch)
     return serialize_batch(db, batch)
 
@@ -78,6 +101,9 @@ def upload_file(
             BulkImageStaging.batch_id == batch.id
         )
     ) or 0
+    if product_id is None:
+        product_id = _infer_product_id(db, filename)
+
     row = BulkImageStaging(
         batch_id=batch.id,
         zip_path=filename,
@@ -92,24 +118,19 @@ def upload_file(
     db.add(row)
     db.flush()
 
-    issue_code, message = _file_issue(content, content_type)
+    issue_code, message = _file_issue(content, content_type, filename)
     if product_id is not None and db.get(Product, product_id) is None:
         issue_code, message = "product_not_found", "选择的产品不存在，请重新分配"
         row.product_id = None
 
     if issue_code is None:
         bundle = generate_thumbnails(content)
-        storage = get_storage()
-        token = uuid.uuid4().hex
-        folder = f"bulk-image-staging/{batch.id}"
-        row.storage_key = storage.upload(
-            f"{folder}/original",
-            f"{token}-{Path(filename).name}",
-            content,
-            content_type or "application/octet-stream",
-        )
-        row.preview_storage_key = storage.upload(
-            f"{folder}/preview", f"{token}.jpg", bundle.medium, "image/jpeg"
+        row.storage_key, row.preview_storage_key = _store_staging_files(
+            batch.id,
+            filename=filename,
+            content=content,
+            content_type=content_type,
+            preview=bundle.medium,
         )
 
     row.issue_code = issue_code
@@ -146,6 +167,9 @@ def validate_batch(
             row.status = "excluded"
             row.issue_code = None
             row.error_message = None
+            continue
+        if row.issue_code in FILE_ISSUE_CODES:
+            row.status = "needs_attention"
             continue
         if row.storage_key is None:
             row.status = "needs_attention"
@@ -216,6 +240,59 @@ def update_row(
     return validate_batch(db, batch_id=batch.id, user_id=user_id, is_admin=is_admin)
 
 
+def replace_row_file(
+    db: Session,
+    *,
+    batch_id: int,
+    row_id: int,
+    user_id: int,
+    is_admin: bool,
+    filename: str,
+    content: bytes,
+    content_type: str,
+) -> dict[str, Any]:
+    batch = _load_direct_batch(db, batch_id, user_id, is_admin)
+    if batch.status not in ("uploading", "preview_ready"):
+        raise StatusConflict("当前批次不能替换图片")
+    row = db.get(BulkImageStaging, row_id)
+    if row is None or row.batch_id != batch.id:
+        raise NotFound("图片行不存在")
+    old_storage_key = row.storage_key
+    old_preview_key = row.preview_storage_key
+    row.image_filename = Path(filename).name[:255]
+    row.zip_path = filename
+    row.file_size_bytes = len(content)
+    row.content_type = (content_type or "application/octet-stream")[:100]
+    row.committed_image_id = None
+
+    issue_code, message = _file_issue(content, content_type, filename)
+    if issue_code is None:
+        bundle = generate_thumbnails(content)
+        new_storage_key, new_preview_key = _store_staging_files(
+            batch.id,
+            filename=filename,
+            content=content,
+            content_type=content_type,
+            preview=bundle.medium,
+        )
+        _cleanup_keys_best_effort(
+            [key for key in (old_storage_key, old_preview_key) if key]
+        )
+        row.storage_key = new_storage_key
+        row.preview_storage_key = new_preview_key
+    else:
+        _cleanup_row_storage(row)
+    row.issue_code = issue_code
+    row.error_message = message
+    row.status = "ready" if issue_code is None and row.product_id is not None else "needs_attention"
+    if issue_code is None and row.product_id is None:
+        row.issue_code = "product_required"
+        row.error_message = "尚未指定产品，请选择这张图片属于哪个产品"
+    batch.status = "uploading"
+    db.commit()
+    return validate_batch(db, batch_id=batch.id, user_id=user_id, is_admin=is_admin)
+
+
 def save_plan(
     db: Session,
     *,
@@ -224,6 +301,7 @@ def save_plan(
     user_id: int,
     is_admin: bool,
     items: list[str],
+    expected_revision: int,
 ) -> dict[str, Any]:
     batch = _load_direct_batch(db, batch_id, user_id, is_admin)
     if batch.status != "preview_ready":
@@ -236,10 +314,13 @@ def save_plan(
     ).scalar_one_or_none()
     if plan is None:
         raise NotFound("该产品不在当前批次中")
+    if plan.revision != expected_revision:
+        raise StatusConflict("图片顺序已在其他页面更新，请刷新后重试")
     expected = set(json.loads(plan.ordered_items))
     if len(items) != len(set(items)) or set(items) != expected:
         raise BadRequest("排序必须包含该产品的全部现有图片和待上传图片")
     plan.ordered_items = json.dumps(items)
+    plan.revision += 1
     db.commit()
     return serialize_plan(db, plan)
 
@@ -268,6 +349,26 @@ def list_history(db: Session, *, user_id: int, limit: int = 20) -> list[dict[str
     return [serialize_batch(db, batch, include_rows=False) for batch in batches]
 
 
+def resume_batch(
+    db: Session, *, batch_id: int, user_id: int, is_admin: bool
+) -> BulkImageBatch:
+    batch = _load_direct_batch(db, batch_id, user_id, is_admin)
+    if batch.status != "error":
+        raise StatusConflict("只有中断的图片任务可以恢复")
+    if not db.scalar(
+        select(func.count(BulkImageStaging.id)).where(
+            BulkImageStaging.batch_id == batch.id,
+            BulkImageStaging.status.in_(("ready", "committed", "committed_failed")),
+        )
+    ):
+        raise BadRequest("该批次没有可以恢复的图片")
+    batch.status = "processing"
+    batch.error_message = None
+    db.commit()
+    db.refresh(batch)
+    return batch
+
+
 def run_commit(db: Session, batch: BulkImageBatch) -> None:
     plans = list(
         db.execute(
@@ -283,61 +384,113 @@ def run_commit(db: Session, batch: BulkImageBatch) -> None:
         return
 
     for plan in plans:
-        current_existing = list(
+        batch = db.get(BulkImageBatch, batch.id)
+        db.refresh(batch)
+        if batch.status != "processing":
+            return
+        planned_rows = list(
             db.execute(
-                select(ProductImage.id)
-                .where(ProductImage.product_id == plan.product_id)
-                .order_by(ProductImage.display_order, ProductImage.id)
+                select(BulkImageStaging).where(
+                    BulkImageStaging.batch_id == batch.id,
+                    BulkImageStaging.product_id == plan.product_id,
+                    BulkImageStaging.decision != "exclude",
+                )
             ).scalars()
         )
-        expected_existing = json.loads(plan.expected_existing_image_ids)
-        if current_existing != expected_existing:
-            batch.status = "error"
-            batch.error_message = "产品图片已被其他用户修改，请返回第三步刷新后重新核对"
-            db.commit()
-            return
+        if planned_rows and all(row.status == "committed" for row in planned_rows):
+            continue
+        created_keys: list[str] = []
+        try:
+            image_service._lock_product_for_image_write(db, plan.product_id)
+            current_existing = list(
+                db.execute(
+                    select(ProductImage.id)
+                    .where(ProductImage.product_id == plan.product_id)
+                    .order_by(ProductImage.display_order, ProductImage.id)
+                ).scalars()
+            )
+            if current_existing != json.loads(plan.expected_existing_image_ids):
+                batch.status = "preview_ready"
+                batch.error_message = "产品图片已被其他用户修改，请返回第三步刷新后重新核对"
+                db.commit()
+                return
 
-        tokens: list[str] = json.loads(plan.ordered_items)
-        for token in tokens:
-            if not token.startswith("staged:"):
-                continue
-            row_id = int(token.split(":", 1)[1])
-            row = db.get(BulkImageStaging, row_id)
-            if row is None or row.batch_id != batch.id or row.decision == "exclude":
-                continue
-            if row.committed_image_id is not None:
-                continue
-            try:
-                if not row.storage_key:
-                    raise ValueError("暂存文件不存在")
-                content = get_storage().download(row.storage_key)
-                result = image_service.add_product_image(
-                    db,
-                    product_id=plan.product_id,
-                    content=content,
-                    filename=row.image_filename,
-                    content_type=row.content_type or "application/octet-stream",
-                    user_id=batch.user_id,
-                )
-                row.committed_image_id = result["id"]
+            tokens: list[str] = json.loads(plan.ordered_items)
+            staged_ids = [
+                int(token.split(":", 1)[1])
+                for token in tokens
+                if token.startswith("staged:")
+            ]
+            if len(current_existing) + len(staged_ids) > image_service.MAX_IMAGES_PER_PRODUCT:
+                batch.status = "preview_ready"
+                batch.error_message = "产品图片数量已发生变化，请重新运行程序检查"
+                db.commit()
+                return
+
+            for row_id in staged_ids:
+                row = db.get(BulkImageStaging, row_id)
+                if row is None or row.batch_id != batch.id or row.decision == "exclude":
+                    raise ValueError("排序计划包含无效的暂存图片")
+                image = db.execute(
+                    select(ProductImage).where(
+                        ProductImage.source_bulk_staging_id == row.id
+                    )
+                ).scalar_one_or_none()
+                if image is None:
+                    if not row.storage_key:
+                        raise ValueError("暂存文件不存在")
+                    result = image_service.add_product_image(
+                        db,
+                        product_id=plan.product_id,
+                        content=get_storage().download(row.storage_key),
+                        filename=row.image_filename,
+                        content_type=row.content_type or "application/octet-stream",
+                        user_id=batch.user_id,
+                        source_bulk_staging_id=row.id,
+                        commit=False,
+                    )
+                    image = db.get(ProductImage, result["id"])
+                    created_keys.extend(
+                        [image.storage_key, image.thumbnail_key, image.medium_key]
+                    )
+                row.committed_image_id = image.id
                 row.status = "committed"
                 row.issue_code = None
                 row.error_message = None
-                batch.ingested_count += 1
-            except Exception as exc:  # row-level recovery is intentional
+
+            _apply_plan_without_commit(db, plan)
+            batch.ingested_count = _count_rows(db, batch.id, "committed")
+            batch.failed_count = _count_rows(db, batch.id, "committed_failed")
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            _cleanup_keys_best_effort(created_keys)
+            batch = db.get(BulkImageBatch, batch.id)
+            failed_rows = list(
+                db.execute(
+                    select(BulkImageStaging).where(
+                        BulkImageStaging.batch_id == batch.id,
+                        BulkImageStaging.product_id == plan.product_id,
+                        BulkImageStaging.decision != "exclude",
+                        BulkImageStaging.committed_image_id.is_(None),
+                    )
+                ).scalars()
+            )
+            for row in failed_rows:
                 row.status = "committed_failed"
                 row.issue_code = "commit_failed"
                 row.error_message = f"写入失败：{str(exc)[:400]}"
                 row.retry_count += 1
-                batch.failed_count += 1
+            batch.failed_count = _count_rows(db, batch.id, "committed_failed")
             db.commit()
 
-        _apply_plan(db, plan)
-
-    batch.status = "completed"
-    batch.completed_at = datetime.utcnow()
-    batch.error_message = None
-    db.commit()
+    batch = db.get(BulkImageBatch, batch.id)
+    db.refresh(batch)
+    if batch.status == "processing":
+        batch.status = "completed"
+        batch.completed_at = datetime.utcnow()
+        batch.error_message = None
+        db.commit()
     _cleanup_successful_rows(db, batch.id)
 
 
@@ -352,38 +505,68 @@ def retry_row(
         raise StatusConflict("只有写入失败的图片可以重试")
     if not row.storage_key or row.product_id is None:
         raise BadRequest("暂存文件或产品关联已经不存在，请重新上传")
-    try:
-        result = image_service.add_product_image(
-            db,
-            product_id=row.product_id,
-            content=get_storage().download(row.storage_key),
-            filename=row.image_filename,
-            content_type=row.content_type or "application/octet-stream",
-            user_id=batch.user_id,
-        )
-    except Exception as exc:
-        row.retry_count += 1
-        row.error_message = f"重试失败：{str(exc)[:400]}"
-        db.commit()
-        return serialize_row(row)
-    row.committed_image_id = result["id"]
-    row.status = "committed"
-    row.issue_code = None
-    row.error_message = None
-    batch.ingested_count += 1
-    batch.failed_count = max(0, batch.failed_count - 1)
-    db.commit()
     plan = db.execute(
         select(BulkImageProductPlan).where(
             BulkImageProductPlan.batch_id == batch.id,
             BulkImageProductPlan.product_id == row.product_id,
         )
     ).scalar_one_or_none()
-    if plan is not None:
-        _apply_plan(db, plan)
-    _cleanup_row_storage(row)
-    db.commit()
-    return serialize_row(row)
+    if plan is None:
+        raise BadRequest("找不到该产品的图片顺序计划，请重新运行程序检查")
+
+    created_keys: list[str] = []
+    try:
+        image_service._lock_product_for_image_write(db, row.product_id)
+        staged_ids = [
+            int(token.split(":", 1)[1])
+            for token in json.loads(plan.ordered_items)
+            if token.startswith("staged:")
+        ]
+        # A product's final ordering is one atomic unit. If its first attempt
+        # rolled back, retry every still-missing staged image together; retrying
+        # only one row could never satisfy the complete ordered image set.
+        for staged_id in staged_ids:
+            staged = db.get(BulkImageStaging, staged_id)
+            if staged is None or not staged.storage_key:
+                raise ValueError("同一产品的暂存文件不完整，请重新上传")
+            image = db.execute(
+                select(ProductImage).where(
+                    ProductImage.source_bulk_staging_id == staged.id
+                )
+            ).scalar_one_or_none()
+            if image is None:
+                result = image_service.add_product_image(
+                    db,
+                    product_id=row.product_id,
+                    content=get_storage().download(staged.storage_key),
+                    filename=staged.image_filename,
+                    content_type=staged.content_type or "application/octet-stream",
+                    user_id=batch.user_id,
+                    source_bulk_staging_id=staged.id,
+                    commit=False,
+                )
+                image = db.get(ProductImage, result["id"])
+                created_keys.extend(
+                    [image.storage_key, image.thumbnail_key, image.medium_key]
+                )
+            staged.committed_image_id = image.id
+            staged.status = "committed"
+            staged.issue_code = None
+            staged.error_message = None
+        _apply_plan_without_commit(db, plan)
+        batch.ingested_count = _count_rows(db, batch.id, "committed")
+        batch.failed_count = _count_rows(db, batch.id, "committed_failed")
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        _cleanup_keys_best_effort(created_keys)
+        row = db.get(BulkImageStaging, row_id)
+        row.retry_count += 1
+        row.error_message = f"重试失败：{str(exc)[:400]}"
+        db.commit()
+        return serialize_row(row)
+    _cleanup_successful_rows(db, batch.id)
+    return serialize_row(db.get(BulkImageStaging, row_id))
 
 
 def serialize_batch(
@@ -467,6 +650,7 @@ def serialize_plan(db: Session, plan: BulkImageProductPlan) -> dict[str, Any]:
         "product_name": product.product_name_en if product else None,
         "expected_existing_image_ids": json.loads(plan.expected_existing_image_ids),
         "ordered_items": json.loads(plan.ordered_items),
+        "revision": plan.revision,
         "existing_images": [
             {
                 "id": image.id,
@@ -479,7 +663,9 @@ def serialize_plan(db: Session, plan: BulkImageProductPlan) -> dict[str, Any]:
     }
 
 
-def _file_issue(content: bytes, content_type: str) -> tuple[str | None, str | None]:
+def _file_issue(
+    content: bytes, content_type: str, filename: str
+) -> tuple[str | None, str | None]:
     if not content:
         return "empty_file", "图片文件为空，请重新选择"
     if len(content) > image_service.MAX_IMAGE_BYTES:
@@ -487,11 +673,44 @@ def _file_issue(content: bytes, content_type: str) -> tuple[str | None, str | No
     normalized = (content_type or "").lower().split(";", 1)[0]
     if normalized not in image_service.ALLOWED_MIME_TYPES:
         return "unsupported_format", "不支持该格式，请使用 JPG、PNG 或 WebP"
+    suffix = Path(filename).suffix.lower()
+    expected = {
+        ".jpg": ("JPEG", {"image/jpeg", "image/jpg"}),
+        ".jpeg": ("JPEG", {"image/jpeg", "image/jpg"}),
+        ".png": ("PNG", {"image/png"}),
+        ".webp": ("WEBP", {"image/webp"}),
+    }.get(suffix)
+    if expected is None:
+        return "unsupported_format", "文件扩展名不支持，请使用 .jpg、.jpeg、.png 或 .webp"
     try:
         generate_thumbnails(content)
+        with Image.open(io.BytesIO(content)) as image:
+            decoded_format = image.format
     except ImageProcessingError as exc:
         return "invalid_image", str(exc)
+    if decoded_format != expected[0] or normalized not in expected[1]:
+        return "format_mismatch", "文件扩展名、声明格式和图片实际格式不一致，请重新导出图片"
     return None, None
+
+
+def _infer_product_id(db: Session, filename: str) -> int | None:
+    """Use only an unambiguous exact product-code filename match.
+
+    ``ABC-001.jpg`` may resolve automatically; fuzzy or duplicate codes stay
+    unassigned for Step 2. This is intentionally conservative because product
+    codes are not globally unique in the legacy data.
+    """
+    stem = Path(filename).stem.strip()
+    if not stem:
+        return None
+    candidates = list(
+        db.execute(
+            select(Product.id)
+            .where(func.lower(Product.code) == stem.lower())
+            .limit(2)
+        ).scalars()
+    )
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _load_direct_batch(
@@ -564,7 +783,7 @@ def _rebuild_default_plans(
         )
 
 
-def _apply_plan(db: Session, plan: BulkImageProductPlan) -> None:
+def _apply_plan_without_commit(db: Session, plan: BulkImageProductPlan) -> None:
     rows = {
         row.id: row
         for row in db.execute(
@@ -580,29 +799,62 @@ def _apply_plan(db: Session, plan: BulkImageProductPlan) -> None:
             staged = rows.get(int(raw_id))
             if staged is not None and staged.committed_image_id is not None:
                 desired_ids.append(staged.committed_image_id)
-    current_ids = list(
+    current_rows = list(
         db.execute(
-            select(ProductImage.id).where(ProductImage.product_id == plan.product_id)
+            select(ProductImage).where(ProductImage.product_id == plan.product_id)
         ).scalars()
     )
-    desired_ids.extend(image_id for image_id in current_ids if image_id not in desired_ids)
-    image_service.reorder_product_images(
-        db,
-        product_id=plan.product_id,
-        entries=[
-            ProductImageReorderEntry(id=image_id, display_order=index)
-            for index, image_id in enumerate(desired_ids)
-        ],
-    )
+    current_ids = {image.id for image in current_rows}
+    if current_ids != set(desired_ids):
+        raise StatusConflict("产品图片集合已变化，不能覆盖其他用户的修改")
+    order_by_id = {image_id: index for index, image_id in enumerate(desired_ids)}
+    for image in current_rows:
+        image.display_order = order_by_id[image.id]
+    db.flush()
 
 
 def _cleanup_row_storage(row: BulkImageStaging) -> None:
     storage = get_storage()
-    for key in (row.storage_key, row.preview_storage_key):
+    for attribute in ("storage_key", "preview_storage_key"):
+        key = getattr(row, attribute)
         if key:
-            storage.delete(key)
-    row.storage_key = None
-    row.preview_storage_key = None
+            try:
+                storage.delete(key)
+                setattr(row, attribute, None)
+            except Exception:
+                # Keep the DB key so the hourly GC can retry later.
+                continue
+
+
+def _store_staging_files(
+    batch_id: int,
+    *,
+    filename: str,
+    content: bytes,
+    content_type: str,
+    preview: bytes,
+) -> tuple[str, str]:
+    """Write the source and preview together, cleaning a partial pair."""
+    storage = get_storage()
+    token = uuid.uuid4().hex
+    folder = f"bulk-image-staging/{batch_id}"
+    created: list[str] = []
+    try:
+        source_key = storage.upload(
+            f"{folder}/original",
+            f"{token}-{Path(filename).name}",
+            content,
+            content_type or "application/octet-stream",
+        )
+        created.append(source_key)
+        preview_key = storage.upload(
+            f"{folder}/preview", f"{token}.jpg", preview, "image/jpeg"
+        )
+        created.append(preview_key)
+        return source_key, preview_key
+    except Exception as exc:
+        _cleanup_keys_best_effort(created)
+        raise BadRequest("图片暂存失败，请重试") from exc
 
 
 def _cleanup_successful_rows(db: Session, batch_id: int) -> None:
@@ -615,3 +867,24 @@ def _cleanup_successful_rows(db: Session, batch_id: int) -> None:
     for row in rows:
         _cleanup_row_storage(row)
     db.commit()
+
+
+def _cleanup_keys_best_effort(keys: list[str]) -> None:
+    storage = get_storage()
+    for key in keys:
+        try:
+            storage.delete(key)
+        except Exception:
+            continue
+
+
+def _count_rows(db: Session, batch_id: int, status: str) -> int:
+    # SessionLocal deliberately uses autoflush=False.  Counts are part of the
+    # same transaction as row state changes, so flush them before querying.
+    db.flush()
+    return db.scalar(
+        select(func.count(BulkImageStaging.id)).where(
+            BulkImageStaging.batch_id == batch_id,
+            BulkImageStaging.status == status,
+        )
+    ) or 0

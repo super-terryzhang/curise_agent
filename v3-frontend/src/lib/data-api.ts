@@ -189,6 +189,7 @@ export interface PaginatedResponse<T> {
 export function listProducts(params?: {
   search?: string;
   country_id?: number;
+  port_id?: number;
   category_id?: number;
   supplier_id?: number;
   /**
@@ -204,6 +205,7 @@ export function listProducts(params?: {
   const qs = new URLSearchParams();
   if (params?.search) qs.set("search", params.search);
   if (params?.country_id) qs.set("country_id", String(params.country_id));
+  if (params?.port_id) qs.set("port_id", String(params.port_id));
   if (params?.category_id) qs.set("category_id", String(params.category_id));
   if (params?.supplier_id) qs.set("supplier_id", String(params.supplier_id));
   if (params?.is_effective !== undefined && params?.is_effective !== null) {

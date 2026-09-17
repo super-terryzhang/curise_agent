@@ -311,6 +311,13 @@ class ProductImage(Base):
     alt_text: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     uploaded_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Durable idempotency key for direct bulk-image ingestion.  Normal
+    # single-image uploads leave it NULL; PostgreSQL permits multiple NULLs
+    # under a unique constraint while preventing two formal images for the
+    # same staging operation.
+    source_bulk_staging_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, unique=True, index=True
+    )
     uploaded_at: Mapped[datetime | None] = mapped_column(
         DateTime, default=datetime.utcnow
     )

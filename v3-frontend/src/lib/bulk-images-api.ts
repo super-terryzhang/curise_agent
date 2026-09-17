@@ -52,6 +52,7 @@ export interface DirectImagePlan {
   expected_existing_image_ids: number[];
   ordered_items: string[];
   existing_images: DirectImageExisting[];
+  revision: number;
 }
 
 export interface BulkImageStagingRow {
@@ -303,16 +304,39 @@ export async function saveDirectImagePlan(
   batchId: number,
   productId: number,
   items: string[],
+  expectedRevision: number,
 ): Promise<DirectImagePlan> {
   const res = await fetchWithAuth(
     `${API_BASE}/api/data/bulk-images/${batchId}/plans/${productId}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ items, expected_revision: expectedRevision }),
     },
   );
   return handleJson<DirectImagePlan>(res);
+}
+
+export async function replaceDirectImageRowFile(
+  batchId: number,
+  rowId: number,
+  file: File,
+): Promise<BulkImageBatch> {
+  const body = new FormData();
+  body.append("file", file);
+  const res = await fetchWithAuth(
+    `${API_BASE}/api/data/bulk-images/${batchId}/rows/${rowId}/file`,
+    { method: "PUT", body },
+  );
+  return handleJson<BulkImageBatch>(res);
+}
+
+export async function resumeDirectImageBatch(batchId: number): Promise<BulkImageBatch> {
+  const res = await fetchWithAuth(
+    `${API_BASE}/api/data/bulk-images/${batchId}/resume`,
+    { method: "POST" },
+  );
+  return handleJson<BulkImageBatch>(res);
 }
 
 export async function retryDirectImageRow(

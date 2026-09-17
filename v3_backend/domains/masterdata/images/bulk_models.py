@@ -7,7 +7,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.db.base import Base
@@ -26,6 +36,25 @@ class BulkImageBatch(Base):
     """
 
     __tablename__ = "v3_bulk_image_batches"
+    __table_args__ = (
+        CheckConstraint(
+            "source_type IN ('zip', 'direct')",
+            name="ck_bulk_image_batch_source_type",
+        ),
+        Index(
+            "uq_bulk_image_direct_active_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text(
+                "source_type = 'direct' AND status IN "
+                "('uploading', 'preview_ready', 'processing')"
+            ),
+            sqlite_where=text(
+                "source_type = 'direct' AND status IN "
+                "('uploading', 'preview_ready', 'processing')"
+            ),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(
@@ -72,6 +101,12 @@ class BulkImageStaging(Base):
     """
 
     __tablename__ = "v3_bulk_image_staging"
+    __table_args__ = (
+        CheckConstraint(
+            "decision IN ('include', 'exclude')",
+            name="ck_bulk_image_staging_decision",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     batch_id: Mapped[int] = mapped_column(
@@ -126,6 +161,7 @@ class BulkImageProductPlan(Base):
     )
     expected_existing_image_ids: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     ordered_items: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow

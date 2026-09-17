@@ -131,6 +131,7 @@ def list_products(
     *,
     search: str | None = None,
     country_id: int | None = None,
+    port_id: int | None = None,
     category_id: int | None = None,
     supplier_id: int | None = None,
     is_effective: bool | None = None,
@@ -154,6 +155,8 @@ def list_products(
         stmt = stmt.where((Product.product_name_en.ilike(pattern)) | (Product.code.ilike(pattern)))
     if country_id is not None:
         stmt = stmt.where(Product.country_id == country_id)
+    if port_id is not None:
+        stmt = stmt.where(Product.port_id == port_id)
     if category_id is not None:
         stmt = stmt.where(Product.category_id == category_id)
     if supplier_id is not None:
