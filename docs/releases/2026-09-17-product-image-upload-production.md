@@ -1,0 +1,30 @@
+# 产品图片上传工作台生产发布
+
+日期：2026-09-17（Asia/Tokyo）
+
+## 结论
+
+产品图片上传工作台已部署到正式环境。生产代码为 `main@571813ef227186d7702550c6d5d09e524747e594`，数据库 head 为 0030，正式后端 revision 为 `cruise-v3-backend-image-upload-20260917`，正式前端 deployment 为 `dpl_8QAjk1tYQcqu8rB1Ainn4hiq5Hed`。
+
+## 发布证据
+
+- 合并后后端完整回归：1749 passed、79 skipped、0 failed。
+- 前端：12 个测试文件、93 项测试通过；TypeScript 与标准 Next.js 生产构建通过。
+- GitHub Actions：`35197032040`，前后端任务均成功。
+- Cloud Build：`738e8844-7ca6-48d2-9359-5fa06b57f8c7`，镜像 digest `sha256:2239d2066f9d421099e95be72bc1147702486a8cab1e94fcbb6c86875e7c4920`。
+- Cloud SQL 按需备份：`1789633082646`，状态 SUCCESSFUL；迁移任务把 0029 顺序升级到 0030。
+- 正式后端 100% 流量指向新 revision；候选阶段已检查健康、OpenAPI、新 API、未认证 401、正式来源 CORS 与 ERROR 日志。
+- 正式前端状态 Ready；`/login`、`/dashboard`、`/dashboard/workbench` 和 `/dashboard/workbench/image-upload` 均返回 200。
+- Oracle Job 已更新为与后端相同的镜像；三个 Scheduler 均为 ENABLED，手动 Oracle 执行 `cruise-v3-po-hourly-zp6bh` 成功。
+
+## 数据核验
+
+最终只读执行 `cruise-v3-image-upload-preflight-20260917-mw495` 成功，确认数据库 head 0030，并保留 1449 产品、71 订单、31 询价、621 张产品图片、5 个历史图片批次及 8 条历史暂存记录；新顺序计划表为 0 行。迁移没有改写原有产品图片或业务订单。
+
+## 回退边界
+
+应用回退只能选择兼容数据库 0030 的 revision；不要在正式流量下盲目 downgrade 0030。按需备份 `1789633082646` 是灾难恢复边界，数据库恢复属于有数据丢失风险的独立操作，必须重新确认后执行。
+
+## 尚待用户验收
+
+自动化验证没有使用真实账号向生产产品写入图片。最终验收应由用户在正式工作台完成一次真实的“上传文件、程序检查、核对主图与顺序、提交”流程，并确认结果符合实际操作习惯。
