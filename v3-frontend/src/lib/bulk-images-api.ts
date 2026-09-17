@@ -88,6 +88,7 @@ export interface BulkImageBatch {
   excluded_count?: number;
   failed_count?: number;
   can_continue?: boolean;
+  requires_order_review?: boolean;
   created_at: string | null;
   completed_at: string | null;
   rows: BulkImageStagingRow[];
@@ -265,13 +266,14 @@ export async function uploadDirectImage(
   batchId: number,
   file: File,
   productId?: number,
-  scope?: { countryId?: number; portId?: number },
+  scope?: { countryId?: number; portId?: number; candidateProductIds?: number[] },
 ): Promise<BulkImageStagingRow> {
   const body = new FormData();
   body.append("file", file);
   if (productId) body.append("product_id", String(productId));
   if (scope?.countryId) body.append("country_id", String(scope.countryId));
   if (scope?.portId) body.append("port_id", String(scope.portId));
+  if (scope?.candidateProductIds) body.append("candidate_product_ids", scope.candidateProductIds.join(","));
   const res = await fetchWithAuth(
     `${API_BASE}/api/data/bulk-images/${batchId}/files`,
     { method: "POST", body },
@@ -337,6 +339,14 @@ export async function replaceDirectImageRowFile(
 export async function resumeDirectImageBatch(batchId: number): Promise<BulkImageBatch> {
   const res = await fetchWithAuth(
     `${API_BASE}/api/data/bulk-images/${batchId}/resume`,
+    { method: "POST" },
+  );
+  return handleJson<BulkImageBatch>(res);
+}
+
+export async function acknowledgeDirectImageOrder(batchId: number): Promise<BulkImageBatch> {
+  const res = await fetchWithAuth(
+    `${API_BASE}/api/data/bulk-images/${batchId}/order-reviewed`,
     { method: "POST" },
   );
   return handleJson<BulkImageBatch>(res);

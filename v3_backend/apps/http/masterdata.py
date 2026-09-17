@@ -544,9 +544,22 @@ async def upload_direct_image_file(
     product_id: int | None = Form(None),
     country_id: int | None = Form(None),
     port_id: int | None = Form(None),
+    candidate_product_ids: str | None = Form(None),
 ) -> dict[str, Any]:
     raw = await file.read()
     try:
+        candidates = None
+        if candidate_product_ids is not None:
+            try:
+                candidates = [
+                    int(value)
+                    for value in candidate_product_ids.split(",")
+                    if value.strip()
+                ]
+            except ValueError as exc:
+                raise bulk_service.BadRequest("候选产品范围格式不正确") from exc
+            if len(candidates) > 100 or any(value < 1 for value in candidates):
+                raise bulk_service.BadRequest("候选产品范围不正确")
         return direct_service.upload_file(
             db,
             batch_id=batch_id,
@@ -558,6 +571,7 @@ async def upload_direct_image_file(
             product_id=product_id,
             country_id=country_id,
             port_id=port_id,
+            candidate_product_ids=candidates,
         )
     except bulk_service.BulkImageError as exc:
         raise _translate_bulk(exc) from exc
@@ -654,6 +668,21 @@ def retry_direct_image_row(
             db,
             batch_id=batch_id,
             row_id=row_id,
+            user_id=user.id,
+            is_admin=user.role in ("superadmin", "admin"),
+        )
+    except bulk_service.BulkImageError as exc:
+        raise _translate_bulk(exc) from exc
+
+
+@router.post("/bulk-images/{batch_id}/order-reviewed")
+def acknowledge_direct_image_order(
+    batch_id: int, db: DbDep, user: ProductUploader
+) -> dict[str, Any]:
+    try:
+        return direct_service.acknowledge_order_review(
+            db,
+            batch_id=batch_id,
             user_id=user.id,
             is_admin=user.role in ("superadmin", "admin"),
         )

@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from domains.masterdata import _product_images_service as image_service
@@ -188,7 +189,11 @@ def create_preview(
         status="uploading",
     )
     db.add(batch)
-    db.flush()  # gets batch.id without committing
+    try:
+        db.flush()  # gets batch.id without committing
+    except IntegrityError as exc:
+        db.rollback()
+        raise BadRequest("已有其他图片批次正在处理，请先完成或取消") from exc
 
     # Stash the raw ZIP in object storage so the background commit job
     # doesn't need it in DB. Naming convention: `bulk-image-staging/{id}.zip`.
@@ -401,7 +406,7 @@ def cancel_batch(
     stays (ProductImage rows already added are real), but the batch
     envelope is closed so the user can start a new upload.
     """
-    batch = _load_batch(db, batch_id, user_id, is_admin)
+    batch = _load_batch(db, batch_id, user_id, is_admin, lock=True)
     allowed = ("preview_ready", "uploading", "error")
     if force:
         allowed = allowed + ("processing",)
@@ -555,13 +560,15 @@ def trigger_commit(
     so the UI's first poll sees the new state immediately, regardless
     of when the background job actually starts executing.
     """
-    batch = _load_batch(db, batch_id, user_id, is_admin)
+    batch = _load_batch(db, batch_id, user_id, is_admin, lock=True)
     if batch.status != "preview_ready":
         raise StatusConflict(
             f"只能提交 preview_ready 状态的批次（当前: {batch.status}）"
         )
     if batch.source_type == "direct" and batch.error_count:
         raise StatusConflict("仍有图片未通过检查，请处理后再提交")
+    if batch.source_type == "direct" and batch.error_message:
+        raise StatusConflict("最终图片顺序尚未重新核对，请返回第三步确认")
     claimed = db.execute(
         update(BulkImageBatch)
         .where(
@@ -698,8 +705,18 @@ def _run_commit_sync(batch_id: int) -> None:
 # ─── Internal helpers ───────────────────────────────────────
 
 
-def _load_batch(db: Session, batch_id: int, user_id: int, is_admin: bool) -> BulkImageBatch:
-    batch = db.get(BulkImageBatch, batch_id)
+def _load_batch(
+    db: Session,
+    batch_id: int,
+    user_id: int,
+    is_admin: bool,
+    *,
+    lock: bool = False,
+) -> BulkImageBatch:
+    stmt = select(BulkImageBatch).where(BulkImageBatch.id == batch_id)
+    if lock:
+        stmt = stmt.with_for_update()
+    batch = db.execute(stmt).scalar_one_or_none()
     if batch is None:
         raise NotFound("批次不存在")
     if not is_admin and batch.user_id != user_id:

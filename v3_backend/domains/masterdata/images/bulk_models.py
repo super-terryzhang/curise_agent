@@ -42,16 +42,14 @@ class BulkImageBatch(Base):
             name="ck_bulk_image_batch_source_type",
         ),
         Index(
-            "uq_bulk_image_direct_active_user",
+            "uq_bulk_image_active_user",
             "user_id",
             unique=True,
             postgresql_where=text(
-                "source_type = 'direct' AND status IN "
-                "('uploading', 'preview_ready', 'processing')"
+                "status IN ('uploading', 'preview_ready', 'processing')"
             ),
             sqlite_where=text(
-                "source_type = 'direct' AND status IN "
-                "('uploading', 'preview_ready', 'processing')"
+                "status IN ('uploading', 'preview_ready', 'processing')"
             ),
         ),
     )

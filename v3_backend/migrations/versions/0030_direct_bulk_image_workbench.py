@@ -37,15 +37,15 @@ def upgrade() -> None:
         "source_type IN ('zip', 'direct')",
     )
     op.create_index(
-        "uq_bulk_image_direct_active_user",
+        "uq_bulk_image_active_user",
         "v3_bulk_image_batches",
         ["user_id"],
         unique=True,
         postgresql_where=sa.text(
-            "source_type = 'direct' AND status IN ('uploading', 'preview_ready', 'processing')"
+            "status IN ('uploading', 'preview_ready', 'processing')"
         ),
         sqlite_where=sa.text(
-            "source_type = 'direct' AND status IN ('uploading', 'preview_ready', 'processing')"
+            "status IN ('uploading', 'preview_ready', 'processing')"
         ),
     )
 
@@ -150,7 +150,7 @@ def downgrade() -> None:
         op.drop_column("v3_bulk_image_staging", column)
     op.drop_column("v3_bulk_image_batches", "failed_count")
     op.drop_column("v3_bulk_image_batches", "excluded_count")
-    op.drop_index("uq_bulk_image_direct_active_user", table_name="v3_bulk_image_batches")
+    op.drop_index("uq_bulk_image_active_user", table_name="v3_bulk_image_batches")
     op.drop_constraint(
         "ck_bulk_image_batch_source_type",
         "v3_bulk_image_batches",

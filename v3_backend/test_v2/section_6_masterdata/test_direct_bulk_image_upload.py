@@ -303,9 +303,16 @@ def test_failed_retry_rebases_when_gallery_changed(client, db, monkeypatch):
     assert rebased.json()["status"] == "ready"
     current = client.get(f"/api/data/bulk-images/{batch_id}", headers=headers).json()
     assert current["status"] == "preview_ready"
-    assert current["error_message"] is None
+    assert current["requires_order_review"] is True
     assert current["plans"][0]["expected_existing_image_ids"] == [concurrent["id"]]
 
+    blocked = client.post(f"/api/data/bulk-images/{batch_id}/commit", headers=headers)
+    assert blocked.status_code == 409
+    reviewed = client.post(
+        f"/api/data/bulk-images/{batch_id}/order-reviewed", headers=headers
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["requires_order_review"] is False
     completed = client.post(f"/api/data/bulk-images/{batch_id}/commit", headers=headers)
     assert completed.status_code == 202
     assert completed.json()["status"] == "completed"
@@ -600,6 +607,26 @@ def test_error_batch_cannot_resume_while_new_batch_is_active(client, db):
     assert str(current_id) in resumed.json()["detail"]
 
 
+def test_error_direct_batch_cannot_resume_while_zip_batch_is_active(client, db):
+    user, _product, headers = _setup(db, client)
+    old_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    old = db.get(BulkImageBatch, old_id)
+    old.status = "error"
+    db.commit()
+    zip_batch = BulkImageBatch(
+        user_id=user.id,
+        zip_filename="legacy.zip",
+        source_type="zip",
+        status="preview_ready",
+    )
+    db.add(zip_batch)
+    db.commit()
+
+    resumed = client.post(f"/api/data/bulk-images/{old_id}/resume", headers=headers)
+    assert resumed.status_code == 409
+    assert str(zip_batch.id) in resumed.json()["detail"]
+
+
 def test_non_owner_cannot_read_or_mutate_direct_batch(client, db):
     _user, _product, owner_headers = _setup(db, client)
     batch_id = client.post(
@@ -631,10 +658,21 @@ def test_filename_auto_match_is_limited_to_selected_location(client, db):
         country_id=country.id,
         port_id=port.id,
     )
+    seed_product(
+        db,
+        code=first.code,
+        name="Hidden by current candidate list",
+        country_id=country.id,
+        port_id=port.id,
+    )
     batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
     uploaded = client.post(
         f"/api/data/bulk-images/{batch_id}/files",
-        data={"country_id": str(country.id), "port_id": str(port.id)},
+        data={
+            "country_id": str(country.id),
+            "port_id": str(port.id),
+            "candidate_product_ids": str(second.id),
+        },
         files={"file": (f"{first.code}.png", _png(), "image/png")},
         headers=headers,
     )

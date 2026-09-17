@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  acknowledgeDirectImageOrder,
   cancelBulkImageBatch,
   commitBulkImageBatch,
   createDirectImageBatch,
@@ -47,6 +48,18 @@ import { cn } from "@/lib/utils";
 
 const STEPS = ["选择图片", "程序检查", "主图与顺序", "确认提交"];
 const ACCEPT = "image/jpeg,image/png,image/webp";
+type UploadScope = {
+  countryId?: number;
+  portId?: number;
+  candidateProductIds: number[];
+};
+type UploadFailure = {
+  id: string;
+  file: File;
+  productId: number | null;
+  scope: UploadScope;
+  error: string;
+};
 
 const ISSUE_LABELS: Record<string, string> = {
   product_required: "未指定产品",
@@ -136,7 +149,7 @@ export default function ProductImageUploadPage() {
   const [orderSaving, setOrderSaving] = useState(false);
   const orderSavingRef = useRef(false);
   const [replaceTarget, setReplaceTarget] = useState<BulkImageStagingRow | null>(null);
-  const [uploadFailures, setUploadFailures] = useState<Array<{ id: string; file: File; productId: number | null; error: string }>>([]);
+  const [uploadFailures, setUploadFailures] = useState<UploadFailure[]>([]);
 
   const loadProducts = useCallback(async (search = "") => {
     const result = await listProducts({ search: search || undefined, country_id: countryId || undefined, port_id: portId || undefined, limit: 100, is_effective: true });
@@ -185,6 +198,11 @@ export default function ProductImageUploadPage() {
     if (list.length === 0) return;
     setBusy(true);
     setUploadProgress({ done: 0, total: list.length });
+    const uploadScope: UploadScope = {
+      countryId: countryId ?? undefined,
+      portId: portId ?? undefined,
+      candidateProductIds: products.map((product) => product.id),
+    };
     try {
       const current = await ensureBatch();
       let failures = 0;
@@ -194,12 +212,12 @@ export default function ProductImageUploadPage() {
             current.id,
             list[index],
             selectedProductId ?? undefined,
-            { countryId: countryId ?? undefined, portId: portId ?? undefined },
+            uploadScope,
           );
         } catch (error) {
           failures += 1;
           const message = error instanceof Error ? error.message : "上传失败";
-          setUploadFailures((currentFailures) => [...currentFailures, { id: `${Date.now()}-${index}`, file: list[index], productId: selectedProductId, error: message }]);
+          setUploadFailures((currentFailures) => [...currentFailures, { id: `${Date.now()}-${index}`, file: list[index], productId: selectedProductId, scope: uploadScope, error: message }]);
           toast.error(`${list[index].name}：${message}`);
         }
         setUploadProgress({ done: index + 1, total: list.length });
@@ -212,7 +230,7 @@ export default function ProductImageUploadPage() {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
     }
-  }, [countryId, ensureBatch, portId, selectedProductId]);
+  }, [countryId, ensureBatch, portId, products, selectedProductId]);
 
   const checkBatch = useCallback(async () => {
     if (!batch || batch.total_files === 0) return;
@@ -304,6 +322,19 @@ export default function ProductImageUploadPage() {
       setStep(4);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "提交失败");
+    } finally {
+      setBusy(false);
+    }
+  }, [batch]);
+
+  const confirmOrderReview = useCallback(async () => {
+    if (!batch || orderSavingRef.current) return;
+    setBusy(true);
+    try {
+      setBatch(await acknowledgeDirectImageOrder(batch.id));
+      setStep(4);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "确认最终顺序失败");
     } finally {
       setBusy(false);
     }
@@ -407,7 +438,7 @@ export default function ProductImageUploadPage() {
         current.id,
         failure.file,
         failure.productId ?? undefined,
-        { countryId: countryId ?? undefined, portId: portId ?? undefined },
+        failure.scope,
       );
       setUploadFailures((items) => items.filter((item) => item.id !== failureId));
       setBatch(await getBulkImageBatch(current.id));
@@ -416,7 +447,7 @@ export default function ProductImageUploadPage() {
     } finally {
       setBusy(false);
     }
-  }, [countryId, ensureBatch, portId, uploadFailures]);
+  }, [ensureBatch, uploadFailures]);
 
   const issues = batch?.rows.filter((row) => row.status === "needs_attention") || [];
   const orderChanges = useMemo(() => {
@@ -542,7 +573,7 @@ export default function ProductImageUploadPage() {
                     <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">{selectedPlan.ordered_items.map((token, index) => { const [kind, rawId] = token.split(":"); const existing = kind === "existing" ? selectedPlan.existing_images.find((image) => image.id === Number(rawId)) : null; const staged = kind === "staged" ? stagedById.get(Number(rawId)) : null; const preview = existing?.preview_url || staged?.preview_url; return <div key={token} draggable={!orderSaving} onDragStart={() => setDragToken(token)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (dragToken) reorder(dragToken, token); setDragToken(null); }} className={cn("group overflow-hidden rounded-md border bg-background", index === 0 && "ring-2 ring-primary/50")}><div className="relative aspect-square bg-muted/30">{preview ? <img src={preview} alt={existing?.filename || staged?.image_filename || "产品图片"} className="h-full w-full object-cover" /> : <ImagePlus className="absolute inset-0 m-auto h-6 w-6 text-muted-foreground" />}<span className="absolute left-1.5 top-1.5 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium">{index === 0 ? "主图" : `${index + 1}`}</span>{kind === "staged" && <span className="absolute right-1.5 top-1.5 rounded bg-blue-600 px-1.5 py-0.5 text-[9px] text-white">新增</span>}<GripVertical className="absolute bottom-1.5 right-1.5 h-4 w-4 text-white drop-shadow" /></div><div className="flex items-center justify-between gap-1 border-t p-1.5"><Button variant="ghost" size="sm" className="h-7 px-2 text-[10px]" disabled={orderSaving || index === 0} onClick={() => void saveOrder(selectedPlan, makePrimary(selectedPlan.ordered_items.map((item) => ({ token: item })), token).map((item) => item.token))}><Star className="mr-1 h-3 w-3" />设为主图</Button><div className="flex"><Button aria-label="左移" variant="ghost" size="icon" className="h-7 w-7" disabled={orderSaving || index === 0} onClick={() => void saveOrder(selectedPlan, moveImage(selectedPlan.ordered_items, index, index - 1))}><ArrowLeft className="h-3 w-3" /></Button><Button aria-label="右移" variant="ghost" size="icon" className="h-7 w-7" disabled={orderSaving || index === selectedPlan.ordered_items.length - 1} onClick={() => void saveOrder(selectedPlan, moveImage(selectedPlan.ordered_items, index, index + 1))}><ArrowRight className="h-3 w-3" /></Button></div></div></div>; })}</div>
                   </section>
                 </div>
-                <div className="flex justify-between"><Button variant="outline" disabled={orderSaving} onClick={() => setStep(2)}><ArrowLeft className="mr-1 h-4 w-4" />返回检查</Button><Button disabled={orderSaving} onClick={() => setStep(4)}>{orderSaving && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}确认本次更新<ArrowRight className="ml-1 h-4 w-4" /></Button></div>
+                <div className="flex justify-between"><Button variant="outline" disabled={orderSaving || busy} onClick={() => setStep(2)}><ArrowLeft className="mr-1 h-4 w-4" />返回检查</Button><Button disabled={orderSaving || busy} onClick={() => void confirmOrderReview()}>{(orderSaving || busy) && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}确认本次更新<ArrowRight className="ml-1 h-4 w-4" /></Button></div>
               </div>
             )}
 
@@ -556,6 +587,8 @@ export default function ProductImageUploadPage() {
                   <div className="rounded-md border bg-background p-10 text-center"><Loader2 className="mx-auto h-9 w-9 animate-spin text-primary" /><h2 className="mt-3 text-base font-semibold">正在更新产品图库</h2><p className="mt-2 text-sm text-muted-foreground">已写入 {batch.ingested_count}/{batch.total_files - (batch.excluded_count || 0)} 张。可以离开页面，返回后仍会继续显示进度。</p></div>
                 ) : batch.status === "error" ? (
                   <div className="rounded-md border bg-background p-8 text-center"><AlertCircle className="mx-auto h-9 w-9 text-amber-600" /><h2 className="mt-3 text-base font-semibold">任务中断，暂存图片仍然保留</h2><p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">{batch.error_message || "后台任务未完成，可从尚未完成的位置继续。"}</p><Button className="mt-5" disabled={busy} onClick={() => void resume()}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1 h-4 w-4" />}继续处理</Button></div>
+                ) : batch.status === "preview_ready" && batch.requires_order_review ? (
+                  <div className="rounded-md border bg-background p-8 text-center"><AlertCircle className="mx-auto h-9 w-9 text-amber-600" /><h2 className="mt-3 text-base font-semibold">最终顺序需要重新核对</h2><p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">{batch.error_message}</p><Button className="mt-5" onClick={() => { setSelectedPlanId(batch.plans?.[0]?.product_id ?? null); setStep(3); }}><ArrowLeft className="mr-1 h-4 w-4" />返回第三步核对</Button></div>
                 ) : batch.status === "preview_ready" && batch.error_message ? (
                   <div className="rounded-md border bg-background p-8 text-center"><AlertCircle className="mx-auto h-9 w-9 text-amber-600" /><h2 className="mt-3 text-base font-semibold">产品图库已经发生变化</h2><p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">{batch.error_message}</p><Button className="mt-5" disabled={busy} onClick={() => void checkBatch()}><RefreshCw className="mr-1 h-4 w-4" />重新检查并核对</Button></div>
                 ) : batch.status === "preview_ready" ? (

@@ -38,6 +38,7 @@ FILE_ISSUE_CODES = {
     "invalid_image",
     "format_mismatch",
 }
+ORDER_REVIEW_REQUIRED = "产品图库已变化，最终顺序已重新生成，请返回第三步重新核对"
 
 
 def create_batch(db: Session, *, user_id: int) -> dict[str, Any]:
@@ -62,19 +63,22 @@ def create_batch(db: Session, *, user_id: int) -> dict[str, Any]:
     db.add(batch)
     try:
         db.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
         existing = db.execute(
             select(BulkImageBatch)
             .where(BulkImageBatch.user_id == user_id)
-            .where(BulkImageBatch.source_type == "direct")
             .where(BulkImageBatch.status.in_(ACTIVE_STATUSES))
             .order_by(BulkImageBatch.id.desc())
             .limit(1)
         ).scalar_one_or_none()
         if existing is None:
             raise
-        return serialize_batch(db, existing)
+        if existing.source_type == "direct":
+            return serialize_batch(db, existing)
+        raise BadRequest(
+            f"你已有一个未完成的图片批次（#{existing.id}），请先完成或取消"
+        ) from exc
     db.refresh(batch)
     return serialize_batch(db, batch)
 
@@ -91,6 +95,7 @@ def upload_file(
     product_id: int | None,
     country_id: int | None = None,
     port_id: int | None = None,
+    candidate_product_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     batch = _load_direct_batch(db, batch_id, user_id, is_admin)
     if batch.status not in ("uploading", "preview_ready"):
@@ -105,7 +110,11 @@ def upload_file(
     ) or 0
     if product_id is None:
         product_id = _infer_product_id(
-            db, filename, country_id=country_id, port_id=port_id
+            db,
+            filename,
+            country_id=country_id,
+            port_id=port_id,
+            candidate_product_ids=candidate_product_ids,
         )
 
     row = BulkImageStaging(
@@ -359,6 +368,20 @@ def save_plan(
     return serialize_plan(db, plan)
 
 
+def acknowledge_order_review(
+    db: Session, *, batch_id: int, user_id: int, is_admin: bool
+) -> dict[str, Any]:
+    batch = _load_direct_batch(db, batch_id, user_id, is_admin)
+    if batch.status != "preview_ready" or batch.error_count:
+        raise StatusConflict("当前批次尚未完成检查，不能确认最终顺序")
+    if batch.error_message not in (None, ORDER_REVIEW_REQUIRED):
+        raise StatusConflict("批次状态已变化，请重新运行程序检查")
+    batch.error_message = None
+    db.commit()
+    db.refresh(batch)
+    return serialize_batch(db, batch)
+
+
 def get_active(db: Session, *, user_id: int, is_admin: bool) -> dict[str, Any] | None:
     del is_admin  # active recovery is deliberately scoped to the current user
     batch = db.execute(
@@ -393,7 +416,6 @@ def resume_batch(
         select(BulkImageBatch.id).where(
             BulkImageBatch.user_id == batch.user_id,
             BulkImageBatch.id != batch.id,
-            BulkImageBatch.source_type == "direct",
             BulkImageBatch.status.in_(ACTIVE_STATUSES),
         )
     ).scalar_one_or_none()
@@ -440,8 +462,11 @@ def run_commit(db: Session, batch: BulkImageBatch) -> None:
         return
 
     for plan in plans:
-        batch = db.get(BulkImageBatch, batch.id)
-        db.refresh(batch)
+        batch = db.execute(
+            select(BulkImageBatch)
+            .where(BulkImageBatch.id == batch.id)
+            .with_for_update()
+        ).scalar_one()
         if batch.status != "processing":
             return
         planned_rows = list(
@@ -540,8 +565,11 @@ def run_commit(db: Session, batch: BulkImageBatch) -> None:
             batch.failed_count = _count_rows(db, batch.id, "committed_failed")
             db.commit()
 
-    batch = db.get(BulkImageBatch, batch.id)
-    db.refresh(batch)
+    batch = db.execute(
+        select(BulkImageBatch)
+        .where(BulkImageBatch.id == batch.id)
+        .with_for_update()
+    ).scalar_one()
     if batch.status == "processing":
         batch.status = "completed"
         batch.completed_at = datetime.utcnow()
@@ -619,8 +647,18 @@ def retry_row(
         batch = db.get(BulkImageBatch, batch_id)
         batch.status = "uploading"
         batch.error_message = None
-        db.commit()
+        batch.completed_at = None
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise StatusConflict(
+                "已有其他图片批次正在处理，请先完成或取消后再重新核对"
+            ) from exc
         validate_batch(db, batch_id=batch_id, user_id=user_id, is_admin=is_admin)
+        batch = db.get(BulkImageBatch, batch_id)
+        batch.error_message = ORDER_REVIEW_REQUIRED
+        db.commit()
         return serialize_row(db.get(BulkImageStaging, row_id))
     except Exception as exc:
         db.rollback()
@@ -667,6 +705,7 @@ def serialize_batch(
         "excluded_count": batch.excluded_count,
         "failed_count": batch.failed_count,
         "error_message": batch.error_message,
+        "requires_order_review": batch.error_message == ORDER_REVIEW_REQUIRED,
         "can_continue": (
             batch.source_type == "direct"
             and batch.status == "preview_ready"
@@ -764,6 +803,7 @@ def _infer_product_id(
     *,
     country_id: int | None,
     port_id: int | None,
+    candidate_product_ids: list[int] | None,
 ) -> int | None:
     """Use only an unambiguous exact product-code filename match.
 
@@ -779,6 +819,10 @@ def _infer_product_id(
         stmt = stmt.where(Product.country_id == country_id)
     if port_id is not None:
         stmt = stmt.where(Product.port_id == port_id)
+    if candidate_product_ids is not None:
+        if not candidate_product_ids:
+            return None
+        stmt = stmt.where(Product.id.in_(candidate_product_ids))
     candidates = list(db.execute(stmt.limit(2)).scalars())
     return candidates[0] if len(candidates) == 1 else None
 
@@ -786,7 +830,11 @@ def _infer_product_id(
 def _load_direct_batch(
     db: Session, batch_id: int, user_id: int, is_admin: bool
 ) -> BulkImageBatch:
-    batch = db.get(BulkImageBatch, batch_id)
+    batch = db.execute(
+        select(BulkImageBatch)
+        .where(BulkImageBatch.id == batch_id)
+        .with_for_update()
+    ).scalar_one_or_none()
     if batch is None or (not is_admin and batch.user_id != user_id):
         raise NotFound("批次不存在")
     if batch.source_type != "direct":
