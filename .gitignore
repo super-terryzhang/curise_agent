@@ -61,3 +61,6 @@ yarn-error.log*
 .vscode/
 *.swp
 *.swo
+
+# Isolated feature workspaces
+.worktrees/
