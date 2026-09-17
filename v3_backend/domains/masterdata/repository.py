@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from domains.masterdata.models import (
@@ -17,6 +17,7 @@ from domains.masterdata.models import (
     ExchangeRate,
     Port,
     Product,
+    ProductImage,
     Supplier,
     SupplierCategory,
 )
@@ -177,6 +178,76 @@ def list_products(
 
     items = list(db.execute(stmt.order_by(Product.id.desc()).limit(limit).offset(offset)).scalars())
     return total, items
+
+
+def list_image_upload_products(
+    db: Session,
+    *,
+    search: str | None = None,
+    country_id: int | None = None,
+    port_id: int | None = None,
+    only_without_images: bool = False,
+    limit: int = 30,
+    offset: int = 0,
+) -> tuple[int, list[dict[str, Any]]]:
+    """Return the narrow product projection used by the image workbench."""
+    image_stats = (
+        select(
+            ProductImage.product_id.label("product_id"),
+            func.count(ProductImage.id).label("image_count"),
+            func.max(
+                case(
+                    (ProductImage.display_order == 0, ProductImage.thumbnail_key),
+                    else_=None,
+                )
+            ).label("thumbnail_key"),
+        )
+        .group_by(ProductImage.product_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            Product.id,
+            Product.code,
+            Product.product_name_en,
+            Product.product_name_jp,
+            Product.country_id,
+            Country.name.label("country_name"),
+            Product.port_id,
+            Port.name.label("port_name"),
+            image_stats.c.thumbnail_key,
+            func.coalesce(image_stats.c.image_count, 0).label("image_count"),
+        )
+        .outerjoin(Country, Country.id == Product.country_id)
+        .outerjoin(Port, Port.id == Product.port_id)
+        .outerjoin(image_stats, image_stats.c.product_id == Product.id)
+        .where(
+            Product.status.is_(True),
+            or_(Product.effective_to.is_(None), Product.effective_to >= date.today()),
+        )
+    )
+    if search:
+        pattern = f"%{search.strip()}%"
+        stmt = stmt.where(
+            or_(
+                Product.product_name_en.ilike(pattern),
+                Product.product_name_jp.ilike(pattern),
+                Product.code.ilike(pattern),
+            )
+        )
+    if country_id is not None:
+        stmt = stmt.where(Product.country_id == country_id)
+    if port_id is not None:
+        stmt = stmt.where(Product.port_id == port_id)
+    if only_without_images:
+        stmt = stmt.where(func.coalesce(image_stats.c.image_count, 0) == 0)
+
+    total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
+    rows = db.execute(
+        stmt.order_by(Product.id.desc()).limit(limit).offset(offset)
+    ).mappings().all()
+    return int(total), [dict(row) for row in rows]
 
 
 def get_product(db: Session, product_id: int) -> Product | None:

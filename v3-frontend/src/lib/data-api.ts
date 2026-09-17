@@ -59,6 +59,19 @@ export interface ProductItem {
   is_effective?: boolean | null;
 }
 
+export interface ImageUploadProductOption {
+  id: number;
+  code: string | null;
+  product_name_en: string | null;
+  product_name_jp: string | null;
+  country_id: number | null;
+  country_name: string | null;
+  port_id: number | null;
+  port_name: string | null;
+  thumbnail_url: string | null;
+  image_count: number;
+}
+
 export interface ProductPricePeriod {
   id: number;
   product_id: number;
@@ -215,6 +228,27 @@ export function listProducts(params?: {
   if (params?.offset != null) qs.set("offset", String(params.offset));
   const query = qs.toString();
   return api<PaginatedResponse<ProductItem>>(`/api/data/products${query ? `?${query}` : ""}`);
+}
+
+export function listImageUploadProducts(params?: {
+  search?: string;
+  country_id?: number;
+  port_id?: number;
+  only_without_images?: boolean;
+  limit?: number;
+  offset?: number;
+}): Promise<PaginatedResponse<ImageUploadProductOption>> {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.country_id) qs.set("country_id", String(params.country_id));
+  if (params?.port_id) qs.set("port_id", String(params.port_id));
+  if (params?.only_without_images) qs.set("only_without_images", "true");
+  if (params?.limit) qs.set("limit", String(params.limit));
+  if (params?.offset != null) qs.set("offset", String(params.offset));
+  const query = qs.toString();
+  return api<PaginatedResponse<ImageUploadProductOption>>(
+    `/api/data/products/image-upload-options${query ? `?${query}` : ""}`,
+  );
 }
 
 export function listSuppliers() {

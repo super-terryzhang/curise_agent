@@ -43,24 +43,24 @@ import {
 } from "@/lib/bulk-images-api";
 import {
   listCountries,
+  listImageUploadProducts,
   listPorts,
   listProductImages,
-  listProducts,
   type CountryItem,
+  type ImageUploadProductOption,
   type PortItem,
   type ProductImage,
-  type ProductItem,
 } from "@/lib/data-api";
 import { buildDefaultImageOrder, makePrimary, moveImage } from "@/lib/image-upload-order";
 import { cn } from "@/lib/utils";
-import { CompactImageDropzone, SelectedProductImagePreview } from "./product-upload-target";
+import { CompactImageDropzone, ProductImageSelectionTable } from "./product-upload-target";
 
 const STEPS = ["选择图片", "程序检查", "主图与顺序", "确认提交"];
 const ACCEPT = "image/jpeg,image/png,image/webp";
 type UploadScope = {
   countryId?: number;
   portId?: number;
-  candidateProductIds: number[];
+  candidateProductIds?: number[];
 };
 type UploadFailure = {
   id: string;
@@ -108,7 +108,7 @@ function StepBar({ current }: { current: number }) {
   );
 }
 
-function ProductLabel({ product }: { product: ProductItem }) {
+function ProductLabel({ product }: { product: ImageUploadProductOption }) {
   return (
     <>
       <span className="font-medium">{product.code || `#${product.id}`}</span>
@@ -142,12 +142,15 @@ export default function ProductImageUploadPage() {
   const [step, setStep] = useState(1);
   const [batch, setBatch] = useState<BulkImageBatch | null>(null);
   const [history, setHistory] = useState<BulkImageBatch[]>([]);
-  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [products, setProducts] = useState<ImageUploadProductOption[]>([]);
+  const [productTotal, setProductTotal] = useState(0);
+  const [productsLoading, setProductsLoading] = useState(false);
   const [countries, setCountries] = useState<CountryItem[]>([]);
   const [ports, setPorts] = useState<PortItem[]>([]);
   const [countryId, setCountryId] = useState<number | null>(null);
   const [portId, setPortId] = useState<number | null>(null);
   const [productSearch, setProductSearch] = useState("");
+  const [onlyWithoutImages, setOnlyWithoutImages] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -162,12 +165,34 @@ export default function ProductImageUploadPage() {
   const orderSavingRef = useRef(false);
   const [replaceTarget, setReplaceTarget] = useState<BulkImageStagingRow | null>(null);
   const [uploadFailures, setUploadFailures] = useState<UploadFailure[]>([]);
+  const productRequestIdRef = useRef(0);
 
-  const loadProducts = useCallback(async (search = "") => {
-    const result = await listProducts({ search: search || undefined, country_id: countryId || undefined, port_id: portId || undefined, limit: 100, is_effective: true });
-    setProducts(result.items);
-    setSelectedProductId((current) => current && result.items.some((product) => product.id === current) ? current : null);
-  }, [countryId, portId]);
+  const loadProducts = useCallback(async (search = "", offset = 0, append = false) => {
+    const requestId = ++productRequestIdRef.current;
+    setProductsLoading(true);
+    try {
+      const result = await listImageUploadProducts({
+        search: search.trim() || undefined,
+        country_id: countryId || undefined,
+        port_id: portId || undefined,
+        only_without_images: onlyWithoutImages,
+        limit: 40,
+        offset,
+      });
+      if (requestId !== productRequestIdRef.current) return;
+      setProductTotal(result.total);
+      setProducts((current) => {
+        if (!append) return result.items;
+        const known = new Set(current.map((product) => product.id));
+        return [...current, ...result.items.filter((product) => !known.has(product.id))];
+      });
+      if (!append) {
+        setSelectedProductId((current) => current && result.items.some((product) => product.id === current) ? current : null);
+      }
+    } finally {
+      if (requestId === productRequestIdRef.current) setProductsLoading(false);
+    }
+  }, [countryId, onlyWithoutImages, portId]);
 
   const selectedProduct = useMemo(
     () => products.find((product) => product.id === selectedProductId) ?? null,
@@ -207,27 +232,43 @@ export default function ProductImageUploadPage() {
 
   useEffect(() => {
     let alive = true;
-    Promise.all([getActiveDirectImageBatch(), listProducts({ limit: 100, is_effective: true }), listDirectImageBatches(), listCountries(), listPorts()])
-      .then(([active, productPage, batches, countryRows, portRows]) => {
-        if (!alive) return;
-        setProducts(productPage.items);
-        setSelectedProductId(productPage.items[0]?.id ?? null);
-        setHistory(batches.items);
-        setCountries(countryRows);
-        setPorts(portRows);
-        if (active) {
-          setBatch(active);
-          setSelectedPlanId(active.plans?.[0]?.product_id ?? null);
-          setStep(active.status === "processing" ? 4 : active.requires_order_review ? 3 : active.status === "preview_ready" ? 2 : 1);
-        }
+    void getActiveDirectImageBatch()
+      .then((active) => {
+        if (!alive || !active) return;
+        setBatch(active);
+        setSelectedPlanId(active.plans?.[0]?.product_id ?? null);
+        setStep(active.status === "processing" ? 4 : active.requires_order_review ? 3 : active.status === "preview_ready" ? 2 : 1);
       })
-      .catch((error) => toast.error(error instanceof Error ? error.message : "页面读取失败"));
+      .catch((error) => toast.error(error instanceof Error ? error.message : "当前批次读取失败"));
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void listCountries()
+      .then((rows) => { if (alive) setCountries(rows); })
+      .catch((error) => toast.error(error instanceof Error ? error.message : "国家读取失败"));
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void listPorts()
+      .then((rows) => { if (alive) setPorts(rows); })
+      .catch((error) => toast.error(error instanceof Error ? error.message : "港口读取失败"));
     return () => { alive = false; };
   }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void loadProducts(productSearch).catch((error) => toast.error(error instanceof Error ? error.message : "产品读取失败"));
+      void refreshHistory().catch((error) => toast.error(error instanceof Error ? error.message : "最近上传读取失败"));
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [refreshHistory]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadProducts(productSearch, 0, false).catch((error) => toast.error(error instanceof Error ? error.message : "产品读取失败"));
     }, 250);
     return () => window.clearTimeout(timer);
   }, [productSearch, loadProducts]);
@@ -247,7 +288,6 @@ export default function ProductImageUploadPage() {
     const uploadScope: UploadScope = {
       countryId: countryId ?? undefined,
       portId: portId ?? undefined,
-      candidateProductIds: products.map((product) => product.id),
     };
     try {
       const current = await ensureBatch();
@@ -275,7 +315,7 @@ export default function ProductImageUploadPage() {
     } finally {
       setBusy(false);
     }
-  }, [countryId, ensureBatch, portId, products, selectedProductId]);
+  }, [countryId, ensureBatch, portId, selectedProductId]);
 
   const checkBatch = useCallback(async () => {
     if (!batch || batch.total_files === 0) return;
@@ -283,6 +323,7 @@ export default function ProductImageUploadPage() {
     try {
       const checked = await validateDirectImageBatch(batch.id);
       setBatch(checked);
+      setOnlyWithoutImages(false);
       setStep(2);
       if (checked.error_count === 0) toast.success("全部图片通过检查");
     } catch (error) {
@@ -513,7 +554,7 @@ export default function ProductImageUploadPage() {
 
   return (
     <div className="h-full overflow-y-auto bg-muted/20">
-      <div className="mx-auto max-w-7xl px-6 py-7">
+      <div className="mx-auto max-w-[1480px] px-6 py-7">
         <div className="mb-5 flex items-start justify-between gap-4">
           <PageHeader title="产品图片上传" description="上传、检查并核对最终图库；确认前不会修改正式产品图片。" />
           <Button variant="outline" size="sm" onClick={() => router.push("/dashboard/workbench")}><ArrowLeft className="mr-1 h-4 w-4" />返回工作台</Button>
@@ -523,47 +564,115 @@ export default function ProductImageUploadPage() {
           <StepBar current={step} />
           <CardContent className="p-5">
             {step === 1 && (
-              <div className="space-y-5">
-                <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
-                  <section className="rounded-md border bg-background p-4">
-                    <label className="text-xs font-semibold">1. 选择图片对应的产品</label>
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      <select aria-label="国家筛选" value={countryId || ""} onChange={(event) => { setCountryId(event.target.value ? Number(event.target.value) : null); setPortId(null); setSelectedProductId(null); }} className="h-9 rounded-md border bg-background px-2 text-xs"><option value="">全部国家</option>{countries.map((country) => <option key={country.id} value={country.id}>{country.name}</option>)}</select>
-                      <select aria-label="港口筛选" value={portId || ""} onChange={(event) => { setPortId(event.target.value ? Number(event.target.value) : null); setSelectedProductId(null); }} className="h-9 rounded-md border bg-background px-2 text-xs"><option value="">全部港口</option>{ports.filter((port) => !countryId || port.country_id === countryId).map((port) => <option key={port.id} value={port.id}>{port.name}</option>)}</select>
+              <div className="space-y-4">
+                <section className="rounded-md border bg-background p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold">添加图片</div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {selectedProduct
+                          ? `当前图片将归属于 ${selectedProduct.code || `#${selectedProduct.id}`} · ${selectedProduct.product_name_en || selectedProduct.product_name_jp || "未命名产品"}`
+                          : "当前使用文件名自动匹配；无法唯一匹配的图片会进入程序检查。"}
+                      </p>
                     </div>
-                    <div className="relative mt-3">
-                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                      <input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="产品代码或名称" className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none focus:border-primary" />
-                    </div>
-                    <div className="mt-3 max-h-72 divide-y overflow-y-auto rounded-md border">
-                      <button type="button" onClick={() => setSelectedProductId(null)} className={cn("block w-full px-3 py-3 text-left text-xs hover:bg-muted/50", selectedProductId === null && "bg-primary/5 ring-1 ring-inset ring-primary/30")}><span className="font-medium">按文件名自动匹配</span><span className="mt-1 block text-[11px] text-muted-foreground">仅“文件名 = 唯一产品代码”时自动分配，其余进入程序检查</span></button>
-                      {products.map((product) => (
-                        <button key={product.id} type="button" onClick={() => setSelectedProductId(product.id)} className={cn("block w-full px-3 py-3 text-left text-xs hover:bg-muted/50", selectedProductId === product.id && "bg-primary/5 ring-1 ring-inset ring-primary/30")}>
-                          <ProductLabel product={product} />
-                        </button>
-                      ))}
-                      {products.length === 0 && <p className="p-4 text-center text-xs text-muted-foreground">没有找到产品</p>}
-                    </div>
-                  </section>
+                    <Button
+                      type="button"
+                      variant={selectedProductId === null ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setSelectedProductId(null)}
+                    >
+                      按文件名自动匹配
+                    </Button>
+                  </div>
+                  <CompactImageDropzone
+                    busy={busy}
+                    dragging={draggingFiles}
+                    progress={uploadProgress}
+                    onDraggingChange={setDraggingFiles}
+                    onFiles={(files) => void handleFiles(files)}
+                  />
+                </section>
 
-                  <section className="rounded-md border bg-background p-4">
-                    <SelectedProductImagePreview
-                      product={selectedProduct}
-                      images={selectedProductImages}
-                      loading={selectedImagesLoading}
-                      error={selectedImagesError}
-                      onRetry={() => setSelectedImagesReload((value) => value + 1)}
-                    />
-                    <div className="mt-4 text-xs font-semibold">2. 添加这个产品的图片</div>
-                    <CompactImageDropzone
+                <section className="rounded-md border bg-background">
+                  <div className="grid gap-3 border-b p-3 lg:grid-cols-[170px_170px_minmax(260px,1fr)_auto] lg:items-center">
+                    <select
+                      aria-label="国家筛选"
+                      value={countryId || ""}
+                      onChange={(event) => {
+                        setCountryId(event.target.value ? Number(event.target.value) : null);
+                        setPortId(null);
+                        setSelectedProductId(null);
+                      }}
+                      className="h-9 rounded-md border bg-background px-3 text-xs"
+                    >
+                      <option value="">全部国家</option>
+                      {countries.map((country) => <option key={country.id} value={country.id}>{country.name}</option>)}
+                    </select>
+                    <select
+                      aria-label="港口筛选"
+                      value={portId || ""}
+                      onChange={(event) => {
+                        setPortId(event.target.value ? Number(event.target.value) : null);
+                        setSelectedProductId(null);
+                      }}
+                      className="h-9 rounded-md border bg-background px-3 text-xs"
+                    >
+                      <option value="">全部港口</option>
+                      {ports.filter((port) => !countryId || port.country_id === countryId).map((port) => <option key={port.id} value={port.id}>{port.name}</option>)}
+                    </select>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <input
+                        value={productSearch}
+                        onChange={(event) => setProductSearch(event.target.value)}
+                        placeholder="搜索产品代码或名称"
+                        className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none focus:border-primary"
+                      />
+                    </div>
+                    <label className="flex h-9 cursor-pointer items-center gap-2 whitespace-nowrap rounded-md border px-3 text-xs">
+                      <input
+                        type="checkbox"
+                        checked={onlyWithoutImages}
+                        onChange={(event) => {
+                          setOnlyWithoutImages(event.target.checked);
+                          setSelectedProductId(null);
+                        }}
+                        className="h-4 w-4"
+                      />
+                      只看暂无图片
+                    </label>
+                  </div>
+                  <div className="p-3">
+                    <ProductImageSelectionTable
+                      products={products}
+                      selectedProductId={selectedProductId}
+                      selectedImages={selectedProductImages}
+                      selectedImagesLoading={selectedImagesLoading}
+                      selectedImagesError={selectedImagesError}
+                      stagedRows={batch?.rows || []}
                       busy={busy}
-                      dragging={draggingFiles}
-                      progress={uploadProgress}
-                      onDraggingChange={setDraggingFiles}
+                      loading={productsLoading}
+                      onSelectProduct={setSelectedProductId}
+                      onRetryImages={() => setSelectedImagesReload((value) => value + 1)}
                       onFiles={(files) => void handleFiles(files)}
                     />
-                  </section>
-                </div>
+                    <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                      <span>显示 {products.length} / {productTotal} 个产品</span>
+                      {products.length < productTotal && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={productsLoading}
+                          onClick={() => void loadProducts(productSearch, products.length, true)
+                            .catch((error) => toast.error(error instanceof Error ? error.message : "更多产品读取失败"))}
+                        >
+                          {productsLoading && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}加载更多
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </section>
 
                 {batch && batch.total_files > 0 && (
                   <div className="rounded-md border bg-background">

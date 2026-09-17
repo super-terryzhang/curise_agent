@@ -1,10 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import type { ProductImage, ProductItem } from "@/lib/data-api";
+import type { BulkImageStagingRow } from "@/lib/bulk-images-api";
+import type { ImageUploadProductOption, ProductImage } from "@/lib/data-api";
 import {
   CompactImageDropzone,
-  SelectedProductImagePreview,
+  ProductImageSelectionTable,
 } from "./product-upload-target";
 
 const product = {
@@ -14,7 +15,7 @@ const product = {
   product_name_jp: null,
   port_name: "大阪",
   image_count: 2,
-} as ProductItem;
+} as ImageUploadProductOption;
 
 const images = [
   {
@@ -32,39 +33,46 @@ const images = [
 ] as ProductImage[];
 
 describe("image upload target", () => {
-  it("shows all current images and identifies the primary image for the selected product", () => {
+  it("uses a wide business table and expands the selected row with current and staged images", () => {
     const html = renderToStaticMarkup(
-      <SelectedProductImagePreview
-        product={product}
-        images={images}
+      <ProductImageSelectionTable
+        products={[product]}
+        selectedProductId={product.id}
+        selectedImages={images}
+        selectedImagesLoading={false}
+        selectedImagesError={null}
+        stagedRows={[
+          {
+            id: 91,
+            product_id: product.id,
+            image_filename: "tea-new.jpg",
+            preview_url: "https://example.test/new.jpg",
+          } as BulkImageStagingRow,
+        ]}
+        busy={false}
         loading={false}
-        error={null}
-        onRetry={vi.fn()}
+        onSelectProduct={vi.fn()}
+        onRetryImages={vi.fn()}
+        onFiles={vi.fn()}
       />,
     );
 
+    expect(html).toContain("当前图片");
+    expect(html).toContain("产品代码");
+    expect(html).toContain("产品名称");
+    expect(html).toContain("国家 / 港口");
+    expect(html).toContain("本次新增");
     expect(html).toContain("99PRD80671");
     expect(html).toContain("TEA ICED VITALITY 32 OZ");
     expect(html).toContain("大阪");
     expect(html).toContain("现有 2 张");
+    expect(html).toContain("现有产品图片（2）");
     expect(html).toContain("tea-main.jpg");
     expect(html).toContain("tea-side.jpg");
+    expect(html).toContain("tea-new.jpg");
     expect(html).toContain("主图");
-  });
-
-  it("explains why no existing gallery is shown in automatic matching mode", () => {
-    const html = renderToStaticMarkup(
-      <SelectedProductImagePreview
-        product={null}
-        images={[]}
-        loading={false}
-        error={null}
-        onRetry={vi.fn()}
-      />,
-    );
-
-    expect(html).toContain("按文件名自动匹配");
-    expect(html).toContain("完成匹配后展示产品图库");
+    expect(html).toContain("为此产品选择图片");
+    expect(html).not.toContain("供应商");
   });
 
   it("uses a compact dropzone instead of the previous tall upload area", () => {
@@ -81,5 +89,6 @@ describe("image upload target", () => {
     expect(html).toContain("min-h-28");
     expect(html).not.toContain("min-h-56");
     expect(html).toContain("拖入图片或点击选择");
+    expect(html).not.toContain("文件夹");
   });
 });

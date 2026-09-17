@@ -16,6 +16,7 @@ from domains.masterdata.errors import BadRequest, Conflict
 from domains.masterdata.models import Product
 from domains.masterdata.price_periods import periods_by_product, sync_compatibility_periods
 from domains.masterdata.schemas import ProductCreate, ProductUpdate
+from infrastructure.storage import get_storage
 
 _DATE_FIELDS = (
     "effective_from",
@@ -108,6 +109,39 @@ def list_products(
             for p in products
         ],
     }
+
+
+def list_image_upload_products(
+    db: Session,
+    *,
+    search: str | None = None,
+    country_id: int | None = None,
+    port_id: int | None = None,
+    only_without_images: bool = False,
+    limit: int = 30,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Lean product rows for the image-upload picker, without price payloads."""
+    total, rows = repo.list_image_upload_products(
+        db,
+        search=search,
+        country_id=country_id,
+        port_id=port_id,
+        only_without_images=only_without_images,
+        limit=limit,
+        offset=offset,
+    )
+    storage = get_storage()
+    items = []
+    for row in rows:
+        thumbnail_key = row.pop("thumbnail_key")
+        row["thumbnail_url"] = (
+            storage.get_signed_url(thumbnail_key, expires_in=3600)
+            if thumbnail_key
+            else None
+        )
+        items.append(row)
+    return {"total": total, "items": items}
 
 
 def _atomic_write(fn):

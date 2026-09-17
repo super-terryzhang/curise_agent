@@ -189,6 +189,28 @@ def delete_supplier(supplier_id: int, db: DbDep, _admin: Admin):
 # ═════════ Products ══════════════════════════════════════════
 
 
+@router.get("/products/image-upload-options")
+def list_image_upload_products(
+    db: DbDep,
+    _reader: Writer,
+    search: str | None = Query(None),
+    country_id: int | None = Query(None),
+    port_id: int | None = Query(None),
+    only_without_images: bool = Query(False),
+    limit: int = Query(30, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+) -> dict[str, Any]:
+    return service.list_image_upload_products(
+        db,
+        search=search,
+        country_id=country_id,
+        port_id=port_id,
+        only_without_images=only_without_images,
+        limit=limit,
+        offset=offset,
+    )
+
+
 @router.get("/products")
 def list_products(
     db: DbDep,
