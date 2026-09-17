@@ -34,3 +34,13 @@
 前端提交 `dcb9fec1b61c4c3e8ed690c989ebbb8b8534c97d` 优化图片上传第一步：点击产品后显示完整现有图库和主图标识，上传拖放区改为紧凑布局。修改未涉及第二至第四步、后端、数据库或正式业务数据。
 
 本地前端 96 项测试、TypeScript 和标准生产构建通过，GitHub CI `35202327131` 前后端成功；Vercel `dpl_DidEP3xtoUEVFd8iRzR1RcmZdGwV` 已提升正式域名并为 Ready，正式图片上传页返回 200。后端 revision、镜像、数据库 0030 和三个 Scheduler 状态均沿用本页上一节已经核验的生产基线。
+
+## 同日第二轮验收优化
+
+源码提交 `92bfeabaeb61d45da86cd40fc12b1ecd3a8eb5bf` 将第一步改为全宽业务表格，加入国家、港口、产品代码/名称和“只看暂无图片”筛选；不加入供应商，也不支持整个文件夹上传。选中产品后在原行下方展开完整图库与该产品专用选择入口，本次新增图片直接显示在对应产品行。
+
+首屏改用图片工作台专用轻量接口，每页 40 项，只返回 10 个必要字段，并以固定 2 条 SQL 完成总数和当前页查询；前端去除重复产品请求并延后非关键历史读取。本地后端完整回归为 1737 passed、94 skipped、0 failed，前端 14 个文件、96 项测试通过，TypeScript、架构检查、Ruff 和 Next.js 生产构建通过；GitHub Actions `35231578358` 前后端成功。
+
+Cloud Build `936744d7-1af7-47de-aae3-30ce4862a751` 生成镜像 digest `sha256:dcd039d6f3f54a55b3fbcca26faa4abb488df94cc14afa727cd034198eabde2c`。候选验证后，后端 `cruise-v3-backend-img-table-20260917` 接收 100% 流量；正式前端为 `dpl_BRwUsYCd1tNFrcaeGbHuYUyd4Yep`，状态 Ready。
+
+本轮没有数据库迁移或业务数据写入。只读核验 `cruise-v3-image-upload-preflight-20260917-tq98s` 为 PASS：head 0030，1449 产品、71 订单、31 询价、621 张正式图片、6 个历史批次、9 条历史暂存记录和 1 条历史顺序计划；Oracle Job 与后端使用相同镜像，三个 Scheduler 均保持 ENABLED。

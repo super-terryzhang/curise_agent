@@ -94,4 +94,6 @@
 
 本地测试驱动证据包括后端接口/过滤/2-query 合同3项、前端轻量 API 与宽表格行为3项；扩大图片回归57项、前端专项6项、TypeScript、Ruff和标准 Next.js/Turbopack生产构建均通过。本地可丢弃预览库实测40项响应约8KB、9.7ms；视觉检查确认表格已占满内容区，Chrome扩展在开发模式产生既有 hydration 警告并阻止自动点击，因此不把该扩展下的点击结果表述为已通过。
 
-当前该轮改动仍在隔离分支，尚未合并、推送或部署；数据库结构保持0030不变。完成最终完整回归、合并、CI、Cloud Run/Vercel发布和正式只读验收后，再在本节补充正式 revision、deployment 与性能证据。
+本轮已合并并发布。生产源码提交为 `92bfeabaeb61d45da86cd40fc12b1ecd3a8eb5bf`，GitHub Actions `35231578358` 前后端成功；Cloud Build `936744d7-1af7-47de-aae3-30ce4862a751` 生成镜像 `sha256:dcd039d6f3f54a55b3fbcca26faa4abb488df94cc14afa727cd034198eabde2c`，候选在 0% 流量下通过健康、OpenAPI、鉴权和 CORS 检查后，revision `cruise-v3-backend-img-table-20260917` 才切换到 100%。
+
+正式前端 deployment 为 `dpl_BRwUsYCd1tNFrcaeGbHuYUyd4Yep`，状态 Ready，图片上传页、工作台和登录页均返回 200。数据库没有迁移，仍为 0030；只读核验 `cruise-v3-image-upload-preflight-20260917-tq98s` 为 PASS，确认 1449 产品、71 订单、31 询价和 621 张正式产品图片，Oracle Job 已更新为与后端相同的镜像，三个 Scheduler 保持 ENABLED。
