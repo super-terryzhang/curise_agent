@@ -158,7 +158,7 @@ def run_inquiry(
             sid: _order_metadata(order, db=db, supplier_id=sid)
             for sid in groups
         }
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        with ThreadPoolExecutor(max_workers=_effective_max_workers(db, max_workers)) as pool:
             futures = {
                 pool.submit(
                     _supplier_worker.run_supplier_safe,
@@ -411,7 +411,7 @@ def run_inquiry_for_group(
                 md["po_number"] = merged_po
             per_supplier_metadata[sid] = md
 
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        with ThreadPoolExecutor(max_workers=_effective_max_workers(db, max_workers)) as pool:
             futures = {
                 pool.submit(
                     _supplier_worker.run_supplier_safe,
@@ -650,6 +650,16 @@ def request_cancel(db: Session, order_id: int) -> Inquiry:
 
 
 # ─── Helpers ──────────────────────────────────────────────────
+
+
+def _effective_max_workers(db: Session, requested: int) -> int:
+    """Avoid sharing SQLite's single test/dev connection across threads.
+
+    Production PostgreSQL keeps the requested fan-out. The in-memory SQLite
+    fixture uses ``StaticPool`` so concurrent sessions share one connection;
+    overlapping commits on it can randomly erase another supplier's row.
+    """
+    return 1 if db.get_bind().dialect.name == "sqlite" else requested
 
 
 def _load_order(db: Session, order_id: int) -> Order:

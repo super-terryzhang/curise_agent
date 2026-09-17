@@ -29,11 +29,10 @@ from domains.inquiry import _supplier_worker as supplier_worker
 from domains.inquiry import orchestrator
 from domains.inquiry import repository as repo
 from domains.inquiry.errors import BadRequest, NotFound
-from domains.inquiry.models import Inquiry, InquirySupplier, SupplierTemplate
+from domains.inquiry.models import SupplierTemplate
 from domains.inquiry.sinks import RecordingSink
 from domains.masterdata.models import Supplier
 from domains.orders.models import Order
-
 
 # ─── Helpers ──────────────────────────────────────────────────
 
@@ -185,6 +184,22 @@ def test_pre_analyze_raises_for_missing_order(db):
     """orchestrator security boundary — order_id resolution is its only check."""
     with pytest.raises(NotFound):
         orchestrator.pre_analyze(db, 99999)
+
+
+def test_effective_max_workers_serializes_sqlite_and_preserves_postgres(db):
+    """StaticPool SQLite must serialize workers; production PostgreSQL must not."""
+    assert orchestrator._effective_max_workers(db, 4) == 1
+
+    class _PostgresBind:
+        class dialect:
+            name = "postgresql"
+
+    class _PostgresSession:
+        @staticmethod
+        def get_bind():
+            return _PostgresBind()
+
+    assert orchestrator._effective_max_workers(_PostgresSession(), 4) == 4
 
 
 # ─── run_inquiry — happy path ─────────────────────────────────
