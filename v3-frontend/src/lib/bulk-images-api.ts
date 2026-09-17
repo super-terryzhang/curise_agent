@@ -265,10 +265,13 @@ export async function uploadDirectImage(
   batchId: number,
   file: File,
   productId?: number,
+  scope?: { countryId?: number; portId?: number },
 ): Promise<BulkImageStagingRow> {
   const body = new FormData();
   body.append("file", file);
   if (productId) body.append("product_id", String(productId));
+  if (scope?.countryId) body.append("country_id", String(scope.countryId));
+  if (scope?.portId) body.append("port_id", String(scope.portId));
   const res = await fetchWithAuth(
     `${API_BASE}/api/data/bulk-images/${batchId}/files`,
     { method: "POST", body },

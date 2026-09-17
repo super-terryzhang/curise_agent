@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -89,6 +89,8 @@ def upload_file(
     content: bytes,
     content_type: str,
     product_id: int | None,
+    country_id: int | None = None,
+    port_id: int | None = None,
 ) -> dict[str, Any]:
     batch = _load_direct_batch(db, batch_id, user_id, is_admin)
     if batch.status not in ("uploading", "preview_ready"):
@@ -102,7 +104,9 @@ def upload_file(
         )
     ) or 0
     if product_id is None:
-        product_id = _infer_product_id(db, filename)
+        product_id = _infer_product_id(
+            db, filename, country_id=country_id, port_id=port_id
+        )
 
     row = BulkImageStaging(
         batch_id=batch.id,
@@ -163,6 +167,8 @@ def validate_batch(
     )
     included_by_product: dict[int, list[BulkImageStaging]] = {}
     for row in rows:
+        if row.status == "committed":
+            continue
         if row.decision == "exclude":
             row.status = "excluded"
             row.issue_code = None
@@ -205,6 +211,7 @@ def validate_batch(
     _rebuild_default_plans(db, batch, rows)
     _refresh_counters(db, batch)
     batch.status = "preview_ready"
+    batch.error_message = None
     db.commit()
     db.refresh(batch)
     return serialize_batch(db, batch)
@@ -259,6 +266,8 @@ def replace_row_file(
         raise NotFound("图片行不存在")
     old_storage_key = row.storage_key
     old_preview_key = row.preview_storage_key
+    new_storage_key: str | None = None
+    new_preview_key: str | None = None
     row.image_filename = Path(filename).name[:255]
     row.zip_path = filename
     row.file_size_bytes = len(content)
@@ -275,13 +284,11 @@ def replace_row_file(
             content_type=content_type,
             preview=bundle.medium,
         )
-        _cleanup_keys_best_effort(
-            [key for key in (old_storage_key, old_preview_key) if key]
-        )
         row.storage_key = new_storage_key
         row.preview_storage_key = new_preview_key
     else:
-        _cleanup_row_storage(row)
+        row.storage_key = None
+        row.preview_storage_key = None
     row.issue_code = issue_code
     row.error_message = message
     row.status = "ready" if issue_code is None and row.product_id is not None else "needs_attention"
@@ -289,8 +296,21 @@ def replace_row_file(
         row.issue_code = "product_required"
         row.error_message = "尚未指定产品，请选择这张图片属于哪个产品"
     batch.status = "uploading"
-    db.commit()
-    return validate_batch(db, batch_id=batch.id, user_id=user_id, is_admin=is_admin)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        _cleanup_keys_best_effort(
+            [key for key in (new_storage_key, new_preview_key) if key]
+        )
+        raise
+    result = validate_batch(db, batch_id=batch.id, user_id=user_id, is_admin=is_admin)
+    # The database now durably points at the replacement (or records the
+    # invalid replacement). Only after that is it safe to retire old objects.
+    _cleanup_keys_best_effort(
+        [key for key in (old_storage_key, old_preview_key) if key]
+    )
+    return result
 
 
 def save_plan(
@@ -314,14 +334,28 @@ def save_plan(
     ).scalar_one_or_none()
     if plan is None:
         raise NotFound("该产品不在当前批次中")
-    if plan.revision != expected_revision:
-        raise StatusConflict("图片顺序已在其他页面更新，请刷新后重试")
     expected = set(json.loads(plan.ordered_items))
     if len(items) != len(set(items)) or set(items) != expected:
         raise BadRequest("排序必须包含该产品的全部现有图片和待上传图片")
-    plan.ordered_items = json.dumps(items)
-    plan.revision += 1
+    changed = db.execute(
+        update(BulkImageProductPlan)
+        .where(
+            BulkImageProductPlan.id == plan.id,
+            BulkImageProductPlan.revision == expected_revision,
+        )
+        .values(
+            ordered_items=json.dumps(items),
+            revision=BulkImageProductPlan.revision + 1,
+            updated_at=datetime.utcnow(),
+        )
+        .returning(BulkImageProductPlan.id)
+    ).scalar_one_or_none()
+    if changed is None:
+        db.rollback()
+        raise StatusConflict("图片顺序已在其他页面更新，请刷新后重试")
     db.commit()
+    db.expire_all()
+    plan = db.get(BulkImageProductPlan, changed)
     return serialize_plan(db, plan)
 
 
@@ -355,6 +389,16 @@ def resume_batch(
     batch = _load_direct_batch(db, batch_id, user_id, is_admin)
     if batch.status != "error":
         raise StatusConflict("只有中断的图片任务可以恢复")
+    active = db.execute(
+        select(BulkImageBatch.id).where(
+            BulkImageBatch.user_id == batch.user_id,
+            BulkImageBatch.id != batch.id,
+            BulkImageBatch.source_type == "direct",
+            BulkImageBatch.status.in_(ACTIVE_STATUSES),
+        )
+    ).scalar_one_or_none()
+    if active is not None:
+        raise StatusConflict(f"请先完成或取消当前图片批次 #{active}，再恢复此任务")
     if not db.scalar(
         select(func.count(BulkImageStaging.id)).where(
             BulkImageStaging.batch_id == batch.id,
@@ -362,9 +406,21 @@ def resume_batch(
         )
     ):
         raise BadRequest("该批次没有可以恢复的图片")
-    batch.status = "processing"
-    batch.error_message = None
-    db.commit()
+    try:
+        changed = db.execute(
+            update(BulkImageBatch)
+            .where(BulkImageBatch.id == batch.id, BulkImageBatch.status == "error")
+            .values(status="processing", error_message=None)
+            .returning(BulkImageBatch.id)
+        ).scalar_one_or_none()
+        if changed is None:
+            db.rollback()
+            raise StatusConflict("批次状态已变化，请刷新后重试")
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise StatusConflict("已有其他图片批次正在处理，请先完成或取消") from exc
+    batch = db.get(BulkImageBatch, batch.id)
     db.refresh(batch)
     return batch
 
@@ -491,7 +547,7 @@ def run_commit(db: Session, batch: BulkImageBatch) -> None:
         batch.completed_at = datetime.utcnow()
         batch.error_message = None
         db.commit()
-    _cleanup_successful_rows(db, batch.id)
+    _cleanup_finished_rows(db, batch.id)
 
 
 def retry_row(
@@ -557,6 +613,15 @@ def retry_row(
         batch.ingested_count = _count_rows(db, batch.id, "committed")
         batch.failed_count = _count_rows(db, batch.id, "committed_failed")
         db.commit()
+    except StatusConflict:
+        db.rollback()
+        _cleanup_keys_best_effort(created_keys)
+        batch = db.get(BulkImageBatch, batch_id)
+        batch.status = "uploading"
+        batch.error_message = None
+        db.commit()
+        validate_batch(db, batch_id=batch_id, user_id=user_id, is_admin=is_admin)
+        return serialize_row(db.get(BulkImageStaging, row_id))
     except Exception as exc:
         db.rollback()
         _cleanup_keys_best_effort(created_keys)
@@ -565,7 +630,7 @@ def retry_row(
         row.error_message = f"重试失败：{str(exc)[:400]}"
         db.commit()
         return serialize_row(row)
-    _cleanup_successful_rows(db, batch.id)
+    _cleanup_finished_rows(db, batch.id)
     return serialize_row(db.get(BulkImageStaging, row_id))
 
 
@@ -693,7 +758,13 @@ def _file_issue(
     return None, None
 
 
-def _infer_product_id(db: Session, filename: str) -> int | None:
+def _infer_product_id(
+    db: Session,
+    filename: str,
+    *,
+    country_id: int | None,
+    port_id: int | None,
+) -> int | None:
     """Use only an unambiguous exact product-code filename match.
 
     ``ABC-001.jpg`` may resolve automatically; fuzzy or duplicate codes stay
@@ -703,13 +774,12 @@ def _infer_product_id(db: Session, filename: str) -> int | None:
     stem = Path(filename).stem.strip()
     if not stem:
         return None
-    candidates = list(
-        db.execute(
-            select(Product.id)
-            .where(func.lower(Product.code) == stem.lower())
-            .limit(2)
-        ).scalars()
-    )
+    stmt = select(Product.id).where(func.lower(Product.code) == stem.lower())
+    if country_id is not None:
+        stmt = stmt.where(Product.country_id == country_id)
+    if port_id is not None:
+        stmt = stmt.where(Product.port_id == port_id)
+    candidates = list(db.execute(stmt.limit(2)).scalars())
     return candidates[0] if len(candidates) == 1 else None
 
 
@@ -744,9 +814,16 @@ def _refresh_counters(db: Session, batch: BulkImageBatch) -> None:
 def _rebuild_default_plans(
     db: Session, batch: BulkImageBatch, rows: list[BulkImageStaging]
 ) -> None:
-    db.query(BulkImageProductPlan).filter(
-        BulkImageProductPlan.batch_id == batch.id
-    ).delete(synchronize_session=False)
+    existing_plans = list(
+        db.execute(
+            select(BulkImageProductPlan).where(
+                BulkImageProductPlan.batch_id == batch.id
+            )
+        ).scalars()
+    )
+    for existing_plan in existing_plans:
+        db.delete(existing_plan)
+    db.flush()
     product_ids = sorted(
         {
             row.product_id
@@ -857,11 +934,11 @@ def _store_staging_files(
         raise BadRequest("图片暂存失败，请重试") from exc
 
 
-def _cleanup_successful_rows(db: Session, batch_id: int) -> None:
+def _cleanup_finished_rows(db: Session, batch_id: int) -> None:
     rows = db.execute(
         select(BulkImageStaging).where(
             BulkImageStaging.batch_id == batch_id,
-            BulkImageStaging.status == "committed",
+            BulkImageStaging.status.in_(("committed", "excluded")),
         )
     ).scalars()
     for row in rows:

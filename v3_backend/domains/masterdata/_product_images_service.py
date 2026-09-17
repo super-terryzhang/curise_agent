@@ -405,6 +405,8 @@ def delete_product_image(
     deleted_order = row.display_order
 
     db.delete(row)
+    db.flush()
+    _compact_display_order_after_delete(db, product_id, deleted_order)
     db.commit()
 
     storage = get_storage()
@@ -418,13 +420,6 @@ def delete_product_image(
                 key,
                 exc,
             )
-
-    # Re-pack display_order so there's no hole left behind. Without
-    # this, deleting image at order=1 from a [0, 1, 2] product leaves
-    # [0, 2] which works but looks weird if the UI ever exposes the
-    # raw number.
-    _compact_display_order_after_delete(db, product_id, deleted_order)
-
 
 # ─── Internal helpers ─────────────────────────────────────────
 
@@ -474,7 +469,7 @@ def _compact_display_order_after_delete(
         )
         .values(display_order=ProductImage.display_order - 1)
     )
-    db.commit()
+    db.flush()
 
 
 def _sign(key: str) -> str:

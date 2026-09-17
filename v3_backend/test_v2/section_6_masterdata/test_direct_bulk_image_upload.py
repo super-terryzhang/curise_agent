@@ -5,11 +5,12 @@ from __future__ import annotations
 import io
 from datetime import datetime, timedelta
 
+import pytest
 from PIL import Image
 
 from domains.masterdata.images import bulk_service, direct_service
 from domains.masterdata.images.bulk_models import BulkImageBatch, BulkImageStaging
-from domains.masterdata.models import ProductImage
+from domains.masterdata.models import Country, Port, ProductImage
 from test_v2.fixtures.helpers import login, seed_product, seed_user
 
 
@@ -269,6 +270,48 @@ def test_retry_restores_all_failed_rows_for_same_product_atomically(
     assert db.query(ProductImage).filter_by(product_id=product.id).count() == 2
 
 
+def test_failed_retry_rebases_when_gallery_changed(client, db, monkeypatch):
+    _user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    staged = client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"product_id": str(product.id)},
+        files={"file": ("rebase.png", _png(), "image/png")},
+        headers=headers,
+    ).json()
+    client.post(f"/api/data/bulk-images/{batch_id}/validate", headers=headers)
+    original = direct_service.image_service.add_product_image
+    monkeypatch.setattr(
+        direct_service.image_service,
+        "add_product_image",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("temporary error")),
+    )
+    failed = client.post(f"/api/data/bulk-images/{batch_id}/commit", headers=headers)
+    assert failed.json()["failed_count"] == 1
+    monkeypatch.setattr(direct_service.image_service, "add_product_image", original)
+    concurrent = client.post(
+        f"/api/data/products/{product.id}/images",
+        files={"file": ("concurrent.png", _png((99, 88, 77)), "image/png")},
+        headers=headers,
+    ).json()
+
+    rebased = client.post(
+        f"/api/data/bulk-images/{batch_id}/rows/{staged['id']}/retry",
+        headers=headers,
+    )
+    assert rebased.status_code == 200, rebased.text
+    assert rebased.json()["status"] == "ready"
+    current = client.get(f"/api/data/bulk-images/{batch_id}", headers=headers).json()
+    assert current["status"] == "preview_ready"
+    assert current["error_message"] is None
+    assert current["plans"][0]["expected_existing_image_ids"] == [concurrent["id"]]
+
+    completed = client.post(f"/api/data/bulk-images/{batch_id}/commit", headers=headers)
+    assert completed.status_code == 202
+    assert completed.json()["status"] == "completed"
+    assert db.query(ProductImage).filter_by(product_id=product.id).count() == 2
+
+
 def test_gc_cleans_abandoned_direct_staging_files(client, db):
     _user, product, headers = _setup(db, client)
     batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
@@ -347,6 +390,37 @@ def test_concurrent_gallery_change_returns_batch_to_review(client, db):
     assert response.json()["status"] == "preview_ready"
     assert "其他用户" in response.json()["error_message"]
     assert db.query(ProductImage).filter_by(product_id=product.id).count() == 1
+
+    checked = client.post(
+        f"/api/data/bulk-images/{batch_id}/validate", headers=headers
+    )
+    assert checked.status_code == 200
+    assert checked.json()["error_message"] is None
+    assert checked.json()["plans"][0]["expected_existing_image_ids"]
+    committed = client.post(f"/api/data/bulk-images/{batch_id}/commit", headers=headers)
+    assert committed.status_code == 202
+    assert committed.json()["status"] == "completed"
+    assert db.query(ProductImage).filter_by(product_id=product.id).count() == 2
+
+
+def test_commit_claim_is_compare_and_swap(client, db):
+    user, product, headers = _setup(db, client)
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"product_id": str(product.id)},
+        files={"file": ("claim.png", _png(), "image/png")},
+        headers=headers,
+    )
+    client.post(f"/api/data/bulk-images/{batch_id}/validate", headers=headers)
+    claimed = bulk_service.trigger_commit(
+        db, batch_id=batch_id, user_id=user.id, is_admin=False
+    )
+    assert claimed.status == "processing"
+    with pytest.raises(bulk_service.StatusConflict):
+        bulk_service.trigger_commit(
+            db, batch_id=batch_id, user_id=user.id, is_admin=False
+        )
 
 
 def test_processing_direct_batch_cannot_be_force_cancelled(client, db):
@@ -513,6 +587,19 @@ def test_stuck_batch_can_resume_from_unfinished_product(client, db):
     assert db.query(ProductImage).filter_by(product_id=product.id).count() == 1
 
 
+def test_error_batch_cannot_resume_while_new_batch_is_active(client, db):
+    _user, _product, headers = _setup(db, client)
+    old_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    old = db.get(BulkImageBatch, old_id)
+    old.status = "error"
+    db.commit()
+    current_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+
+    resumed = client.post(f"/api/data/bulk-images/{old_id}/resume", headers=headers)
+    assert resumed.status_code == 409
+    assert str(current_id) in resumed.json()["detail"]
+
+
 def test_non_owner_cannot_read_or_mutate_direct_batch(client, db):
     _user, _product, owner_headers = _setup(db, client)
     batch_id = client.post(
@@ -527,6 +614,32 @@ def test_non_owner_cannot_read_or_mutate_direct_batch(client, db):
     assert client.delete(
         f"/api/data/bulk-images/{batch_id}", headers=other_headers
     ).status_code == 404
+
+
+def test_filename_auto_match_is_limited_to_selected_location(client, db):
+    _user, first, headers = _setup(db, client)
+    country = Country(name="Scoped country")
+    db.add(country)
+    db.flush()
+    port = Port(name="Scoped port", country_id=country.id)
+    db.add(port)
+    db.commit()
+    second = seed_product(
+        db,
+        code=first.code,
+        name="Scoped duplicate",
+        country_id=country.id,
+        port_id=port.id,
+    )
+    batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
+    uploaded = client.post(
+        f"/api/data/bulk-images/{batch_id}/files",
+        data={"country_id": str(country.id), "port_id": str(port.id)},
+        files={"file": (f"{first.code}.png", _png(), "image/png")},
+        headers=headers,
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    assert uploaded.json()["product_id"] == second.id
 
 
 def test_completed_cleanup_failure_keeps_keys_for_gc_retry(

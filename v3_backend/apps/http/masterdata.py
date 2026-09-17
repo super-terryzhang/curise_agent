@@ -542,6 +542,8 @@ async def upload_direct_image_file(
     user: ProductUploader,
     file: UploadFile = File(...),
     product_id: int | None = Form(None),
+    country_id: int | None = Form(None),
+    port_id: int | None = Form(None),
 ) -> dict[str, Any]:
     raw = await file.read()
     try:
@@ -554,6 +556,8 @@ async def upload_direct_image_file(
             content=raw,
             content_type=file.content_type or "application/octet-stream",
             product_id=product_id,
+            country_id=country_id,
+            port_id=port_id,
         )
     except bulk_service.BulkImageError as exc:
         raise _translate_bulk(exc) from exc

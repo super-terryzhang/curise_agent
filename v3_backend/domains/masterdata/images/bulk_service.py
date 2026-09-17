@@ -28,7 +28,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from domains.masterdata import _product_images_service as image_service
@@ -562,9 +562,21 @@ def trigger_commit(
         )
     if batch.source_type == "direct" and batch.error_count:
         raise StatusConflict("仍有图片未通过检查，请处理后再提交")
-    batch.status = "processing"
-    batch.error_message = None
+    claimed = db.execute(
+        update(BulkImageBatch)
+        .where(
+            BulkImageBatch.id == batch.id,
+            BulkImageBatch.status == "preview_ready",
+        )
+        .values(status="processing", error_message=None)
+        .returning(BulkImageBatch.id)
+    ).scalar_one_or_none()
+    if claimed is None:
+        db.rollback()
+        raise StatusConflict("批次已经提交或状态已变化，请刷新后查看")
     db.commit()
+    db.expire_all()
+    batch = db.get(BulkImageBatch, claimed)
     db.refresh(batch)
     return batch
 

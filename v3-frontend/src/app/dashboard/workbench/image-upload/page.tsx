@@ -190,7 +190,12 @@ export default function ProductImageUploadPage() {
       let failures = 0;
       for (let index = 0; index < list.length; index += 1) {
         try {
-          await uploadDirectImage(current.id, list[index], selectedProductId ?? undefined);
+          await uploadDirectImage(
+            current.id,
+            list[index],
+            selectedProductId ?? undefined,
+            { countryId: countryId ?? undefined, portId: portId ?? undefined },
+          );
         } catch (error) {
           failures += 1;
           const message = error instanceof Error ? error.message : "上传失败";
@@ -207,7 +212,7 @@ export default function ProductImageUploadPage() {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
     }
-  }, [ensureBatch, selectedProductId]);
+  }, [countryId, ensureBatch, portId, selectedProductId]);
 
   const checkBatch = useCallback(async () => {
     if (!batch || batch.total_files === 0) return;
@@ -291,7 +296,7 @@ export default function ProductImageUploadPage() {
   }, [batch, saveOrder, selectedPlan]);
 
   const commit = useCallback(async () => {
-    if (!batch) return;
+    if (!batch || orderSavingRef.current) return;
     setBusy(true);
     try {
       const current = await commitBulkImageBatch(batch.id);
@@ -398,7 +403,12 @@ export default function ProductImageUploadPage() {
     setBusy(true);
     try {
       const current = await ensureBatch();
-      await uploadDirectImage(current.id, failure.file, failure.productId ?? undefined);
+      await uploadDirectImage(
+        current.id,
+        failure.file,
+        failure.productId ?? undefined,
+        { countryId: countryId ?? undefined, portId: portId ?? undefined },
+      );
       setUploadFailures((items) => items.filter((item) => item.id !== failureId));
       setBatch(await getBulkImageBatch(current.id));
     } catch (error) {
@@ -406,7 +416,7 @@ export default function ProductImageUploadPage() {
     } finally {
       setBusy(false);
     }
-  }, [ensureBatch, uploadFailures]);
+  }, [countryId, ensureBatch, portId, uploadFailures]);
 
   const issues = batch?.rows.filter((row) => row.status === "needs_attention") || [];
   const orderChanges = useMemo(() => {
@@ -414,8 +424,11 @@ export default function ProductImageUploadPage() {
     let primary = 0;
     let order = 0;
     for (const plan of batch.plans) {
-      const staged = batch.rows.filter((row) => row.product_id === plan.product_id && row.decision !== "exclude" && ["ready", "committed", "committed_failed"].includes(row.status)).map((row) => ({ id: row.id, upload_order: row.upload_order || row.id }));
-      const defaults = buildDefaultImageOrder(plan.existing_images, staged).map((item) => item.token);
+      const staged = batch.rows.filter((row) => row.product_id === plan.product_id && row.decision !== "exclude" && ["ready", "committed", "committed_failed"].includes(row.status)).sort((a, b) => (a.upload_order || a.id) - (b.upload_order || b.id));
+      const defaults = [
+        ...plan.expected_existing_image_ids.map((id) => `existing:${id}`),
+        ...staged.map((row) => `staged:${row.id}`),
+      ];
       if (plan.ordered_items[0] !== defaults[0]) primary += 1;
       if (plan.ordered_items.join("|") !== defaults.join("|")) order += 1;
     }
@@ -529,7 +542,7 @@ export default function ProductImageUploadPage() {
                     <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">{selectedPlan.ordered_items.map((token, index) => { const [kind, rawId] = token.split(":"); const existing = kind === "existing" ? selectedPlan.existing_images.find((image) => image.id === Number(rawId)) : null; const staged = kind === "staged" ? stagedById.get(Number(rawId)) : null; const preview = existing?.preview_url || staged?.preview_url; return <div key={token} draggable={!orderSaving} onDragStart={() => setDragToken(token)} onDragOver={(event) => event.preventDefault()} onDrop={() => { if (dragToken) reorder(dragToken, token); setDragToken(null); }} className={cn("group overflow-hidden rounded-md border bg-background", index === 0 && "ring-2 ring-primary/50")}><div className="relative aspect-square bg-muted/30">{preview ? <img src={preview} alt={existing?.filename || staged?.image_filename || "产品图片"} className="h-full w-full object-cover" /> : <ImagePlus className="absolute inset-0 m-auto h-6 w-6 text-muted-foreground" />}<span className="absolute left-1.5 top-1.5 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium">{index === 0 ? "主图" : `${index + 1}`}</span>{kind === "staged" && <span className="absolute right-1.5 top-1.5 rounded bg-blue-600 px-1.5 py-0.5 text-[9px] text-white">新增</span>}<GripVertical className="absolute bottom-1.5 right-1.5 h-4 w-4 text-white drop-shadow" /></div><div className="flex items-center justify-between gap-1 border-t p-1.5"><Button variant="ghost" size="sm" className="h-7 px-2 text-[10px]" disabled={orderSaving || index === 0} onClick={() => void saveOrder(selectedPlan, makePrimary(selectedPlan.ordered_items.map((item) => ({ token: item })), token).map((item) => item.token))}><Star className="mr-1 h-3 w-3" />设为主图</Button><div className="flex"><Button aria-label="左移" variant="ghost" size="icon" className="h-7 w-7" disabled={orderSaving || index === 0} onClick={() => void saveOrder(selectedPlan, moveImage(selectedPlan.ordered_items, index, index - 1))}><ArrowLeft className="h-3 w-3" /></Button><Button aria-label="右移" variant="ghost" size="icon" className="h-7 w-7" disabled={orderSaving || index === selectedPlan.ordered_items.length - 1} onClick={() => void saveOrder(selectedPlan, moveImage(selectedPlan.ordered_items, index, index + 1))}><ArrowRight className="h-3 w-3" /></Button></div></div></div>; })}</div>
                   </section>
                 </div>
-                <div className="flex justify-between"><Button variant="outline" onClick={() => setStep(2)}><ArrowLeft className="mr-1 h-4 w-4" />返回检查</Button><Button onClick={() => setStep(4)}>确认本次更新<ArrowRight className="ml-1 h-4 w-4" /></Button></div>
+                <div className="flex justify-between"><Button variant="outline" disabled={orderSaving} onClick={() => setStep(2)}><ArrowLeft className="mr-1 h-4 w-4" />返回检查</Button><Button disabled={orderSaving} onClick={() => setStep(4)}>{orderSaving && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}确认本次更新<ArrowRight className="ml-1 h-4 w-4" /></Button></div>
               </div>
             )}
 
@@ -546,7 +559,7 @@ export default function ProductImageUploadPage() {
                 ) : batch.status === "preview_ready" && batch.error_message ? (
                   <div className="rounded-md border bg-background p-8 text-center"><AlertCircle className="mx-auto h-9 w-9 text-amber-600" /><h2 className="mt-3 text-base font-semibold">产品图库已经发生变化</h2><p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">{batch.error_message}</p><Button className="mt-5" disabled={busy} onClick={() => void checkBatch()}><RefreshCw className="mr-1 h-4 w-4" />重新检查并核对</Button></div>
                 ) : batch.status === "preview_ready" ? (
-                  <div className="rounded-md border bg-background p-5"><h2 className="text-sm font-semibold">提交前确认</h2><div className="mt-4 divide-y rounded-md border">{(batch.plans || []).map((plan) => <div key={plan.product_id} className="grid grid-cols-[1fr_auto] gap-4 px-4 py-3 text-xs"><div><span className="font-semibold">{plan.product_code}</span><span className="ml-2 text-muted-foreground">{plan.product_name}</span></div><div className="text-muted-foreground">现有 {plan.existing_images.length} · 新增 {plan.ordered_items.filter((item) => item.startsWith("staged:")).length} · 最终 {plan.ordered_items.length}</div></div>)}</div><div className="mt-5 flex justify-between"><Button variant="outline" disabled={busy} onClick={() => setStep(3)}><ArrowLeft className="mr-1 h-4 w-4" />返回调整</Button><Button disabled={busy} onClick={() => void commit()}>{busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Check className="mr-1 h-4 w-4" />}确认并更新产品图库</Button></div></div>
+                  <div className="rounded-md border bg-background p-5"><h2 className="text-sm font-semibold">提交前确认</h2><div className="mt-4 divide-y rounded-md border">{(batch.plans || []).map((plan) => <div key={plan.product_id} className="grid grid-cols-[1fr_auto] gap-4 px-4 py-3 text-xs"><div><span className="font-semibold">{plan.product_code}</span><span className="ml-2 text-muted-foreground">{plan.product_name}</span></div><div className="text-muted-foreground">现有 {plan.expected_existing_image_ids.length} · 新增 {plan.ordered_items.filter((item) => item.startsWith("staged:")).length} · 最终 {plan.ordered_items.length}</div></div>)}</div><div className="mt-5 flex justify-between"><Button variant="outline" disabled={busy || orderSaving} onClick={() => setStep(3)}><ArrowLeft className="mr-1 h-4 w-4" />返回调整</Button><Button disabled={busy || orderSaving} onClick={() => void commit()}>{busy || orderSaving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Check className="mr-1 h-4 w-4" />}确认并更新产品图库</Button></div></div>
                 ) : (
                   <div className="rounded-md border bg-background p-8 text-center"><AlertCircle className="mx-auto h-9 w-9 text-muted-foreground" /><h2 className="mt-3 text-base font-semibold">这个批次已经取消</h2><Button className="mt-5" onClick={() => { setBatch(null); setStep(1); }}>返回上传</Button></div>
                 )}
