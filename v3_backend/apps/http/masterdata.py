@@ -12,10 +12,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 
-from apps.http._deps import Admin, DbDep, Writer
+from apps.http._deps import Admin, DbDep, ProductUploader, Writer
 from domains.masterdata import service
 from domains.masterdata.schemas import (
     CategoryCreate,
@@ -484,7 +484,7 @@ def fetch_exchange_rates(body: FetchRatesRequest, db: DbDep, _admin: Admin) -> d
 from fastapi.responses import Response  # noqa: E402
 
 from apps.http._deps import CurrentUser  # noqa: E402
-from domains.masterdata.images import bulk_service, bulk_upload  # noqa: E402
+from domains.masterdata.images import bulk_service, bulk_upload, direct_service  # noqa: E402
 from infrastructure.jobs.runner import get_job_runner  # noqa: E402
 
 
@@ -496,6 +496,139 @@ def _translate_bulk(exc: bulk_service.BulkImageError) -> HTTPException:
     if isinstance(exc, bulk_service.StatusConflict):
         return HTTPException(status.HTTP_409_CONFLICT, str(exc))
     return HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc))
+
+
+class DirectImageRowUpdate(BaseModel):
+    product_id: int | None = None
+    decision: str | None = None
+
+
+class DirectImagePlanUpdate(BaseModel):
+    items: list[str] = Field(min_length=1, max_length=30)
+
+
+@router.post("/bulk-images/direct", status_code=201)
+def create_direct_image_batch(db: DbDep, user: ProductUploader) -> dict[str, Any]:
+    try:
+        return direct_service.create_batch(db, user_id=user.id)
+    except bulk_service.BulkImageError as exc:
+        raise _translate_bulk(exc) from exc
+
+
+@router.get("/bulk-images/active")
+def get_active_direct_image_batch(
+    db: DbDep, user: ProductUploader
+) -> dict[str, Any] | None:
+    return direct_service.get_active(
+        db,
+        user_id=user.id,
+        is_admin=user.role in ("superadmin", "admin"),
+    )
+
+
+@router.get("/bulk-images")
+def list_direct_image_batches(
+    db: DbDep, user: ProductUploader, limit: int = Query(20, ge=1, le=100)
+) -> dict[str, Any]:
+    return {"items": direct_service.list_history(db, user_id=user.id, limit=limit)}
+
+
+@router.post("/bulk-images/{batch_id}/files", status_code=201)
+async def upload_direct_image_file(
+    batch_id: int,
+    db: DbDep,
+    user: ProductUploader,
+    file: UploadFile = File(...),
+    product_id: int | None = Form(None),
+) -> dict[str, Any]:
+    raw = await file.read()
+    try:
+        return direct_service.upload_file(
+            db,
+            batch_id=batch_id,
+            user_id=user.id,
+            is_admin=user.role in ("superadmin", "admin"),
+            filename=file.filename or "image",
+            content=raw,
+            content_type=file.content_type or "application/octet-stream",
+            product_id=product_id,
+        )
+    except bulk_service.BulkImageError as exc:
+        raise _translate_bulk(exc) from exc
+
+
+@router.post("/bulk-images/{batch_id}/validate")
+def validate_direct_image_batch(
+    batch_id: int, db: DbDep, user: ProductUploader
+) -> dict[str, Any]:
+    try:
+        return direct_service.validate_batch(
+            db,
+            batch_id=batch_id,
+            user_id=user.id,
+            is_admin=user.role in ("superadmin", "admin"),
+        )
+    except bulk_service.BulkImageError as exc:
+        raise _translate_bulk(exc) from exc
+
+
+@router.patch("/bulk-images/{batch_id}/rows/{row_id}")
+def update_direct_image_row(
+    batch_id: int,
+    row_id: int,
+    body: DirectImageRowUpdate,
+    db: DbDep,
+    user: ProductUploader,
+) -> dict[str, Any]:
+    try:
+        return direct_service.update_row(
+            db,
+            batch_id=batch_id,
+            row_id=row_id,
+            user_id=user.id,
+            is_admin=user.role in ("superadmin", "admin"),
+            product_id=body.product_id,
+            decision=body.decision,
+        )
+    except bulk_service.BulkImageError as exc:
+        raise _translate_bulk(exc) from exc
+
+
+@router.put("/bulk-images/{batch_id}/plans/{product_id}")
+def save_direct_image_plan(
+    batch_id: int,
+    product_id: int,
+    body: DirectImagePlanUpdate,
+    db: DbDep,
+    user: ProductUploader,
+) -> dict[str, Any]:
+    try:
+        return direct_service.save_plan(
+            db,
+            batch_id=batch_id,
+            product_id=product_id,
+            user_id=user.id,
+            is_admin=user.role in ("superadmin", "admin"),
+            items=body.items,
+        )
+    except bulk_service.BulkImageError as exc:
+        raise _translate_bulk(exc) from exc
+
+
+@router.post("/bulk-images/{batch_id}/rows/{row_id}/retry")
+def retry_direct_image_row(
+    batch_id: int, row_id: int, db: DbDep, user: ProductUploader
+) -> dict[str, Any]:
+    try:
+        return direct_service.retry_row(
+            db,
+            batch_id=batch_id,
+            row_id=row_id,
+            user_id=user.id,
+            is_admin=user.role in ("superadmin", "admin"),
+        )
+    except bulk_service.BulkImageError as exc:
+        raise _translate_bulk(exc) from exc
 
 
 @router.get("/bulk-images/template")

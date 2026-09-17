@@ -32,7 +32,7 @@ export const WORKBENCH_MODULES: WorkbenchModule[] = [
     key: "image-upload",
     title: "产品图片上传",
     description: "批量匹配产品并更新图片。",
-    href: "/dashboard/data",
+    href: "/dashboard/workbench/image-upload",
     icon: Images,
     roles: ["superadmin", "admin", "employee"],
     status: "available",

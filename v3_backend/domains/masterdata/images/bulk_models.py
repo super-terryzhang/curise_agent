@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.db.base import Base
@@ -33,12 +33,15 @@ class BulkImageBatch(Base):
     )
     zip_filename: Mapped[str] = mapped_column(String(500), nullable=False)
     zip_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False, default="zip")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="uploading")
     total_files: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     matched_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     unmatched_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     ingested_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    excluded_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
     )
@@ -88,6 +91,42 @@ class BulkImageStaging(Base):
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="matched")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    preview_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    issue_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    upload_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    decision: Mapped[str] = mapped_column(String(20), nullable=False, default="include")
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    committed_image_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("v3_product_images.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow
+    )
+
+
+class BulkImageProductPlan(Base):
+    """Persisted final image order for one product in a direct batch."""
+
+    __tablename__ = "v3_bulk_image_product_plans"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "product_id", name="uq_bulk_image_plan_batch_product"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("v3_bulk_image_batches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    expected_existing_image_ids: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    ordered_items: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
     )

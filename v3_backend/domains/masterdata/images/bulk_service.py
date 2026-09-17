@@ -28,7 +28,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from domains.masterdata import _product_images_service as image_service
@@ -350,6 +350,10 @@ def list_batch(db: Session, *, batch_id: int, user_id: int, is_admin: bool) -> d
     omitted" notice. Real ZIPs hit the 100MB cap long before this.
     """
     batch = _load_batch(db, batch_id, user_id, is_admin)
+    if batch.source_type == "direct":
+        from domains.masterdata.images import direct_service
+
+        return direct_service.serialize_batch(db, batch)
     rows = db.execute(
         select(BulkImageStaging)
         .where(BulkImageStaging.batch_id == batch.id)
@@ -359,12 +363,16 @@ def list_batch(db: Session, *, batch_id: int, user_id: int, is_admin: bool) -> d
     return {
         "id": batch.id,
         "zip_filename": batch.zip_filename,
+        "source_type": batch.source_type,
         "status": batch.status,
         "total_files": batch.total_files,
         "matched_count": batch.matched_count,
         "unmatched_count": batch.unmatched_count,
         "error_count": batch.error_count,
         "ingested_count": batch.ingested_count,
+        "excluded_count": batch.excluded_count,
+        "failed_count": batch.failed_count,
+        "can_continue": batch.status == "preview_ready" and batch.error_count == 0,
         "error_message": batch.error_message,
         "created_at": batch.created_at.isoformat() if batch.created_at else None,
         "completed_at": batch.completed_at.isoformat() if batch.completed_at else None,
@@ -401,6 +409,8 @@ def cancel_batch(
         raise StatusConflict(f"无法取消处于 {batch.status} 状态的批次")
     if _cleanup_storage_key(batch.zip_storage_key):
         batch.zip_storage_key = None
+    if batch.source_type == "direct":
+        _cleanup_direct_storage(db, batch.id)
     batch.status = "cancelled"
     db.commit()
 
@@ -451,9 +461,14 @@ def sweep_stale_batches(
             )
         )
         .where(BulkImageBatch.created_at < stale_cutoff)
-        # Only rows whose ZIP is still around — cancelled/error batches
-        # that already had their key cleared don't need re-work.
-        .where(BulkImageBatch.zip_storage_key.is_not(None))
+        # ZIP batches need a live archive key; direct batches keep one key
+        # per staging row and therefore legitimately have no batch-level key.
+        .where(
+            or_(
+                BulkImageBatch.zip_storage_key.is_not(None),
+                BulkImageBatch.source_type == "direct",
+            )
+        )
     )
     stuck_stmt = (
         select(BulkImageBatch)
@@ -479,11 +494,12 @@ def sweep_stale_batches(
         return result
 
     for b in stale_batches:
-        if _cleanup_storage_key(b.zip_storage_key):
-            b.zip_storage_key = None
-            result["storage_deleted"] += 1
-        else:
-            result["storage_delete_failed"] += 1
+        if b.zip_storage_key:
+            if _cleanup_storage_key(b.zip_storage_key):
+                b.zip_storage_key = None
+                result["storage_deleted"] += 1
+            else:
+                result["storage_delete_failed"] += 1
         # Keep whatever terminal-ish status the batch already had if
         # it was `cancelled` — those we're only sweeping to clean up
         # the ZIP. `preview_ready` / `uploading` / `error` we mark
@@ -494,17 +510,22 @@ def sweep_stale_batches(
             b.error_message = (
                 b.error_message or ""
             ) + f" [GC {now.isoformat()}: abandoned after {ttl_hours}h]"
+        if b.source_type == "direct":
+            _cleanup_direct_storage(db, b.id)
     for b in stuck_batches:
-        if _cleanup_storage_key(b.zip_storage_key):
-            b.zip_storage_key = None
-            result["storage_deleted"] += 1
-        else:
-            result["storage_delete_failed"] += 1
+        if b.zip_storage_key:
+            if _cleanup_storage_key(b.zip_storage_key):
+                b.zip_storage_key = None
+                result["storage_deleted"] += 1
+            else:
+                result["storage_delete_failed"] += 1
         b.status = "error"
         b.error_message = (
             f"任务卡住超过 {stuck_minutes} 分钟无进度，GC 自动标记失败。"
             "请重新上传。"
         )
+        if b.source_type == "direct":
+            _cleanup_direct_storage(db, b.id)
     db.commit()
     return result
 
@@ -527,6 +548,8 @@ def trigger_commit(
         raise StatusConflict(
             f"只能提交 preview_ready 状态的批次（当前: {batch.status}）"
         )
+    if batch.source_type == "direct" and batch.error_count:
+        raise StatusConflict("仍有图片未通过检查，请处理后再提交")
     batch.status = "processing"
     batch.error_message = None
     db.commit()
@@ -561,6 +584,12 @@ def _run_commit_sync(batch_id: int) -> None:
                 batch_id,
                 batch.status,
             )
+            return
+
+        if batch.source_type == "direct":
+            from domains.masterdata.images import direct_service
+
+            direct_service.run_commit(db, batch)
             return
 
         rows = db.execute(
@@ -637,10 +666,9 @@ def _run_commit_sync(batch_id: int) -> None:
         # then clear the DB key. If GCS delete fails we leave the key
         # set so the next GC sweep can retry. Old code cleared the key
         # unconditionally, orphaning any blob whose delete failed.
-        if batch.zip_storage_key:
-            if _cleanup_storage_key(batch.zip_storage_key):
-                batch.zip_storage_key = None
-                db.commit()
+        if batch.zip_storage_key and _cleanup_storage_key(batch.zip_storage_key):
+            batch.zip_storage_key = None
+            db.commit()
 
 
 # ─── Internal helpers ───────────────────────────────────────
@@ -668,7 +696,23 @@ def _serialize_staging(row: BulkImageStaging) -> dict[str, Any]:
         "product_id": row.product_id,
         "status": row.status,
         "error_message": row.error_message,
+        "issue_code": row.issue_code,
+        "upload_order": row.upload_order,
+        "decision": row.decision,
+        "retry_count": row.retry_count,
+        "committed_image_id": row.committed_image_id,
     }
+
+
+def _cleanup_direct_storage(db: Session, batch_id: int) -> None:
+    rows = db.execute(
+        select(BulkImageStaging).where(BulkImageStaging.batch_id == batch_id)
+    ).scalars()
+    for row in rows:
+        for key_name in ("storage_key", "preview_storage_key"):
+            key = getattr(row, key_name)
+            if key and _cleanup_storage_key(key):
+                setattr(row, key_name, None)
 
 
 def _cleanup_storage_key(key: str | None) -> bool:

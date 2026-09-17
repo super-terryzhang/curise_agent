@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { visibleWorkbenchModules } from "./workbench-modules";
+import { visibleWorkbenchModules, WORKBENCH_MODULES } from "./workbench-modules";
 
 
 describe("workbench module permissions", () => {
+  it("opens image upload in its dedicated workbench route", () => {
+    expect(
+      WORKBENCH_MODULES.find((module) => module.key === "image-upload")?.href,
+    ).toBe("/dashboard/workbench/image-upload");
+  });
+
   it("lets finance enter the workbench and AI without exposing product upload", () => {
     const keys = visibleWorkbenchModules("finance").map((module) => module.key);
     expect(keys).toContain("ai");

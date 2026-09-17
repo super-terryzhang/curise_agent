@@ -2,7 +2,7 @@
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/page-header";
-import { Images, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import ProductsTab from "./ProductsTab";
 import SuppliersTab from "./SuppliersTab";
 import CountriesTab from "./CountriesTab";
@@ -10,7 +10,6 @@ import PortsTab from "./PortsTab";
 import CategoriesTab from "./CategoriesTab";
 import AIQueryTab from "./AIQueryTab";
 import ExchangeRatesTab from "./ExchangeRatesTab";
-import BulkImagesTab from "./BulkImagesTab";
 
 export default function DataPage() {
   return (
@@ -30,10 +29,6 @@ export default function DataPage() {
           <TabsTrigger value="ports">港口</TabsTrigger>
           <TabsTrigger value="categories">类别</TabsTrigger>
           <TabsTrigger value="exchange-rates">汇率</TabsTrigger>
-          <TabsTrigger value="bulk-images">
-            <Images className="h-3.5 w-3.5 mr-1" />
-            批量图片
-          </TabsTrigger>
           <TabsTrigger value="ai-query">
             <Sparkles className="h-3.5 w-3.5 mr-1" />
             AI 查询
@@ -57,9 +52,6 @@ export default function DataPage() {
         </TabsContent>
         <TabsContent value="exchange-rates" className="flex-1 overflow-hidden py-4">
           <ExchangeRatesTab />
-        </TabsContent>
-        <TabsContent value="bulk-images" className="flex-1 overflow-hidden py-4">
-          <BulkImagesTab />
         </TabsContent>
         <TabsContent value="ai-query" className="flex-1 overflow-hidden py-4">
           <AIQueryTab />

@@ -34,6 +34,7 @@ def _import_all_models() -> None:
     for module in (
         "domains.identity.models",
         "domains.masterdata.models",
+        "domains.masterdata.images.bulk_models",
         "domains.masterdata.upload.models",  # added 0010_upload_pipeline
         "domains.document.models",
         "domains.orders.models",

@@ -20,6 +20,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
 export type BulkImageBatchStatus =
   | "uploading"
+  | "validating"
   | "preview_ready"
   | "processing"
   | "completed"
@@ -30,8 +31,28 @@ export type BulkImageRowStatus =
   | "matched"
   | "unmatched"
   | "error"
+  | "checking"
+  | "ready"
+  | "needs_attention"
+  | "excluded"
   | "committed"
   | "committed_failed";
+
+export interface DirectImageExisting {
+  id: number;
+  filename: string;
+  display_order: number;
+  preview_url: string;
+}
+
+export interface DirectImagePlan {
+  product_id: number;
+  product_code: string | null;
+  product_name: string | null;
+  expected_existing_image_ids: number[];
+  ordered_items: string[];
+  existing_images: DirectImageExisting[];
+}
 
 export interface BulkImageStagingRow {
   id: number;
@@ -44,6 +65,12 @@ export interface BulkImageStagingRow {
   product_id: number | null;
   status: BulkImageRowStatus;
   error_message: string | null;
+  issue_code?: string | null;
+  upload_order?: number;
+  decision?: "include" | "exclude";
+  retry_count?: number;
+  committed_image_id?: number | null;
+  preview_url?: string | null;
 }
 
 export interface BulkImageBatch {
@@ -56,9 +83,14 @@ export interface BulkImageBatch {
   error_count: number;
   ingested_count: number;
   error_message: string | null;
+  source_type?: "zip" | "direct";
+  excluded_count?: number;
+  failed_count?: number;
+  can_continue?: boolean;
   created_at: string | null;
   completed_at: string | null;
   rows: BulkImageStagingRow[];
+  plans?: DirectImagePlan[];
 }
 
 // ─── Helpers ───────────────────────────────────────────────────
@@ -209,4 +241,87 @@ export async function cancelBulkImageBatch(
     const err = await res.json().catch(() => ({ detail: "取消失败" }));
     throw new Error(err.detail || `HTTP ${res.status}`);
   }
+}
+
+export async function createDirectImageBatch(): Promise<BulkImageBatch> {
+  const res = await fetchWithAuth(`${API_BASE}/api/data/bulk-images/direct`, {
+    method: "POST",
+  });
+  return handleJson<BulkImageBatch>(res);
+}
+
+export async function getActiveDirectImageBatch(): Promise<BulkImageBatch | null> {
+  const res = await fetchWithAuth(`${API_BASE}/api/data/bulk-images/active`);
+  return handleJson<BulkImageBatch | null>(res);
+}
+
+export async function listDirectImageBatches(): Promise<{ items: BulkImageBatch[] }> {
+  const res = await fetchWithAuth(`${API_BASE}/api/data/bulk-images?limit=20`);
+  return handleJson<{ items: BulkImageBatch[] }>(res);
+}
+
+export async function uploadDirectImage(
+  batchId: number,
+  file: File,
+  productId?: number,
+): Promise<BulkImageStagingRow> {
+  const body = new FormData();
+  body.append("file", file);
+  if (productId) body.append("product_id", String(productId));
+  const res = await fetchWithAuth(
+    `${API_BASE}/api/data/bulk-images/${batchId}/files`,
+    { method: "POST", body },
+  );
+  return handleJson<BulkImageStagingRow>(res);
+}
+
+export async function validateDirectImageBatch(batchId: number): Promise<BulkImageBatch> {
+  const res = await fetchWithAuth(
+    `${API_BASE}/api/data/bulk-images/${batchId}/validate`,
+    { method: "POST" },
+  );
+  return handleJson<BulkImageBatch>(res);
+}
+
+export async function updateDirectImageRow(
+  batchId: number,
+  rowId: number,
+  body: { product_id?: number; decision?: "include" | "exclude" },
+): Promise<BulkImageBatch> {
+  const res = await fetchWithAuth(
+    `${API_BASE}/api/data/bulk-images/${batchId}/rows/${rowId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  return handleJson<BulkImageBatch>(res);
+}
+
+export async function saveDirectImagePlan(
+  batchId: number,
+  productId: number,
+  items: string[],
+): Promise<DirectImagePlan> {
+  const res = await fetchWithAuth(
+    `${API_BASE}/api/data/bulk-images/${batchId}/plans/${productId}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    },
+  );
+  return handleJson<DirectImagePlan>(res);
+}
+
+export async function retryDirectImageRow(
+  batchId: number,
+  rowId: number,
+): Promise<BulkImageStagingRow> {
+  const res = await fetchWithAuth(
+    `${API_BASE}/api/data/bulk-images/${batchId}/rows/${rowId}/retry`,
+    { method: "POST" },
+  );
+  return handleJson<BulkImageStagingRow>(res);
 }
