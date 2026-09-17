@@ -13,7 +13,6 @@ import {
   RefreshCw,
   Search,
   Star,
-  UploadCloud,
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -42,9 +41,19 @@ import {
   type BulkImageStagingRow,
   type DirectImagePlan,
 } from "@/lib/bulk-images-api";
-import { listCountries, listPorts, listProducts, type CountryItem, type PortItem, type ProductItem } from "@/lib/data-api";
+import {
+  listCountries,
+  listPorts,
+  listProductImages,
+  listProducts,
+  type CountryItem,
+  type PortItem,
+  type ProductImage,
+  type ProductItem,
+} from "@/lib/data-api";
 import { buildDefaultImageOrder, makePrimary, moveImage } from "@/lib/image-upload-order";
 import { cn } from "@/lib/utils";
+import { CompactImageDropzone, SelectedProductImagePreview } from "./product-upload-target";
 
 const STEPS = ["选择图片", "程序检查", "主图与顺序", "确认提交"];
 const ACCEPT = "image/jpeg,image/png,image/webp";
@@ -129,7 +138,6 @@ function ResultSummary({ batch }: { batch: BulkImageBatch }) {
 
 export default function ProductImageUploadPage() {
   const router = useRouter();
-  const fileRef = useRef<HTMLInputElement>(null);
   const replaceFileRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState(1);
   const [batch, setBatch] = useState<BulkImageBatch | null>(null);
@@ -145,6 +153,10 @@ export default function ProductImageUploadPage() {
   const [busy, setBusy] = useState(false);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
+  const [selectedProductImages, setSelectedProductImages] = useState<ProductImage[]>([]);
+  const [selectedImagesLoading, setSelectedImagesLoading] = useState(false);
+  const [selectedImagesError, setSelectedImagesError] = useState<string | null>(null);
+  const [selectedImagesReload, setSelectedImagesReload] = useState(0);
   const [dragToken, setDragToken] = useState<string | null>(null);
   const [orderSaving, setOrderSaving] = useState(false);
   const orderSavingRef = useRef(false);
@@ -154,7 +166,40 @@ export default function ProductImageUploadPage() {
   const loadProducts = useCallback(async (search = "") => {
     const result = await listProducts({ search: search || undefined, country_id: countryId || undefined, port_id: portId || undefined, limit: 100, is_effective: true });
     setProducts(result.items);
+    setSelectedProductId((current) => current && result.items.some((product) => product.id === current) ? current : null);
   }, [countryId, portId]);
+
+  const selectedProduct = useMemo(
+    () => products.find((product) => product.id === selectedProductId) ?? null,
+    [products, selectedProductId],
+  );
+
+  useEffect(() => {
+    let alive = true;
+    if (selectedProductId === null) {
+      setSelectedProductImages([]);
+      setSelectedImagesError(null);
+      setSelectedImagesLoading(false);
+      return () => { alive = false; };
+    }
+
+    setSelectedImagesLoading(true);
+    setSelectedImagesError(null);
+    void listProductImages(selectedProductId)
+      .then((images) => {
+        if (!alive) return;
+        setSelectedProductImages([...images].sort((left, right) => left.display_order - right.display_order));
+      })
+      .catch((error) => {
+        if (!alive) return;
+        setSelectedProductImages([]);
+        setSelectedImagesError(error instanceof Error ? error.message : "现有图片读取失败");
+      })
+      .finally(() => {
+        if (alive) setSelectedImagesLoading(false);
+      });
+    return () => { alive = false; };
+  }, [selectedImagesReload, selectedProductId]);
 
   const refreshHistory = useCallback(async () => {
     setHistory((await listDirectImageBatches()).items);
@@ -229,7 +274,6 @@ export default function ProductImageUploadPage() {
       toast.error(error instanceof Error ? error.message : "图片上传失败");
     } finally {
       setBusy(false);
-      if (fileRef.current) fileRef.current.value = "";
     }
   }, [countryId, ensureBatch, portId, products, selectedProductId]);
 
@@ -503,20 +547,21 @@ export default function ProductImageUploadPage() {
                   </section>
 
                   <section className="rounded-md border bg-background p-4">
-                    <div className="text-xs font-semibold">2. 添加这个产品的图片</div>
-                    <div
-                      className={cn("mt-3 flex min-h-56 flex-col items-center justify-center rounded-md border-2 border-dashed px-6 text-center transition-colors", draggingFiles && "border-primary bg-primary/5", busy && "pointer-events-none opacity-60")}
-                      onDragOver={(event) => { event.preventDefault(); setDraggingFiles(true); }}
-                      onDragLeave={() => setDraggingFiles(false)}
-                      onDrop={(event) => { event.preventDefault(); setDraggingFiles(false); void handleFiles(event.dataTransfer.files); }}
-                    >
-                      <UploadCloud className="h-8 w-8 text-muted-foreground" />
-                      <p className="mt-3 text-sm font-medium">拖入多张图片，或点击选择</p>
-                      <p className="mt-1 text-xs text-muted-foreground">JPG / PNG / WebP，单张不超过 5MB，最多 30 张/产品</p>
-                      <Button className="mt-4" variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}><ImagePlus className="mr-1 h-4 w-4" />选择图片</Button>
-                      <input ref={fileRef} className="hidden" type="file" accept={ACCEPT} multiple onChange={(event) => event.target.files && void handleFiles(event.target.files)} />
-                      {busy && uploadProgress.total > 0 && <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />正在暂存 {uploadProgress.done}/{uploadProgress.total}</p>}
-                    </div>
+                    <SelectedProductImagePreview
+                      product={selectedProduct}
+                      images={selectedProductImages}
+                      loading={selectedImagesLoading}
+                      error={selectedImagesError}
+                      onRetry={() => setSelectedImagesReload((value) => value + 1)}
+                    />
+                    <div className="mt-4 text-xs font-semibold">2. 添加这个产品的图片</div>
+                    <CompactImageDropzone
+                      busy={busy}
+                      dragging={draggingFiles}
+                      progress={uploadProgress}
+                      onDraggingChange={setDraggingFiles}
+                      onFiles={(files) => void handleFiles(files)}
+                    />
                   </section>
                 </div>
 
