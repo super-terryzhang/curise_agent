@@ -11,7 +11,7 @@ from apps.jobs.oracle_po import import_po, result_of
 from domains.orders.oracle_models import OraclePOImport, OracleScanRun
 from infrastructure.config import settings
 from infrastructure.db import session as sessions
-from infrastructure.oracle.adapter import OracleClient, identity
+from infrastructure.oracle.adapter import IntegrationError, OracleClient, identity
 
 
 def configuration():
@@ -229,11 +229,28 @@ def execute_scan(*, client=None, importer=import_po):
             client = client or OracleClient(
                 {"username": os.getenv("ORACLE_USERNAME"), "password": os.getenv("ORACLE_PASSWORD")}
             )
-            records = [r for r in client.list_orders() if r.get("StatusCode") == "OPEN"]
+            record_issues = []
+            records = [
+                r for r in client.list_orders(record_issues=record_issues)
+                if r.get("StatusCode") == "OPEN"
+            ]
+            if target:
+                record_issues = [item for item in record_issues if item["po_number"] == target]
+            run.items = [
+                {
+                    "po_number": item["po_number"],
+                    "status": (
+                        "deferred"
+                        if item["oracle_status"] not in (None, "OPEN") and not target
+                        else "needs_review"
+                    ),
+                    "issues": [{"code": item["code"], "field": item["field"]}],
+                }
+                for item in record_issues
+            ]
             if target:
                 records = [r for r in records if r["OrderNumber"] == target]
-                run.items = []
-                if not records:
+                if not records and not record_issues:
                     run.items = [{"po_number": target, "status": "needs_review",
                                   "issues": [{"code": "PO_NO_LONGER_OPEN"}]}]
             records.sort(key=lambda r: r["CreationDate"])
@@ -296,7 +313,10 @@ def execute_scan(*, client=None, importer=import_po):
         except Exception as error:
             db.rollback()
             run.status = "failed"
-            run.error_code = "SCAN_" + type(error).__name__.upper()
+            run.error_code = (
+                error.code if isinstance(error, IntegrationError)
+                else "SCAN_" + type(error).__name__.upper()
+            )
         run.active_key = None
         run.finished_at = datetime.utcnow()
         db.commit()

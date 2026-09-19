@@ -23,19 +23,19 @@ FIELDS = "POHeaderId,OrderNumber,Status,StatusCode,CreationDate,LastUpdateDate,R
 
 
 class IntegrationError(RuntimeError):
-    def __init__(self, code, retryable=False):
+    def __init__(self, code, retryable=False, *, field=None):
         super().__init__(code)
-        self.code, self.retryable = code, retryable
+        self.code, self.retryable, self.field = code, retryable, field
 
 
-def canonical_date(value):
+def canonical_date(value, *, field=None):
     try:
         parsed = datetime.fromisoformat(value)
         if parsed.tzinfo is None:
             raise ValueError()
         return parsed.astimezone(UTC).isoformat()
     except (TypeError, ValueError, AttributeError):
-        raise IntegrationError("ORACLE_INVALID_DATE") from None
+        raise IntegrationError("ORACLE_INVALID_DATE", field=field) from None
 
 
 def _encoded(value):
@@ -50,22 +50,23 @@ def _sha(value):
 
 
 def identity(record, host=HOST):
-    if (
-        not record.get("POHeaderId")
-        or not isinstance(record.get("OrderNumber"), str)
-        or not record["OrderNumber"].strip()
-        or type(record.get("Revision")) is not int
-        or record["Revision"] < 0
-        or not isinstance(record.get("StatusCode"), str)
-    ):
-        raise IntegrationError("ORACLE_INVALID_IDENTITY")
+    if not isinstance(record, dict):
+        raise IntegrationError("ORACLE_INVALID_IDENTITY", field="record")
+    if not record.get("POHeaderId"):
+        raise IntegrationError("ORACLE_INVALID_IDENTITY", field="POHeaderId")
+    if not isinstance(record.get("OrderNumber"), str) or not record["OrderNumber"].strip():
+        raise IntegrationError("ORACLE_INVALID_IDENTITY", field="OrderNumber")
+    if type(record.get("Revision")) is not int or record["Revision"] < 0:
+        raise IntegrationError("ORACLE_INVALID_IDENTITY", field="Revision")
+    if not isinstance(record.get("StatusCode"), str):
+        raise IntegrationError("ORACLE_INVALID_IDENTITY", field="StatusCode")
     source = [
         host,
         str(record["POHeaderId"]),
         record["OrderNumber"],
-        canonical_date(record.get("CreationDate")),
+        canonical_date(record.get("CreationDate"), field="CreationDate"),
     ]
-    version = [record.get("Revision"), canonical_date(record.get("LastUpdateDate")), record.get("StatusCode")]
+    version = [record.get("Revision"), canonical_date(record.get("LastUpdateDate"), field="LastUpdateDate"), record.get("StatusCode")]
     return {"source_key": _sha(_encoded(source)), "version_key": _sha(_encoded(version))}
 
 
@@ -140,7 +141,8 @@ class OracleClient:
             raise IntegrationError("ORACLE_INVALID_RESPONSE")
         return data
 
-    def list_orders(self):
+    def list_orders(self, *, record_issues=None):
+        """List valid records; an explicit collector isolates malformed individual rows."""
         result, seen, offset = [], set(), 0
         # No status predicate: a successful scan includes all supplier-visible statuses.
         for _ in range(10000):
@@ -157,12 +159,23 @@ class OracleClient:
             items, more = page.get("items"), page.get("hasMore")
             if not isinstance(items, list) or type(more) is not bool or page.get("offset") != offset:
                 raise IntegrationError("ORACLE_PAGINATION_INVALID")
-            for record in items:
-                keys = identity(record, self.host)
+            for index, record in enumerate(items):
+                try:
+                    keys = identity(record, self.host)
+                except IntegrationError as error:
+                    if record_issues is None:
+                        raise
+                    number = record.get("OrderNumber") if isinstance(record, dict) else None
+                    status = record.get("StatusCode") if isinstance(record, dict) else None
+                    record_issues.append({
+                        "po_number": number if isinstance(number, str) and number.strip() and len(number) <= 128 else f"Oracle row {offset + index + 1}",
+                        "oracle_status": status if isinstance(status, str) else None,
+                        "code": error.code,
+                        "field": error.field,
+                    })
+                    continue
                 if keys["source_key"] in seen:
                     raise IntegrationError("ORACLE_PAGINATION_DUPLICATE")
-                if not isinstance(record.get("StatusCode"), str):
-                    raise IntegrationError("ORACLE_STATUS_MISSING")
                 seen.add(keys["source_key"])
                 result.append(record)
             if not more:

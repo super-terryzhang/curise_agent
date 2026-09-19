@@ -5,14 +5,14 @@ import Link from "next/link";
 import { Loader2, RefreshCw } from "lucide-react";
 import { fetchWithAuth } from "@/lib/fetch-with-auth";
 import { getUser } from "@/lib/auth";
+import { oracleIssueMessage, oracleRunErrorMessage } from "@/lib/oracle-scan-messages";
 import { Button } from "@/components/ui/button";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
-type Item = { po_number: string; status: string; stage?: string; document_id?: number; order_id?: number; inquiry_id?: number; issues?: { code: string }[]; error_code?: string };
+type Item = { po_number: string; status: string; stage?: string; document_id?: number; order_id?: number; inquiry_id?: number; issues?: { code: string; field?: string | null }[]; error_code?: string };
 type Run = { id: number; trigger: string; status: string; created_at: string; finished_at?: string; error_code?: string; items: Item[] };
 type State = { enabled: boolean; next_scan_at: string | null; runs: Run[]; files: Item[] };
 const labels: Record<string, string> = { queued: "等待扫描", running: "扫描中", processing: "处理中", completed: "已完成", completed_with_issues: "扫描完成 · 有待处理项", failed: "失败", needs_review: "需人工处理", historical_pending: "已有 OPEN · 待确认导入", deferred: "等待下一轮", download: "下载中", analysis: "分析中", order: "创建订单", matching: "匹配商品", inquiry: "生成询价" };
-const reasons: Record<string, string> = { TEMPLATE_BINDING_REQUIRED: "供应商尚未绑定询价模板", TEMPLATE_FIELDS_REQUIRED: "询价模板字段不完整", UNIT_CONVERSION_EVIDENCE_REQUIRED: "采购单位换算待确认", UNIT_CONVERSION_INCONSISTENT: "单位换算与需求不一致", EXACT_UNIQUE_MATCH_REQUIRED: "商品未唯一匹配", SUPPLIER_REQUIRED: "缺少供应商", DESTINATION_REQUIRES_REVIEW: "交付港口待确认", DELIVERY_DATE_REQUIRED: "缺少交付日期", QUANTITY_INVALID: "数量无效", UNIT_REQUIRED: "缺少单位", MATCH_LINE_COVERAGE: "商品匹配行不完整", HISTORICAL_OPEN_REQUIRES_ADOPTION: "已有 OPEN 待确认导入", REVISION_REQUIRES_ADOPTION: "PO 已修订，需确认如何更新", EXISTING_PO_REQUIRES_LINK: "系统已有同一 PO，需关联", SCAN_DISPATCH_FAILED: "启动失败，可重新扫描", SCAN_INTERRUPTED: "扫描中断，可重新扫描", PO_NO_LONGER_OPEN: "该 PO 已不再是 OPEN，未导入", IMPORT_INTERRUPTED_REVIEW_REQUIRED: "处理曾中断，请查看文档后处理" };
 const date = (value?: string | null) => value ? new Date(/Z$|[+-]\d\d:\d\d$/.test(value) ? value : value + "Z").toLocaleString("zh-CN") : "尚未扫描";
 
 export function OracleScanPanel({ onUpdated }: { onUpdated: () => void }) {
@@ -42,7 +42,7 @@ export function OracleScanPanel({ onUpdated }: { onUpdated: () => void }) {
       const response = await fetchWithAuth(poNumber ? `${API}/api/oracle/imports/${encodeURIComponent(poNumber)}` : `${API}/api/oracle/scans`, { method: "POST" });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || "扫描启动失败");
-      if (result.status === "failed") throw new Error(reasons[result.error_code] || "扫描启动失败，请重试");
+      if (result.status === "failed") throw new Error(oracleRunErrorMessage(result.error_code || "SCAN_UNKNOWN"));
       setExpanded(true); await load(); onUpdated();
     } catch (e) { setError(e instanceof Error ? e.message : "扫描启动失败"); }
     finally { setBusy(false); }
@@ -69,14 +69,14 @@ export function OracleScanPanel({ onUpdated }: { onUpdated: () => void }) {
       {state?.enabled && <span>下次预计：{date(state.next_scan_at)}</span>}
       <button className="underline underline-offset-2" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>{expanded ? "收起记录" : `文件处理记录（${items.size}）`}</button>
     </div>
-    {(error || latest?.error_code) && <p role="alert" className="mt-2 text-xs text-red-600">{error || reasons[latest?.error_code || ""] || latest?.error_code}</p>}
+    {(error || latest?.error_code) && <p role="alert" className="mt-2 text-xs text-red-600">{error || oracleRunErrorMessage(latest?.error_code || "SCAN_UNKNOWN")}</p>}
     {expanded && <div className="mt-3 max-h-80 overflow-auto">
       <table className="w-full text-left text-xs"><thead><tr className="border-b text-muted-foreground"><th className="py-2">PO / 文件</th><th>下载</th><th>处理进度</th><th>结果</th><th>操作</th></tr></thead>
         <tbody>{Array.from(items.values()).map(item => <tr key={item.po_number} className="border-b last:border-0">
           <td className="py-3 pr-3">{item.document_id ? <Link className="underline" href={`/dashboard/documents/${item.document_id}`}>{item.po_number}.pdf</Link> : item.po_number}</td>
           <td className="pr-3">{item.document_id ? "自动下载 ✓" : item.status === "processing" && item.stage === "download" ? "下载中" : "未下载"}</td>
           <td className="pr-3">{labels[item.status === "processing" ? item.stage || item.status : item.status] || item.status}</td>
-          <td className="max-w-64 py-2">{item.order_id && <Link className="mr-2 underline" href={`/dashboard/orders/${item.order_id}`}>订单 #{item.order_id}</Link>}{item.inquiry_id && <span>询价 #{item.inquiry_id} </span>}{item.issues?.map(i => reasons[i.code] || i.code).join("；")}</td>
+          <td className="max-w-64 py-2">{item.order_id && <Link className="mr-2 underline" href={`/dashboard/orders/${item.order_id}`}>订单 #{item.order_id}</Link>}{item.inquiry_id && <span>询价 #{item.inquiry_id} </span>}{item.issues?.map(i => oracleIssueMessage(i, item.status)).join("；")}</td>
           <td className="py-2 pl-3">{item.status === "historical_pending" && canScan && <Button size="sm" variant="outline" disabled={!state?.enabled || busy || active} onClick={() => void scan(item.po_number)} aria-label={`导入 ${item.po_number}`}>导入</Button>}</td>
         </tr>)}</tbody>
       </table>{items.size === 0 && <p className="py-4 text-muted-foreground">扫描后将在这里显示每张 PO 的下载及处理结果。</p>}

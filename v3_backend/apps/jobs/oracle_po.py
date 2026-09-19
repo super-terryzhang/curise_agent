@@ -412,9 +412,11 @@ def import_po(
                 mark_pipeline_stage(
                     pipeline, 6, "completed", evidence={"group_id": order.group_id}
                 )
-            # Recheck the Oracle source immediately before creating outputs.
+            # Recheck the source before outputs; unrelated malformed rows must
+            # not prevent this PO's version from being verified.
             current = [
-                r for r in client.list_orders() if identity(r)["source_key"] == source.source_key
+                r for r in client.list_orders(record_issues=[])
+                if identity(r)["source_key"] == source.source_key
             ]
             if len(current) != 1 or identity(current[0])["version_key"] != source.version_key:
                 return _stop(db, source, [{"code": "SOURCE_CHANGED_DURING_IMPORT"}])

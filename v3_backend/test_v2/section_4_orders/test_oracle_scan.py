@@ -4,7 +4,7 @@ import pytest
 
 from apps.jobs import oracle_scan as scan
 from domains.orders.oracle_models import OraclePOImport, OracleScanRun
-from infrastructure.oracle.adapter import identity
+from infrastructure.oracle.adapter import IntegrationError, OracleClient, identity
 
 
 def record(number, date="2026-09-10T00:00:00Z"):
@@ -16,6 +16,53 @@ def record(number, date="2026-09-10T00:00:00Z"):
         "CreationDate": date,
         "LastUpdateDate": date,
     }
+
+
+def test_oracle_listing_isolates_one_not_ready_record_without_losing_open_po(monkeypatch):
+    pending = {**record(2), "StatusCode": "PENDING ACKNOWLEDGMENT", "Revision": None}
+    good = record(1)
+    oracle = OracleClient({"username": "test", "password": "test"})
+    monkeypatch.setattr(
+        oracle,
+        "request",
+        lambda _url: {"items": [pending, good], "offset": 0, "limit": 500, "hasMore": False},
+    )
+
+    issues = []
+    assert oracle.list_orders(record_issues=issues) == [good]
+    assert issues == [{
+        "po_number": "PO2",
+        "oracle_status": "PENDING ACKNOWLEDGMENT",
+        "code": "ORACLE_INVALID_IDENTITY",
+        "field": "Revision",
+    }]
+
+
+def test_oracle_listing_reports_invalid_open_po_and_keeps_other_open_po(monkeypatch):
+    invalid = {**record(2), "Revision": None}
+    good = record(1)
+    oracle = OracleClient({"username": "test", "password": "test"})
+    monkeypatch.setattr(
+        oracle,
+        "request",
+        lambda _url: {"items": [invalid, good], "offset": 0, "limit": 500, "hasMore": False},
+    )
+
+    issues = []
+    assert oracle.list_orders(record_issues=issues) == [good]
+    assert issues[0] == {
+        "po_number": "PO2",
+        "oracle_status": "OPEN",
+        "code": "ORACLE_INVALID_IDENTITY",
+        "field": "Revision",
+    }
+
+
+def test_oracle_identity_error_identifies_invalid_field():
+    with pytest.raises(IntegrationError) as error:
+        identity({**record(2), "Revision": None})
+    assert error.value.code == "ORACLE_INVALID_IDENTITY"
+    assert error.value.field == "Revision"
 
 
 @pytest.fixture
@@ -55,7 +102,7 @@ def test_scan_downloads_new_once_holds_history_and_detects_revision(db, configur
     new, old = record(1), record(2, "2026-01-01T00:00:00Z")
 
     class Client:
-        def list_orders(self):
+        def list_orders(self, *, record_issues=None):
             return [old, new]
 
     calls = []
@@ -87,11 +134,71 @@ def test_scan_downloads_new_once_holds_history_and_detects_revision(db, configur
     assert calls == ["PO1"]
 
 
+def test_scan_keeps_processing_valid_po_when_another_oracle_row_is_invalid(db, configured):
+    good = record(1)
+
+    class Client:
+        def list_orders(self, *, record_issues=None):
+            if record_issues is not None:
+                record_issues.append({
+                    "po_number": "PO2",
+                    "oracle_status": "PENDING ACKNOWLEDGMENT",
+                    "code": "ORACLE_INVALID_IDENTITY",
+                    "field": "Revision",
+                })
+            return [good]
+
+    imported = []
+
+    def importer(r, **_kwargs):
+        imported.append(r["OrderNumber"])
+        return {"status": "completed"}
+
+    result = scan.execute_scan(client=Client(), importer=importer)
+    assert result["status"] == "completed_with_issues"
+    assert result["error_code"] is None
+    assert imported == ["PO1"]
+    assert {item["po_number"]: item["status"] for item in result["items"]} == {
+        "PO1": "completed", "PO2": "deferred",
+    }
+    assert next(i for i in result["items"] if i["po_number"] == "PO2")["issues"] == [{
+        "code": "ORACLE_INVALID_IDENTITY", "field": "Revision",
+    }]
+
+
+def test_scan_marks_invalid_open_po_for_review_without_stopping_other_po(db, configured):
+    class Client:
+        def list_orders(self, *, record_issues=None):
+            if record_issues is not None:
+                record_issues.append({
+                    "po_number": "PO2", "oracle_status": "OPEN",
+                    "code": "ORACLE_INVALID_IDENTITY", "field": "Revision",
+                })
+            return [record(1)]
+
+    result = scan.execute_scan(client=Client(), importer=lambda *_args, **_kwargs: {"status": "completed"})
+    invalid = next(i for i in result["items"] if i["po_number"] == "PO2")
+    assert result["status"] == "completed_with_issues"
+    assert invalid["status"] == "needs_review"
+    assert invalid["issues"] == [{"code": "ORACLE_INVALID_IDENTITY", "field": "Revision"}]
+
+
+def test_scan_preserves_page_level_oracle_error_instead_of_reporting_success(db, configured):
+    class Client:
+        def list_orders(self, *, record_issues=None):
+            raise IntegrationError("ORACLE_PAGINATION_INVALID")
+
+    result = scan.execute_scan(client=Client())
+    assert result["status"] == "failed"
+    assert result["error_code"] == "ORACLE_PAGINATION_INVALID"
+    assert db.query(OracleScanRun).one().active_key is None
+
+
 def test_worker_claims_manual_run_without_duplicate(db, configured):
     run, _ = scan.reserve_scan(db, trigger="manual", requested_by=configured.id)
 
     class Client:
-        def list_orders(self):
+        def list_orders(self, *, record_issues=None):
             return []
 
     result = scan.execute_scan(client=Client())
@@ -138,7 +245,7 @@ def test_single_import_only_adopts_selected_po_and_coalesces_clicks(db, configur
         scan.request_po_import(db, configured.id, "PO2")
 
     class Client:
-        def list_orders(self):
+        def list_orders(self, *, record_issues=None):
             return [record(1, "2026-01-01T00:00:00Z"), record(2, "2026-01-01T00:00:00Z"), record(3)]
 
     imported = []
@@ -164,7 +271,7 @@ def test_single_import_rechecks_open_and_rejects_unknown(db, configured, monkeyp
     scan.request_po_import(db, configured.id, "PO1")
 
     class Client:
-        def list_orders(self):
+        def list_orders(self, *, record_issues=None):
             return [{**record(1), "StatusCode": "CLOSED"}]
 
     def importer(*args, **kwargs):
@@ -173,6 +280,27 @@ def test_single_import_rechecks_open_and_rejects_unknown(db, configured, monkeyp
     result = scan.execute_scan(client=Client(), importer=importer)
     assert result["items"][0]["issues"] == [{"code": "PO_NO_LONGER_OPEN"}]
     assert result["status"] == "completed_with_issues"
+
+
+def test_manual_import_reports_invalid_target_instead_of_unrelated_oracle_rows(db, configured, monkeypatch):
+    pending_history(db, "PO1")
+    monkeypatch.setattr(scan, "dispatch_job", lambda: None)
+    scan.request_po_import(db, configured.id, "PO1")
+
+    class Client:
+        def list_orders(self, *, record_issues=None):
+            record_issues.extend([
+                {"po_number": "PO1", "oracle_status": "OPEN", "code": "ORACLE_INVALID_IDENTITY", "field": "Revision"},
+                {"po_number": "PO2", "oracle_status": "OPEN", "code": "ORACLE_INVALID_DATE", "field": "CreationDate"},
+            ])
+            return []
+
+    result = scan.execute_scan(client=Client(), importer=lambda *_a, **_kw: pytest.fail("Invalid PO must not import"))
+    assert result["status"] == "completed_with_issues"
+    assert result["items"] == [{
+        "po_number": "PO1", "status": "needs_review",
+        "issues": [{"code": "ORACLE_INVALID_IDENTITY", "field": "Revision"}],
+    }]
 
 
 def test_single_import_dispatch_failure_can_retry(db, configured, monkeypatch):

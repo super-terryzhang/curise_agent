@@ -111,7 +111,7 @@ def setup_po(db, seed_user, monkeypatch):
             self.downloads += 1
             return b"%PDF-1.4\nfixture\n%%EOF"
 
-        def list_orders(self):
+        def list_orders(self, *, record_issues=None):
             return [record]
 
     return record, parsed, Client(), seed_user
@@ -157,7 +157,7 @@ def test_new_po_in_same_arrangement_creates_cumulative_version(db, setup_po, tmp
         "POHeaderId": 101,
         "OrderNumber": "PO-ACCEPTANCE-2",
     }
-    setup_po[2].list_orders = lambda: [setup_po[0], second_record]
+    setup_po[2].list_orders = lambda **_kwargs: [setup_po[0], second_record]
 
     second = import_po(
         second_record,
@@ -266,10 +266,28 @@ def test_historical_order_not_duplicated(db, setup_po, tmp_path):
 def test_source_changed_stops_generation(db, setup_po, tmp_path):
     record = deepcopy(setup_po[0])
     record["Revision"] = 1
-    setup_po[2].list_orders = lambda: [record]
+    setup_po[2].list_orders = lambda **_kwargs: [record]
     result = run(setup_po, tmp_path)
     assert result["issues"][0]["code"] == "SOURCE_CHANGED_DURING_IMPORT", result
     assert db.query(Inquiry).count() == 0
+
+
+def test_unrelated_invalid_oracle_row_does_not_block_source_recheck(db, setup_po, tmp_path):
+    from infrastructure.oracle.adapter import IntegrationError
+
+    def list_orders(*, record_issues=None):
+        if record_issues is None:
+            raise IntegrationError("ORACLE_INVALID_IDENTITY")
+        record_issues.append({
+            "po_number": "PO-UNRELATED", "oracle_status": "PENDING ACKNOWLEDGMENT",
+            "code": "ORACLE_INVALID_IDENTITY", "field": "Revision",
+        })
+        return [setup_po[0]]
+
+    setup_po[2].list_orders = list_orders
+    result = run(setup_po, tmp_path)
+    assert result["status"] == "completed", result
+    assert db.query(Inquiry).count() == 1
 
 
 def test_download_error_is_recorded(db, setup_po, tmp_path):
