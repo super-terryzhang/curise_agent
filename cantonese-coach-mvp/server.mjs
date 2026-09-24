@@ -8,6 +8,8 @@ const CAI = "https://cantonese.ai/api";
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const INDEX = await fs.readFile(path.join(DIR,"index.html"),"utf8");
 const APP = await fs.readFile(path.join(DIR,"app.js"),"utf8");
+new Function(APP);
+if(APP.includes("x-cantonese-key")) throw new Error("Unsafe API-key header transport still present in app.js");
 
 function send(res,status,body,type){
   res.writeHead(status,{
@@ -26,7 +28,6 @@ async function readJson(req,max=15*1024*1024){
   const raw=Buffer.concat(parts).toString("utf8");
   return raw?JSON.parse(raw):{};
 }
-function apiKey(req){return String(req.headers["x-cantonese-key"]||"").trim();}
 async function parseUpstream(r){
   const ct=r.headers.get("content-type")||"";
   if(ct.includes("json"))return await r.json().catch(()=>null);
@@ -62,7 +63,7 @@ const server=http.createServer(async(req,res)=>{
   try{
     if(req.method==="GET"&&u.pathname==="/")return send(res,200,INDEX,"text/html; charset=utf-8");
     if(req.method==="GET"&&u.pathname==="/app.js")return send(res,200,APP,"application/javascript; charset=utf-8");
-    if(req.method==="GET"&&u.pathname==="/api/health")return json(res,200,{ok:true,version:"20260924f"});
+    if(req.method==="GET"&&u.pathname==="/api/health")return json(res,200,{ok:true,version:"20260924h",keyTransport:"json-body"});
 
     if(req.method==="GET"&&u.pathname==="/practice"){
       const text=String(u.searchParams.get("text")||"").trim();
@@ -91,7 +92,7 @@ const server=http.createServer(async(req,res)=>{
     }
 
     if(u.pathname==="/api/tts"){
-      const k=apiKey(req);
+      const k=String(d.apiKey||"").trim();
       if(!k)return json(res,401,{error:"請先輸入 API Key。"});
 
       const basePayload={
@@ -159,7 +160,7 @@ const server=http.createServer(async(req,res)=>{
     }
 
     if(u.pathname==="/api/score"){
-      const k=apiKey(req);
+      const k=String(d.apiKey||"").trim();
       if(!k)return json(res,401,{error:"請先輸入 API Key。"});
       const raw=Buffer.from(String(d.audioBase64||""),"base64");
       if(!raw.length||raw.length>10*1024*1024)return json(res,400,{error:"錄音無效"});
