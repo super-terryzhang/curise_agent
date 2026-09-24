@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 import numpy as np
 import sherpa_onnx
+from opencc import OpenCC
 
 ROOT = pathlib.Path(__file__).resolve().parent
 PORT = int(os.environ.get("PORT", "10000"))
@@ -48,6 +49,7 @@ if not config.validate():
 
 tts = sherpa_onnx.OfflineTts(config)
 tts_lock = threading.Lock()
+t2s = OpenCC("t2s")
 
 def generate_wav(text: str, speed: float = 1.0) -> tuple[bytes, int, float]:
     text = text.strip()
@@ -57,9 +59,10 @@ def generate_wav(text: str, speed: float = 1.0) -> tuple[bytes, int, float]:
         raise ValueError("Text is too long for demo mode")
     speed = max(0.65, min(1.35, float(speed)))
 
+    normalized = t2s.convert(text)
     started = time.perf_counter()
     with tts_lock:
-        audio = tts.generate(text=text, sid=0, speed=speed)
+        audio = tts.generate(text=normalized, sid=0, speed=speed)
     elapsed = time.perf_counter() - started
 
     samples = np.asarray(audio.samples, dtype=np.float32)
@@ -75,7 +78,7 @@ def generate_wav(text: str, speed: float = 1.0) -> tuple[bytes, int, float]:
         w.writeframes(pcm.tobytes())
     return out.getvalue(), int(audio.sample_rate), elapsed
 
-print("[selftest] generating 你好嗎", flush=True)
+print("[selftest] generating 你好嗎 -> " + t2s.convert("你好嗎"), flush=True)
 test_wav, test_sr, test_elapsed = generate_wav("你好嗎", 1.0)
 if len(test_wav) < 1000:
     raise RuntimeError("Self-test WAV is unexpectedly small")
@@ -117,6 +120,7 @@ class Handler(BaseHTTPRequestHandler):
                 "external_tts_api": False,
                 "sample_rate": test_sr,
                 "selftest": True,
+                "traditional_to_simplified": True,
             })
 
         item = STATIC.get(path)
