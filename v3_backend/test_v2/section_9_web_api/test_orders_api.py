@@ -363,6 +363,13 @@ def test_patch_persists_loading_date_to_real_column(client, db, session_factory)
 
 def test_resolve_row_binds_product_and_rechecks_anomalies(client, db):
     _user, product, order = _seed_resolvable_order(db)
+    order.products = [{
+        **order.products[0],
+        "rfq_quantity": 99,
+        "rfq_unit": "OLD",
+        "conversion_evidence": {"verified": True, "evidence": "旧商品的依据"},
+    }]
+    db.commit()
     headers = login(client, "resolver@example.com")
 
     response = client.patch(
@@ -377,6 +384,7 @@ def test_resolve_row_binds_product_and_rechecks_anomalies(client, db):
     assert body["match_results"][0]["match_status"] == "matched"
     assert body["match_results"][0]["match_reason"] == "人工关联商品"
     assert body["anomaly_data"]["schema_version"] == 2
+    assert "conversion_evidence" not in body["products"][0]
 
 
 def test_resolve_row_rejects_product_outside_current_candidate_pool(client, db):
@@ -480,6 +488,28 @@ def test_resolve_row_rejects_invalid_payload_and_other_users_order(client, db):
 
     assert invalid.status_code in {400, 422}
     assert forbidden.status_code == 404
+
+
+def test_resolve_row_rejects_conversion_until_product_is_matched(client, db):
+    _user, _product, order = _seed_resolvable_order(db)
+    headers = login(client, "resolver@example.com")
+
+    response = client.patch(
+        f"/api/orders/{order.id}/products/1/resolve",
+        json={
+            "action": "record_conversion",
+            "source_quantity": 9,
+            "source_unit": "CA24.0",
+            "rfq_quantity": 10,
+            "rfq_unit": "CA",
+            "evidence": "人工确认",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    db.refresh(order)
+    assert "conversion_evidence" not in order.products[0]
 
 
 # ─── POST /api/orders/{id}/anomaly-check ─────────────────────

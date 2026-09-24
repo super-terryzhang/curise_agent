@@ -438,6 +438,8 @@ def inquiry_data_preview(
             continue
         if matched.get("supplier_id") != supplier_id:
             continue
+        if mr.get("inquiry_eligibility") == "excluded":
+            continue
         row_warnings = mr.get("inquiry_warnings") or []
         for warning in row_warnings:
             message = warning.get("message") if isinstance(warning, dict) else str(warning)

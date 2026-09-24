@@ -82,7 +82,6 @@ export function OrderRowResolutionDialog({
         search: search.trim() || undefined,
         country_id: countryId || undefined,
         port_id: portId || undefined,
-        is_effective: true,
         limit: 20,
       }).then((result) => setProducts(result.items)).catch((cause) => {
         toast.error(cause instanceof Error ? cause.message : "商品检索失败");

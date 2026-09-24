@@ -434,7 +434,7 @@ def resolve_order_product_row(
         supplied = editable.intersection(body.model_fields_set)
         if not supplied:
             raise BadRequest("请至少修改一个商品字段")
-        if body.quantity is not None and body.quantity <= 0:
+        if "quantity" in supplied and (body.quantity is None or body.quantity <= 0):
             raise BadRequest("数量必须大于 0")
         if "product_name" in supplied and not (body.product_name or "").strip():
             raise BadRequest("商品名称不能为空")
@@ -456,6 +456,14 @@ def resolve_order_product_row(
         if body.product_id is None or body.product_id <= 0:
             raise BadRequest("请选择要关联的商品")
         row["manual_product_id"] = body.product_id
+        for field in (
+            "source_quantity",
+            "source_unit",
+            "rfq_quantity",
+            "rfq_unit",
+            "conversion_evidence",
+        ):
+            row.pop(field, None)
     else:
         if body.rfq_quantity is None or body.rfq_quantity <= 0:
             raise BadRequest("询价数量必须大于 0")
@@ -488,12 +496,15 @@ def resolve_order_product_row(
 
     try:
         run_matching(order, db)
+        result = (order.match_results or [])[row_index - 1]
         if body.action == "bind_product":
-            result = (order.match_results or [])[row_index - 1]
             matched = result.get("matched_product") or {}
             if result.get("match_status") != "matched" or matched.get("id") != body.product_id:
                 db.rollback()
                 raise BadRequest("所选商品不在当前港口或有效期候选范围内")
+        if body.action == "record_conversion" and result.get("match_status") != "matched":
+            db.rollback()
+            raise BadRequest("商品尚未匹配，不能登记单位换算")
         pipeline = (order.anomaly_data or {}).get("pipeline") or []
         order.anomaly_data = anomaly.run_anomaly_check(order, pipeline=pipeline)
         flag_modified(order, "anomaly_data")

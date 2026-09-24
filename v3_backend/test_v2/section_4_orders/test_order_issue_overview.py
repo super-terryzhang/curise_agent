@@ -166,3 +166,37 @@ def test_overview_treats_legacy_possible_match_as_unmatched():
     assert overview["rows"][0]["inquiry_disposition"] == "excluded"
     assert overview["rows"][0]["findings"][0]["resolution"]["target"] == "product_match"
 
+
+def test_overview_does_not_duplicate_stored_unmatched_finding_without_row_index():
+    result = {
+        "line_id": "stable-line",
+        "product_name": "UNMATCHED",
+        "quantity": 1,
+        "unit": "EA",
+        "match_status": "not_matched",
+        "match_reason": "没有匹配上",
+        "matched_product": None,
+    }
+    order = _order(
+        products=[dict(result)],
+        match_results=[result],
+        anomaly_data={
+            "findings": [
+                {
+                    "code": "PRODUCT_NOT_MATCHED",
+                    "severity": "error",
+                    "scope": "row",
+                    "line_id": "stable-line",
+                    "message": "没有匹配上",
+                    "suggestion": "人工关联",
+                    "evidence": {},
+                }
+            ]
+        },
+    )
+
+    overview = build_issue_overview(order, [order])
+
+    assert [item["code"] for item in overview["rows"][0]["findings"]] == [
+        "PRODUCT_NOT_MATCHED"
+    ]

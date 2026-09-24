@@ -534,7 +534,12 @@ def run_inquiry_for_supplier(
             if inquiry is not None and inquiry.group_id is not None
             else order.match_results
         ) or []
-        products = [r for r in source_results if _supplier_id_of(r) == supplier_id]
+        products = [
+            r
+            for r in source_results
+            if _supplier_id_of(r) == supplier_id
+            and r.get("inquiry_eligibility") != "excluded"
+        ]
         if not products:
             raise BadRequest(f"供应商 {supplier_id} 在订单 {order_id} 中没有匹配的产品")
 

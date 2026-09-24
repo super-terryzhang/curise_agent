@@ -67,6 +67,22 @@ def build_issue_overview(order: Order, related_orders: Iterable[Order]) -> dict[
         if any(item.get("severity") == "warning" for item in attached):
             warning_count += 1
 
+    # Some legacy/cross-PO snapshots retain stable line identities even when
+    # the target Order predates stored product rows. They cannot be rendered as
+    # a normal row, but must still contribute to the unique-row summary.
+    unattached_actionable: set[tuple[Any, ...]] = set()
+    unattached_warnings: set[tuple[Any, ...]] = set()
+    for index, item in enumerate(non_row_findings):
+        if item.get("scope") != "row":
+            continue
+        identity = _finding_identity(item, fallback=index)
+        if item.get("severity") in {"error", "blocking"}:
+            unattached_actionable.add(identity)
+        elif item.get("severity") == "warning":
+            unattached_warnings.add(identity)
+    actionable_count += len(unattached_actionable)
+    warning_count += len(unattached_warnings)
+
     return {
         "schema_version": 1,
         "actionable_row_count": actionable_count,
@@ -99,7 +115,9 @@ def _collect_findings(order: Order, related_orders: Iterable[Order]) -> list[Fin
             if not isinstance(item, dict):
                 continue
             source_order_id = item.get("source_order_id")
-            if owner.id == order.id or _same_order_id(source_order_id, order.id):
+            belongs_to_target = _same_order_id(source_order_id, order.id)
+            is_unattributed_target_finding = owner.id == order.id and source_order_id is None
+            if belongs_to_target or is_unattributed_target_finding:
                 candidates.append(item)
 
     unique: dict[tuple[Any, ...], Finding] = {}
@@ -122,10 +140,12 @@ def _unmatched_fallback_findings(
     rows: list[dict[str, Any]], findings: list[Finding]
 ) -> list[Finding]:
     """Explain legacy unmatched rows even when no structured finding was stored."""
+    name_counts = Counter(str(row.get("product_name") or "") for row in rows)
     existing_row_indices = {
-        int(item["row_index"])
+        index + 1
         for item in findings
-        if item.get("scope") == "row" and str(item.get("row_index") or "").isdigit()
+        if item.get("scope") == "row"
+        and (index := _find_row_index(item, rows, name_counts)) is not None
     }
     result: list[Finding] = []
     for row in rows:
@@ -262,3 +282,17 @@ def _same_order_id(value: Any, order_id: int) -> bool:
         return int(value) == order_id
     except (TypeError, ValueError):
         return False
+
+
+def _finding_identity(item: Finding, *, fallback: int) -> tuple[Any, ...]:
+    for field in (
+        "line_id",
+        "source_line_id",
+        "arrangement_line_id",
+        "source_line",
+        "line_number",
+        "row_index",
+    ):
+        if item.get(field) is not None:
+            return (field, str(item[field]))
+    return ("unidentified-row", fallback)

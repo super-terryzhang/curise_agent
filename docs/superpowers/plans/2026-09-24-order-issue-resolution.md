@@ -38,7 +38,7 @@
 - Test: `v3_backend/test_v2/section_9_web_api/test_orders_api.py`
 
 **Interfaces:**
-- Consumes: `anomaly.run_anomaly_check(order, pipeline=...)` 与同安排订单保存的跨 PO findings。
+- Consumes: 订单已保存的结构化 findings、匹配结果与同安排订单保存的跨 PO findings；详情读取不重新运行异常规则。
 - Produces: `build_issue_overview(order, related_orders) -> dict`；`OrderDetail.issue_overview`。
 
 - [ ] **Step 1: 写失败测试**：覆盖一行多问题、跨 PO finding、重复名称、历史 `possible_match`、未知 code 兜底和匹配/询价状态分离。
@@ -156,4 +156,3 @@
 - [ ] **Step 4: 将 Oracle Job 更新为同一镜像 digest；不暂停或改动三个 Scheduler 的启用状态。**
 - [ ] **Step 5: 部署 Vercel 候选，核验登录/订单详情/数据管理路径后提升正式域名。**
 - [ ] **Step 6: 只读核对数据库 head 和核心数量、检查新 revision 日志，更新根进度与部署核验文档并推送最终文档提交。**
-

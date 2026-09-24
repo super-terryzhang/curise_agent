@@ -15,7 +15,7 @@
 
 ## 后端读模型
 
-`OrderDetail` 新增 `issue_overview`，在读取订单详情时根据当前订单的产品、匹配结果、当前异常规则和同一供船安排中的跨 PO finding 动态构建，不依赖历史订单是否曾保存新版 anomaly snapshot。
+`OrderDetail` 新增 `issue_overview`，在读取订单详情时根据当前订单的产品、匹配结果、处理流水线已经保存的 findings 和同一供船安排中的跨 PO finding 归并构建。读取详情不会重新运行规则或改变业务判断；人工处理成功后由写入流程重新匹配、重新检测并保存新 snapshot，历史未匹配结果只补充明确的兼容兜底原因。
 
 `issue_overview.rows` 每项包含来源行、原始商品、匹配商品、规范化匹配状态、询价处理结果、全部 findings 和动态处理入口；`non_row_findings` 保存订单、供应商和流水线级问题。处理入口使用有限目标枚举并保留 `review` 兜底，前端不复制业务判定。
 
@@ -51,4 +51,3 @@
 - warning 行进入询价并在 Excel 黄色标注；blocking/error 行仍被排除。
 - 未知规则不崩溃、不隐藏，显示原始信息和兜底入口。
 - 权限隔离、跨 PO 来源归属、旧 `possible_match`、重复商品名称和缺少行标识均有自动化覆盖。
-

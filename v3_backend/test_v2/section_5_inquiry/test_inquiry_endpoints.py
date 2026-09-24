@@ -350,7 +350,15 @@ def test_inquiry_data_preview_returns_saved_row_warning_messages(
                     "message": "客户 PO 单价与有效卖价偏差较大",
                 }
             ],
-        }
+        },
+        {
+            **order.match_results[0],
+            "product_code": "EXCLUDED",
+            "inquiry_eligibility": "excluded",
+            "inquiry_warnings": [
+                {"severity": "warning", "message": "不应出现在本次文件预览"}
+            ],
+        },
     ]
     db.commit()
 
@@ -360,6 +368,7 @@ def test_inquiry_data_preview_returns_saved_row_warning_messages(
 
     assert response.status_code == 200
     assert response.json()["warnings"] == ["客户 PO 单价与有效卖价偏差较大"]
+    assert response.json()["total_products"] == 1
 
 
 def test_inquiry_data_preview_404_when_supplier_unknown(client, db, _local_storage):
