@@ -3,7 +3,7 @@ import http from 'http';
 const PORT = process.env.PORT || 3000;
 const CAI = 'https://cantonese.ai/api';
 
-const PAGE = \`<!doctype html>
+const PAGE = `<!doctype html>
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -77,7 +77,7 @@ function render(d){
  $('#diags').innerHTML=html;$('#tone').textContent=total?Math.round(hit/total*100)+'%':'—';$('#result').scrollIntoView({behavior:'smooth'})
 }
 analyse();
-</script></body></html>\`;
+</script></body></html>`;
 
 function send(res,status,body,type){res.writeHead(status,{'content-type':type||'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(body)}
 function js(res,status,obj){send(res,status,JSON.stringify(obj),'application/json; charset=utf-8')}
