@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -64,6 +64,8 @@ class OrderDetail(BaseModel):
     match_results: list[dict[str, Any]] | None = None
     match_statistics: dict[str, Any] | None = None
     anomaly_data: dict[str, Any] | None = None
+    actionable_count: int = 0
+    issue_overview: dict[str, Any] | None = None
     financial_data: dict[str, Any] | None = None
     inquiry_data: dict[str, Any] | None = None
     is_reviewed: bool = False
@@ -111,6 +113,23 @@ class OrderRematchRequest(BaseModel):
     country_id: int | None = None
     port_id: int | None = None
     delivery_date: str | None = None
+
+
+class OrderRowResolveRequest(BaseModel):
+    """One explicit human decision for a single 1-based PO product row."""
+
+    action: Literal["edit_source", "bind_product", "record_conversion"]
+    product_id: int | None = None
+    product_code: str | None = None
+    product_name: str | None = None
+    quantity: float | None = None
+    unit: str | None = None
+    unit_price: float | None = None
+    source_quantity: float | None = None
+    source_unit: str | None = None
+    rfq_quantity: float | None = None
+    rfq_unit: str | None = None
+    evidence: str | None = None
 
 
 class OrderReviewRequest(BaseModel):

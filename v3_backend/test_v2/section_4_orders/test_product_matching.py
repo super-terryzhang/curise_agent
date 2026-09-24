@@ -37,7 +37,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -48,7 +47,6 @@ from domains.orders.matching import code_first, geo, llm_refine, service
 from domains.orders.matching.llm_refine import FakeMatcher
 from domains.orders.models import Order
 from test_v2.fixtures.helpers import seed_product, seed_user
-
 
 # ─── Helpers for building master geo rows ─────────────────────
 
@@ -300,6 +298,50 @@ def test_code_first_preserves_input_order():
     assert all_results[0]["match_status"] == "not_matched"
     assert all_results[1]["match_status"] == "matched"
     assert all_results[2]["match_status"] == "matched"
+
+
+def test_code_first_manual_product_id_wins_over_source_code():
+    """人工关联只能命中当前候选池，但命中后应优先于 PO 原编码。"""
+    pool = [
+        _fake_product(id=30, code="OLD-CODE"),
+        _fake_product(id=31, code="MANUAL-CODE", product_name_en="Manual Product"),
+    ]
+    inputs = [
+        {
+            "product_code": "OLD-CODE",
+            "product_name": "PO Name",
+            "quantity": 1,
+            "manual_product_id": 31,
+        }
+    ]
+
+    all_results, unmatched = code_first.match_by_code(inputs, pool)
+
+    assert unmatched == []
+    assert all_results[0]["match_status"] == "matched"
+    assert all_results[0]["matched_product"]["id"] == 31
+    assert all_results[0]["match_reason"] == "人工关联商品"
+    assert all_results[0]["manual_product_id"] == 31
+
+
+def test_code_first_manual_product_outside_pool_stays_unmatched_without_fuzzy_fallback():
+    """过期或越过港口范围的人工 ID 不能伪造成成功，也不能再交给模糊匹配。"""
+    pool = [_fake_product(id=40, code="IN-SCOPE", product_name_en="Same Product Name")]
+    inputs = [
+        {
+            "product_code": "IN-SCOPE",
+            "product_name": "Same Product Name",
+            "quantity": 1,
+            "manual_product_id": 999,
+        }
+    ]
+
+    all_results, unmatched = code_first.match_by_code(inputs, pool)
+
+    assert unmatched == []
+    assert all_results[0]["match_status"] == "not_matched"
+    assert all_results[0]["matched_product"] is None
+    assert all_results[0]["match_reason"] == "人工关联商品不在当前港口或有效期候选范围内"
 
 
 def test_code_first_batch_matching_across_many_products():

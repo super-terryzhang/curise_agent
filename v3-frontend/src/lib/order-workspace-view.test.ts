@@ -5,6 +5,7 @@ import {
   arrangementPoStatus,
   arrangementWorkspaceStatus,
   formatBusinessDateTime,
+  orderDetailStatus,
   supplierInquiryStatus,
 } from "./order-workspace-view";
 
@@ -80,6 +81,23 @@ describe("structured order workspace view", () => {
       status: "completed", error_message: null,
       template_id: 1, template_name: "日本订单标准", template_method: "exact",
     })).toEqual({ label: "已生成", tone: "success" });
+  });
+
+  it("uses the backend unique actionable-row count instead of raw finding totals", () => {
+    expect(orderDetailStatus({
+      status: "ready",
+      actionable_count: 1,
+      anomaly_data: {
+        requires_human_review: true,
+        total_anomalies: 59,
+        error_count: 59,
+        blocking_count: 0,
+        price_anomalies: [],
+        quantity_anomalies: [],
+        completeness_issues: [],
+      },
+      match_statistics: { total: 1, matched: 0, not_matched: 1, match_rate: 0 },
+    })).toEqual({ label: "需要处理 1 项", tone: "warning" });
   });
 
   it("formats stored UTC timestamps in the business timezone", () => {

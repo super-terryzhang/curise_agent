@@ -1,15 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ChevronDown, Download, FileText, Loader2, MoreHorizontal, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronDown, Download, FileText, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { OrderProductIssues } from "@/components/orders/order-product-issues";
 import {
   downloadOrderFile,
   getOrder,
@@ -20,16 +21,14 @@ import {
   reviewOrder,
   runAnomalyCheck,
   updateOrder,
-  type MatchResult,
   type Order,
   type OrderProduct,
   type PortItem,
 } from "@/lib/orders-api";
 import { getArrangementWorkspace, type ArrangementWorkspace } from "@/lib/order-groups-api";
-import { formatBusinessDateTime, type BusinessTone } from "@/lib/order-workspace-view";
+import { formatBusinessDateTime, orderDetailStatus, type BusinessTone } from "@/lib/order-workspace-view";
 
 type Tab = "products" | "info" | "source" | "history";
-type ResultFilter = "all" | "matched" | "not_matched";
 
 const toneClass: Record<BusinessTone, string> = {
   neutral: "bg-slate-400",
@@ -47,27 +46,6 @@ function Panel({ title, aside, children, className = "" }: { title: string; asid
   return <section className={`overflow-hidden rounded-[3px] border bg-background ${className}`}><div className="flex min-h-9 items-center gap-3 border-b bg-slate-50 px-3 py-1.5 dark:bg-slate-900/50"><h2 className="text-sm font-semibold">{title}</h2>{aside ? <div className="ml-auto">{aside}</div> : null}</div>{children}</section>;
 }
 
-function orderStatus(order: Order): { label: string; tone: BusinessTone } {
-  if (order.status === "error") return { label: "处理失败", tone: "danger" };
-  if (["uploading", "extracting", "matching"].includes(order.status)) return { label: "自动处理中", tone: "progress" };
-  const attention = (order.anomaly_data?.error_count || 0) + (order.anomaly_data?.blocking_count || 0) + (order.match_statistics?.not_matched || 0);
-  if (order.anomaly_data?.requires_human_review || attention > 0) return { label: `需要处理${attention ? ` ${attention} 项` : ""}`, tone: "warning" };
-  return { label: "检查完成", tone: "success" };
-}
-
-function rowFinding(order: Order, result: MatchResult, index: number) {
-  return (order.anomaly_data?.findings || []).find((item) => {
-    const row = item.row_index ?? item.source_line;
-    return Number(row) === index + 1 || (!!item.product_name && item.product_name === result.product_name);
-  });
-}
-
-function supplierName(result: MatchResult, workspace: ArrangementWorkspace | null) {
-  const supplierId = result.matched_product?.supplier_id;
-  if (supplierId == null) return "—";
-  return workspace?.suppliers.find((item) => item.supplier_id === supplierId)?.supplier_name || `供应商 #${supplierId}`;
-}
-
 export default function OrderDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -78,9 +56,6 @@ export default function OrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("products");
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<ResultFilter>("all");
-  const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -108,19 +83,6 @@ export default function OrderDetailPage() {
     const timer = window.setInterval(() => void load(), 3000);
     return () => window.clearInterval(timer);
   }, [order, load]);
-
-  const matchRows = useMemo(() => order?.match_results || [], [order]);
-  const visibleRows = useMemo(() => matchRows.map((result, index) => ({ result, index })).filter(({ result }) => {
-    if (filter !== "all" && result.match_status !== filter) return false;
-    const term = search.trim().toLocaleLowerCase();
-    return !term || [result.product_name, result.product_code, result.matched_product?.product_name_en, result.matched_product?.code].some((value) => value?.toLocaleLowerCase().includes(term));
-  }), [matchRows, filter, search]);
-
-  useEffect(() => {
-    if (!order || selectedRow != null) return;
-    const firstProblem = matchRows.findIndex((result, index) => result.match_status !== "matched" || !!rowFinding(order, result, index));
-    setSelectedRow(firstProblem >= 0 ? firstProblem : matchRows.length ? 0 : null);
-  }, [order, matchRows, selectedRow]);
 
   const runAction = async (work: () => Promise<unknown>, message: string) => {
     setBusy(true);
@@ -187,9 +149,8 @@ export default function OrderDetailPage() {
   const portName = workspace?.arrangement.port || ports.find((item) => item.id === order.port_id)?.name || "未选择";
   const parentHref = order.group_id ? `/dashboard/orders/arrangements/${order.group_id}` : "/dashboard/orders";
   const parentName = workspace?.arrangement.ship || "未分类 PO";
-  const selectedResult = selectedRow != null ? matchRows[selectedRow] : undefined;
-  const selectedFinding = selectedResult && selectedRow != null ? rowFinding(order, selectedResult, selectedRow) : undefined;
-  const status = orderStatus(order);
+  const status = orderDetailStatus(order);
+  const matchRows = order.match_results || [];
   const matched = order.match_statistics?.matched ?? matchRows.filter((item) => item.match_status === "matched").length;
   const unmatched = order.match_statistics?.not_matched ?? matchRows.length - matched;
   const findings = order.anomaly_data?.findings || [];
@@ -204,33 +165,21 @@ export default function OrderDetailPage() {
 
         <Panel title="PO 基本信息"><div className="grid grid-cols-2 md:grid-cols-5">{[
           ["所属供船订单", parentName], ["装船日期", order.loading_date || String(metadata.loading_date || "待确认")], ["目标港口", portName], ["接收文件", order.filename], ["接收时间", formatBusinessDateTime(order.created_at)],
-          ["商品数量", `${order.product_count || order.products?.length || 0} 项`], ["匹配成功", `${matched} 项`], ["未匹配", `${unmatched} 项`], ["数据检查", `${Math.max((order.product_count || 0) - (order.anomaly_data?.total_anomalies || 0), 0)}/${order.product_count || 0} 通过`], ["最后处理", formatBusinessDateTime(order.processed_at || order.updated_at)],
+          ["商品数量", `${order.product_count || order.products?.length || 0} 项`], ["匹配成功", `${matched} 项`], ["未匹配", `${unmatched} 项`], ["数据检查", `${Math.max((order.product_count || 0) - (order.actionable_count ?? order.anomaly_data?.total_anomalies ?? 0), 0)}/${order.product_count || 0} 通过`], ["最后处理", formatBusinessDateTime(order.processed_at || order.updated_at)],
         ].map(([label, value]) => <div key={label} className="min-h-[70px] border-b border-r px-4 py-2.5 md:[&:nth-child(5n)]:border-r-0 md:[&:nth-last-child(-n+5)]:border-b-0"><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1.5 truncate text-sm font-medium" title={value}>{value}</div></div>)}</div></Panel>
 
         <div className="flex border-b text-sm">{([
           ["products", "商品与匹配"], ["info", "PO 信息"], ["source", "原始文件"], ["history", "处理记录"],
         ] as Array<[Tab, string]>).map(([key, label]) => <button key={key} type="button" className={`border-b-2 px-5 py-2.5 ${activeTab === key ? "border-primary font-semibold text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`} onClick={() => key === "source" ? void openSource() : setActiveTab(key)}>{label}</button>)}</div>
 
-        {activeTab === "products" ? <div className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <Panel title={`商品明细（${matchRows.length || order.products?.length || 0}）`} aside={<div className="flex items-center gap-2"><select aria-label="筛选匹配结果" className="h-7 rounded-[3px] border bg-background px-2 text-xs" value={filter} onChange={(event) => setFilter(event.target.value as ResultFilter)}><option value="all">全部结果</option><option value="matched">匹配成功</option><option value="not_matched">未匹配</option></select><Input aria-label="搜索商品" className="h-7 w-44 text-xs" placeholder="搜索商品" value={search} onChange={(event) => setSearch(event.target.value)} /></div>}>
-            <div className="overflow-x-auto"><table className="w-full min-w-[860px] border-collapse text-xs"><thead className="bg-slate-50 text-left text-muted-foreground dark:bg-slate-900/40"><tr>{["行", "PO 商品名称", "数量", "单位", "数据库匹配", "供应商", "检查结果", "操作"].map((item) => <th key={item} className="border-b border-r px-3 py-2 font-medium last:border-r-0">{item}</th>)}</tr></thead><tbody>
-              {visibleRows.length ? visibleRows.map(({ result, index }) => { const finding = rowFinding(order, result, index); const problem = result.match_status !== "matched" || !!finding; return <tr key={`${result.product_code || "row"}-${index}`} className={`cursor-pointer border-b last:border-b-0 ${selectedRow === index ? "bg-amber-50/70 dark:bg-amber-950/15" : "hover:bg-slate-50/70 dark:hover:bg-slate-900/30"}`} onClick={() => setSelectedRow(index)}><td className="border-r px-3 py-2">{index + 1}</td><td className="max-w-[260px] border-r px-3 py-2 font-medium">{result.product_name || "—"}</td><td className="border-r px-3 py-2">{result.quantity ?? "—"}</td><td className="border-r px-3 py-2">{result.unit || "—"}</td><td className="border-r px-3 py-2"><StatusText label={result.match_status === "matched" ? "匹配成功" : "未匹配"} tone={result.match_status === "matched" ? "success" : "warning"} /></td><td className="border-r px-3 py-2">{supplierName(result, workspace)}</td><td className="border-r px-3 py-2"><StatusText label={problem ? (finding?.severity === "warning" ? "需要关注" : "需要确认") : "通过"} tone={problem ? "warning" : "success"} /></td><td className="px-3 py-2 text-primary">{problem ? "处理" : "查看"}</td></tr>; }) : <tr><td colSpan={8} className="px-3 py-10 text-center text-muted-foreground">暂无匹配结果；可从“更多”重新运行匹配。</td></tr>}
-            </tbody></table></div>
-          </Panel>
-          <div className="space-y-3">
-            <Panel title={`异常详情（${findings.length || unmatched}）`}>
-              {selectedResult ? <div className="text-xs"><dl className="divide-y">{[
-                ["异常类型", selectedResult.match_status === "matched" ? selectedFinding?.code || "数据检查" : "商品未匹配"], ["发生位置", `第 ${(selectedRow || 0) + 1} 行`], ["原始名称", selectedResult.product_name || "—"], ["原因", selectedFinding?.message || selectedResult.match_reason || "检查通过"], ["处理状态", selectedResult.match_status === "matched" && !selectedFinding ? "无需处理" : "等待人工确认"],
-              ].map(([label, value]) => <div key={label} className="grid grid-cols-[88px_1fr]"><dt className="border-r bg-slate-50 px-3 py-2 text-muted-foreground dark:bg-slate-900/40">{label}</dt><dd className="px-3 py-2 leading-5">{value}</dd></div>)}</dl><div className="grid grid-cols-2 gap-2 border-t p-3"><Button size="sm" disabled={busy} onClick={() => void runAction(() => rematchOrder(order.id), "已重新匹配")}>重新匹配</Button><Button variant="outline" size="sm" onClick={openEdit}>编辑 PO 数据</Button></div></div> : <div className="px-3 py-6 text-xs text-muted-foreground">选择一行查看数据与异常详情。</div>}
-            </Panel>
-            <Panel title="自动处理状态"><div className="text-xs">{(order.anomaly_data?.pipeline?.length ? order.anomaly_data.pipeline : [
-              { step: 1, name: "文件提取", status: ["ready", "extracted"].includes(order.status) ? "completed" : order.status },
-              { step: 2, name: "字段校验", status: order.anomaly_data ? "completed" : "pending" },
-              { step: 3, name: "商品匹配", status: unmatched ? "needs_review" : matched ? "completed" : "pending" },
-              { step: 4, name: "异常检测", status: findings.length ? "needs_review" : order.anomaly_data ? "completed" : "pending" },
-            ]).slice(0, 8).map((stage) => <div key={`${stage.step}-${stage.name}`} className="grid grid-cols-[1fr_110px] border-b last:border-b-0"><span className="border-r px-3 py-2">{stage.name}</span><span className="px-3 py-2"><StatusText label={stage.status === "completed" ? "完成" : stage.status === "needs_review" || stage.status.includes("anomal") ? "需要处理" : stage.status === "failed" ? "失败" : "等待"} tone={stage.status === "completed" ? "success" : stage.status === "failed" ? "danger" : stage.status === "needs_review" || stage.status.includes("anomal") ? "warning" : "neutral"} /></span></div>)}</div></Panel>
-          </div>
-        </div> : null}
+        {activeTab === "products" ? <OrderProductIssues
+          order={order}
+          supplierNames={new Map((workspace?.suppliers || []).map((item) => [item.supplier_id, item.supplier_name]))}
+          onResolved={load}
+          onEditOrder={openEdit}
+          onOpenSource={() => void openSource()}
+          onRerun={() => void runAction(() => runAnomalyCheck(order.id), "异常检测已完成")}
+        /> : null}
 
         {activeTab === "info" ? <Panel title="PO 信息" aside={<Button variant="outline" size="sm" disabled={busy} onClick={openEdit}>编辑 PO 信息</Button>}><div className="grid grid-cols-2 md:grid-cols-4">{[
           ["PO 编号", String(metadata.po_number || "—")], ["邮轮", String(metadata.ship_name || "—")], ["客户/供应商", String(metadata.vendor_name || "—")], ["订单日期", String(metadata.order_date || "—")], ["装船日期", order.loading_date || "—"], ["交付日期", order.delivery_date || "—"], ["目标港口", portName], ["币种", String(metadata.currency || "—")], ["总金额", order.total_amount != null ? String(order.total_amount) : "—"], ["提取模板", order.template_id ? `#${order.template_id} · ${order.template_match_method || "自动"}` : "—"], ["审核状态", order.is_reviewed ? "已审核" : "未审核"], ["源文档", order.document_id ? `#${order.document_id}` : "—"],

@@ -3,12 +3,30 @@ import type {
   ArrangementWorkspace,
   ArrangementWorkspaceSupplier,
 } from "./order-groups-api";
+import type { Order } from "./orders-api";
 
 export type BusinessTone = "neutral" | "success" | "warning" | "danger" | "progress";
 
 export interface BusinessStatus {
   label: string;
   tone: BusinessTone;
+}
+
+export function orderDetailStatus(
+  order: Pick<Order, "status" | "actionable_count" | "anomaly_data" | "match_statistics">,
+): BusinessStatus {
+  if (order.status === "error") return { label: "处理失败", tone: "danger" };
+  if (["uploading", "extracting", "matching"].includes(order.status)) {
+    return { label: "自动处理中", tone: "progress" };
+  }
+  const legacyCount = (order.anomaly_data?.error_count || 0)
+    + (order.anomaly_data?.blocking_count || 0)
+    + (order.match_statistics?.not_matched || 0);
+  const attention = order.actionable_count ?? legacyCount;
+  if (order.anomaly_data?.requires_human_review || attention > 0) {
+    return { label: `需要处理${attention ? ` ${attention} 项` : ""}`, tone: "warning" };
+  }
+  return { label: "检查完成", tone: "success" };
 }
 
 export function arrangementWorkspaceStatus(

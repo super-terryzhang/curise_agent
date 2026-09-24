@@ -429,6 +429,7 @@ def inquiry_data_preview(
     # frontend's `p[field]` lookups (where `field` ∈ columns_map.values())
     # find what they expect without descending into `matched_product`.
     products: list[dict[str, Any]] = []
+    warnings: list[str] = []
     for mr in source_results:
         if not isinstance(mr, dict):
             continue
@@ -437,6 +438,13 @@ def inquiry_data_preview(
             continue
         if matched.get("supplier_id") != supplier_id:
             continue
+        if mr.get("inquiry_eligibility") == "excluded":
+            continue
+        row_warnings = mr.get("inquiry_warnings") or []
+        for warning in row_warnings:
+            message = warning.get("message") if isinstance(warning, dict) else str(warning)
+            if message and message not in warnings:
+                warnings.append(str(message))
         idx = len(products) + 1
         products.append(
             {
@@ -467,6 +475,7 @@ def inquiry_data_preview(
                     or ""
                 ),
                 "item_amount": None,  # filled by template formula `=H*K`, not us
+                "inquiry_warnings": row_warnings,
             }
         )
 
@@ -504,7 +513,7 @@ def inquiry_data_preview(
         ),
         "products": products,
         "total_products": len(products),
-        "warnings": [],
+        "warnings": warnings,
         "order_metadata": {
             "po_number": order.po_number or "",
             "ship_name": order.ship_name or "",

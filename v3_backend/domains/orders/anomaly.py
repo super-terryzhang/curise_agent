@@ -7,7 +7,8 @@ The legacy category arrays remain in the response until the old order UI is gone
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections import defaultdict
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -27,6 +28,90 @@ class RuleContext:
 
 Rule = Callable[[RuleContext], list[Finding]]
 _RULES: dict[str, Rule] = {}
+
+
+def actionable_row_counts(
+    orders: Iterable[Order], *, include_match_results: bool = True
+) -> dict[int, int]:
+    """Count unique actionable product rows and attribute them to their source PO."""
+    rows = list(orders)
+    visible_ids = {order.id for order in rows}
+    keys: dict[int, set[tuple[Any, ...]]] = defaultdict(set)
+    structured_ids: set[int] = set()
+
+    for owner in rows:
+        data = owner.anomaly_data or {}
+        findings = data.get("findings")
+        if isinstance(findings, list):
+            structured_ids.add(owner.id)
+            for index, item in enumerate(findings):
+                if not isinstance(item, dict) or item.get("severity") not in {"error", "blocking"}:
+                    continue
+                identity = _actionable_row_identity(item, fallback=index)
+                if identity is None:
+                    continue
+                source_order_id = _visible_source_order_id(
+                    item.get("source_order_id"), owner.id, visible_ids
+                )
+                if source_order_id is not None:
+                    keys[source_order_id].add(identity)
+
+        if not include_match_results:
+            continue
+        match_results = owner.match_results
+        if isinstance(match_results, list):
+            structured_ids.add(owner.id)
+            for index, result in enumerate(match_results):
+                if not isinstance(result, dict) or result.get("match_status") == "matched":
+                    continue
+                identity = _actionable_row_identity(result, fallback=index)
+                if identity is None:
+                    continue
+                source_order_id = _visible_source_order_id(
+                    result.get("source_order_id"), owner.id, visible_ids
+                )
+                if source_order_id is not None:
+                    keys[source_order_id].add(identity)
+
+    result: dict[int, int] = {}
+    for order in rows:
+        if keys[order.id] or order.id in structured_ids:
+            result[order.id] = len(keys[order.id])
+            continue
+        data = order.anomaly_data or {}
+        result[order.id] = (
+            int(data.get("error_count") or 0)
+            + int(data.get("blocking_count") or 0)
+        )
+        if "requires_human_review" not in data:
+            result[order.id] = int(data.get("total_anomalies") or 0)
+    return result
+
+
+def _visible_source_order_id(value: Any, owner_id: int, visible_ids: set[int]) -> int | None:
+    if value is None:
+        return owner_id
+    try:
+        source_order_id = int(value)
+    except (TypeError, ValueError):
+        return None
+    return source_order_id if source_order_id in visible_ids else None
+
+
+def _actionable_row_identity(item: dict[str, Any], *, fallback: int) -> tuple[Any, ...] | None:
+    row_identity = (
+        item.get("line_id")
+        or item.get("source_line_id")
+        or item.get("arrangement_line_id")
+        or item.get("source_line")
+        or item.get("line_number")
+        or item.get("row_index")
+    )
+    if row_identity is not None:
+        return ("row", str(row_identity))
+    if item.get("scope") == "row" or item.get("match_status") != "matched":
+        return ("unidentified-row", fallback)
+    return None
 
 
 def register_rule(code: str, rule: Rule, *, replace: bool = False) -> None:
@@ -222,53 +307,60 @@ def _row_matching(context: RuleContext) -> list[Finding]:
         source = products[index] if index < len(products) else {}
         result = results[index] if index < len(results) else {}
         row = {**source, **result, "row_index": index + 1}
-        if result.get("match_status") != "matched":
-            items.append(
-                finding(
-                    code="PRODUCT_NOT_MATCHED",
-                    step=5,
-                    severity="error",
-                    scope="row",
-                    row=row,
-                    message=result.get("match_reason") or "未找到唯一匹配商品",
-                    suggestion="选择正确商品或补充产品主数据后重新匹配",
-                    evidence={"candidate_ids": result.get("candidate_ids") or []},
-                )
+        items.extend(findings_for_order_row(row))
+    return items
+
+
+def findings_for_order_row(row: dict[str, Any]) -> list[Finding]:
+    """Run row-only rules for inquiry snapshots without duplicating rule logic."""
+    items: list[Finding] = []
+    if row.get("match_status") != "matched":
+        items.append(
+            finding(
+                code="PRODUCT_NOT_MATCHED",
+                step=5,
+                severity="error",
+                scope="row",
+                row=row,
+                message=row.get("match_reason") or "未找到唯一匹配商品",
+                suggestion="选择正确商品或补充产品主数据后重新匹配",
+                evidence={"candidate_ids": row.get("candidate_ids") or []},
             )
-            continue
-        matched = result.get("matched_product") or {}
-        if not matched.get("supplier_id"):
+        )
+        return items
+    matched = row.get("matched_product") or {}
+    if not matched.get("supplier_id"):
+        items.append(
+            finding(
+                code="SUPPLIER_REQUIRED",
+                step=7,
+                severity="error",
+                scope="row",
+                row=row,
+                message="匹配商品未配置供应商",
+                suggestion="为商品配置供应商后重新生成询价版本",
+            )
+        )
+    _append_price_period_findings(items, row, matched)
+    _append_price_deviation(items, row, matched)
+    source_unit = str(row.get("source_unit") or row.get("unit") or "").strip()
+    supplier_unit = str(row.get("rfq_unit") or matched.get("unit") or "").strip()
+    if source_unit and supplier_unit and source_unit.upper() != supplier_unit.upper():
+        evidence = row.get("conversion_evidence")
+        if not isinstance(evidence, dict) or not evidence.get("verified"):
             items.append(
                 finding(
-                    code="SUPPLIER_REQUIRED",
+                    code="UNIT_CONVERSION_REQUIRED",
                     step=7,
                     severity="error",
                     scope="row",
+                    category="quantity",
                     row=row,
-                    message="匹配商品未配置供应商",
-                    suggestion="为商品配置供应商后重新生成询价版本",
+                    message=f"订购单位 {source_unit} 与供应商单位 {supplier_unit} 不一致",
+                    suggestion="确认换算关系后重新生成询价版本",
+                    evidence={"source_unit": source_unit, "supplier_unit": supplier_unit},
                 )
             )
-        _append_price_period_findings(items, row, matched)
-        _append_price_deviation(items, row, matched)
-        source_unit = str(result.get("source_unit") or result.get("unit") or "").strip()
-        supplier_unit = str(result.get("rfq_unit") or matched.get("unit") or "").strip()
-        if source_unit and supplier_unit and source_unit.upper() != supplier_unit.upper():
-            evidence = result.get("conversion_evidence")
-            if not isinstance(evidence, dict) or not evidence.get("verified"):
-                items.append(
-                    finding(
-                        code="UNIT_CONVERSION_REQUIRED",
-                        step=7,
-                        severity="error",
-                        scope="row",
-                        category="quantity",
-                        row=row,
-                        message=f"订购单位 {source_unit} 与供应商单位 {supplier_unit} 不一致",
-                        suggestion="确认换算关系后重新生成询价版本",
-                        evidence={"source_unit": source_unit, "supplier_unit": supplier_unit},
-                    )
-                )
     return items
 
 
@@ -437,6 +529,7 @@ def _deduplicate(items: list[Finding]) -> list[Finding]:
 
 __all__ = [
     "RuleContext",
+    "actionable_row_counts",
     "finding",
     "list_rules",
     "register_rule",

@@ -55,7 +55,9 @@ def match_by_code(
     - `unmatched_inputs` is a subset of the original inputs that had no code hit
     """
     by_code: dict[str, list[Product]] = {}
+    by_id: dict[int, Product] = {}
     for p in pool:
+        by_id[p.id] = p
         if p.code:
             by_code.setdefault(p.code.strip().upper(), []).append(p)
 
@@ -74,6 +76,35 @@ def match_by_code(
             "unit": prod.get("unit"),
             "unit_price": prod.get("unit_price"),
         }
+
+        manual_product_id = prod.get("manual_product_id")
+        if manual_product_id is not None:
+            try:
+                manual_candidate = by_id.get(int(manual_product_id))
+            except (TypeError, ValueError):
+                manual_candidate = None
+            if manual_candidate is not None:
+                match_dict.update(
+                    {
+                        "match_status": "matched",
+                        "match_score": 1.0,
+                        "match_reason": "人工关联商品",
+                        "matched_product": serialize_db_product(manual_candidate),
+                    }
+                )
+            else:
+                match_dict.update(
+                    {
+                        "match_status": "not_matched",
+                        "match_score": 0.0,
+                        "match_reason": "人工关联商品不在当前港口或有效期候选范围内",
+                        "matched_product": None,
+                    }
+                )
+            all_results.append(match_dict)
+            # A deliberate human choice must never silently fall through to a
+            # different exact-code or fuzzy candidate.
+            continue
 
         candidates = by_code.get(item_code.upper(), []) if item_code else []
         if len(candidates) == 1:

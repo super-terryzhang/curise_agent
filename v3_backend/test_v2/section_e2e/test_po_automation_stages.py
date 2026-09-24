@@ -234,6 +234,86 @@ def test_one_bad_row_is_isolated_while_safe_row_generates(db, seed_user):
     assert finding["suggestion"]
 
 
+def test_warning_row_is_included_and_saved_for_inquiry_highlighting(db, seed_user):
+    _seed_scope(db, seed_user)
+    doc = _document(
+        db,
+        seed_user,
+        po="PO-WARNING",
+        products=[
+            {
+                "line_id": "warning-line",
+                "source_line": "2",
+                "page": 1,
+                "product_code": "AUTO-APPLE",
+                "product_name": "Apple",
+                "quantity": 2,
+                "unit": "CA",
+                "unit_price": 100,
+            }
+        ],
+    )
+
+    order_id = automatic_from_document(doc.id)
+
+    db.expire_all()
+    order = db.get(Order, order_id)
+    inquiry = inquiry_repository.get_latest_inquiry_by_group(db, order.group_id)
+    assert inquiry.status == "completed"
+    snapshot = inquiry.match_snapshot[0]
+    assert snapshot["inquiry_eligibility"] == "included_with_warning"
+    assert "SELLING_PRICE_DEVIATION" in {
+        item["code"] for item in snapshot["inquiry_warnings"]
+    }
+    assert inquiry.unmatched_items == []
+
+
+def test_excluded_row_is_not_restored_by_a_price_warning(db, seed_user):
+    _seed_scope(db, seed_user)
+    doc = _document(
+        db,
+        seed_user,
+        po="PO-MIXED-SEVERITY",
+        products=[
+            {
+                "line_id": "safe",
+                "source_line": "2",
+                "product_code": "AUTO-APPLE",
+                "product_name": "Apple",
+                "quantity": 2,
+                "unit": "CA",
+                "unit_price": 18,
+            },
+            {
+                "line_id": "excluded",
+                "source_line": "3",
+                "product_code": "AUTO-APPLE",
+                "product_name": "Apple",
+                "quantity": 0,
+                "unit": "CA",
+                "unit_price": 100,
+            },
+        ],
+    )
+
+    order_id = automatic_from_document(doc.id)
+
+    db.expire_all()
+    order = db.get(Order, order_id)
+    inquiry = inquiry_repository.get_latest_inquiry_by_group(db, order.group_id)
+    suppliers = inquiry_repository.list_inquiry_suppliers(db, inquiry.id)
+    excluded = next(
+        item for item in inquiry.match_snapshot if item.get("line_id") == "excluded"
+    )
+    assert suppliers[0].product_count == 1
+    assert excluded["inquiry_eligibility"] == "excluded"
+    assert excluded not in [
+        item
+        for item in inquiry.match_snapshot
+        if item.get("inquiry_eligibility") != "excluded"
+    ]
+
+
 def test_missing_loading_date_stops_at_step_6_not_before(db, seed_user):
     _seed_scope(db, seed_user)
     doc = _document(db, seed_user, po="PO-NO-DATE", loading_date=None)

@@ -26,8 +26,7 @@ from __future__ import annotations
 from domains.document.models import Document
 from domains.masterdata.models import Country, Port
 from domains.orders.models import Order
-from test_v2.fixtures.helpers import login, make_minimal_pdf, seed_user
-
+from test_v2.fixtures.helpers import login, make_minimal_pdf, seed_product, seed_user
 
 # ─── Helpers ──────────────────────────────────────────────────
 
@@ -55,6 +54,37 @@ def _seed_geo(db) -> tuple[int, int]:
     db.commit()
     db.refresh(port)
     return country.id, port.id
+
+
+def _seed_resolvable_order(db, *, email: str = "resolver@example.com"):
+    user = seed_user(db, email=email, role="employee")
+    product = seed_product(db, code="MASTER-1", name="Master Product", unit="CA")
+    order = Order(
+        user_id=user.id,
+        filename="resolve.pdf",
+        file_type="pdf",
+        status="ready",
+        country_id=product.country_id,
+        port_id=product.port_id,
+        delivery_date="2026-10-05",
+        loading_date="2026-10-05",
+        products=[
+            {
+                "product_code": "UNKNOWN",
+                "product_name": "Original PO Name",
+                "quantity": 9,
+                "unit": "CA24.0",
+                "unit_price": 12,
+            }
+        ],
+        product_count=1,
+        match_results=[],
+        anomaly_data={},
+    )
+    db.add(order)
+    db.commit()
+    db.refresh(order)
+    return user, product, order
 
 
 # ─── POST /api/orders/upload ─────────────────────────────────
@@ -135,6 +165,13 @@ def test_get_order_returns_detail(client, db):
     assert body["file_type"] == "pdf"
     assert "products" in body
     assert "match_results" in body
+    assert body["issue_overview"] == {
+        "schema_version": 1,
+        "actionable_row_count": 0,
+        "warning_row_count": 0,
+        "rows": [],
+        "non_row_findings": [],
+    }
 
 
 def test_get_other_users_order_returns_404(client, db):
@@ -319,6 +356,160 @@ def test_patch_persists_loading_date_to_real_column(client, db, session_factory)
         assert o.loading_date == "2026-08-15"
     finally:
         fresh.close()
+
+
+# ─── PATCH /api/orders/{id}/products/{row}/resolve ───────────
+
+
+def test_resolve_row_binds_product_and_rechecks_anomalies(client, db):
+    _user, product, order = _seed_resolvable_order(db)
+    order.products = [{
+        **order.products[0],
+        "rfq_quantity": 99,
+        "rfq_unit": "OLD",
+        "conversion_evidence": {"verified": True, "evidence": "旧商品的依据"},
+    }]
+    db.commit()
+    headers = login(client, "resolver@example.com")
+
+    response = client.patch(
+        f"/api/orders/{order.id}/products/1/resolve",
+        json={"action": "bind_product", "product_id": product.id},
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["products"][0]["manual_product_id"] == product.id
+    assert body["match_results"][0]["match_status"] == "matched"
+    assert body["match_results"][0]["match_reason"] == "人工关联商品"
+    assert body["anomaly_data"]["schema_version"] == 2
+    assert "conversion_evidence" not in body["products"][0]
+
+
+def test_resolve_row_rejects_product_outside_current_candidate_pool(client, db):
+    _user, _product, order = _seed_resolvable_order(db)
+    outside = seed_product(db, code="OUTSIDE", name="Outside", country_id=None, port_id=None)
+    headers = login(client, "resolver@example.com")
+
+    response = client.patch(
+        f"/api/orders/{order.id}/products/1/resolve",
+        json={"action": "bind_product", "product_id": outside.id},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    db.refresh(order)
+    assert "manual_product_id" not in order.products[0]
+
+
+def test_resolve_row_edit_source_clears_old_manual_evidence(client, db):
+    _user, product, order = _seed_resolvable_order(db)
+    order.products = [
+        {
+            **order.products[0],
+            "manual_product_id": product.id,
+            "rfq_quantity": 3,
+            "rfq_unit": "CA",
+            "conversion_evidence": {"verified": True, "evidence": "旧确认"},
+        }
+    ]
+    db.commit()
+    headers = login(client, "resolver@example.com")
+
+    response = client.patch(
+        f"/api/orders/{order.id}/products/1/resolve",
+        json={
+            "action": "edit_source",
+            "product_code": "MASTER-1",
+            "product_name": "Corrected Name",
+            "quantity": 10,
+            "unit": "CA",
+            "unit_price": 13.5,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    row = response.json()["products"][0]
+    assert row["product_name"] == "Corrected Name"
+    assert row["quantity"] == 10
+    assert "manual_product_id" not in row
+    assert "conversion_evidence" not in row
+
+
+def test_resolve_row_records_explicit_unit_conversion(client, db):
+    _user, product, order = _seed_resolvable_order(db)
+    order.products = [{**order.products[0], "manual_product_id": product.id}]
+    db.commit()
+    headers = login(client, "resolver@example.com")
+
+    response = client.patch(
+        f"/api/orders/{order.id}/products/1/resolve",
+        json={
+            "action": "record_conversion",
+            "source_quantity": 9,
+            "source_unit": "CA24.0",
+            "rfq_quantity": 10,
+            "rfq_unit": "CA",
+            "evidence": "供应商邮件确认按 10 箱报价",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    row = response.json()["products"][0]
+    assert row["rfq_quantity"] == 10
+    assert row["rfq_unit"] == "CA"
+    assert row["conversion_evidence"] == {
+        "verified": True,
+        "evidence": "供应商邮件确认按 10 箱报价",
+    }
+    codes = {item["code"] for item in response.json()["anomaly_data"]["findings"]}
+    assert "UNIT_CONVERSION_REQUIRED" not in codes
+
+
+def test_resolve_row_rejects_invalid_payload_and_other_users_order(client, db):
+    _user, product, order = _seed_resolvable_order(db)
+    seed_user(db, email="other-resolver@example.com", role="employee")
+    owner_headers = login(client, "resolver@example.com")
+    other_headers = login(client, "other-resolver@example.com")
+
+    invalid = client.patch(
+        f"/api/orders/{order.id}/products/1/resolve",
+        json={"action": "record_conversion", "rfq_quantity": 0, "rfq_unit": ""},
+        headers=owner_headers,
+    )
+    forbidden = client.patch(
+        f"/api/orders/{order.id}/products/1/resolve",
+        json={"action": "bind_product", "product_id": product.id},
+        headers=other_headers,
+    )
+
+    assert invalid.status_code in {400, 422}
+    assert forbidden.status_code == 404
+
+
+def test_resolve_row_rejects_conversion_until_product_is_matched(client, db):
+    _user, _product, order = _seed_resolvable_order(db)
+    headers = login(client, "resolver@example.com")
+
+    response = client.patch(
+        f"/api/orders/{order.id}/products/1/resolve",
+        json={
+            "action": "record_conversion",
+            "source_quantity": 9,
+            "source_unit": "CA24.0",
+            "rfq_quantity": 10,
+            "rfq_unit": "CA",
+            "evidence": "人工确认",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    db.refresh(order)
+    assert "conversion_evidence" not in order.products[0]
 
 
 # ─── POST /api/orders/{id}/anomaly-check ─────────────────────

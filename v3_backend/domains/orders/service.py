@@ -11,18 +11,23 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 from sqlalchemy.orm.attributes import flag_modified
 
 from domains.document import repository as doc_repo
 from domains.identity import service as identity_service
 from domains.masterdata import repository as md_repo
-from domains.orders import anomaly, repository
+from domains.orders import anomaly, issues, repository
 from domains.orders.errors import BadRequest, NotFound, StatusConflict
 from domains.orders.matching import run_matching
 from domains.orders.models import Order
 from domains.orders.projection import project_purchase_order
-from domains.orders.schemas import OrderDetail, OrderListItem, OrderUpdateRequest
+from domains.orders.schemas import (
+    OrderDetail,
+    OrderListItem,
+    OrderRowResolveRequest,
+    OrderUpdateRequest,
+)
 from infrastructure.capabilities import CAP_FINANCIALS_VIEW
 
 logger = logging.getLogger(__name__)
@@ -408,6 +413,112 @@ def update_order(
     return _to_detail(order, db, user_id)
 
 
+def resolve_order_product_row(
+    db: Session,
+    *,
+    order_id: int,
+    row_index: int,
+    user_id: int,
+    is_admin: bool,
+    body: OrderRowResolveRequest,
+) -> OrderDetail:
+    """Apply one human row decision, then rematch and recheck atomically."""
+    order = _load_for_user(db, order_id, user_id, is_admin)
+    products = [dict(item) for item in (order.products or [])]
+    if row_index < 1 or row_index > len(products):
+        raise BadRequest("商品行不存在")
+
+    row = products[row_index - 1]
+    if body.action == "edit_source":
+        editable = {"product_code", "product_name", "quantity", "unit", "unit_price"}
+        supplied = editable.intersection(body.model_fields_set)
+        if not supplied:
+            raise BadRequest("请至少修改一个商品字段")
+        if "quantity" in supplied and (body.quantity is None or body.quantity <= 0):
+            raise BadRequest("数量必须大于 0")
+        if "product_name" in supplied and not (body.product_name or "").strip():
+            raise BadRequest("商品名称不能为空")
+        for field in supplied:
+            value = getattr(body, field)
+            if isinstance(value, str):
+                value = value.strip()
+            row[field] = value
+        for field in (
+            "manual_product_id",
+            "source_quantity",
+            "source_unit",
+            "rfq_quantity",
+            "rfq_unit",
+            "conversion_evidence",
+        ):
+            row.pop(field, None)
+    elif body.action == "bind_product":
+        if body.product_id is None or body.product_id <= 0:
+            raise BadRequest("请选择要关联的商品")
+        row["manual_product_id"] = body.product_id
+        for field in (
+            "source_quantity",
+            "source_unit",
+            "rfq_quantity",
+            "rfq_unit",
+            "conversion_evidence",
+        ):
+            row.pop(field, None)
+    else:
+        if body.rfq_quantity is None or body.rfq_quantity <= 0:
+            raise BadRequest("询价数量必须大于 0")
+        source_quantity = body.source_quantity
+        if source_quantity is None:
+            source_quantity = row.get("quantity")
+        if source_quantity is None or float(source_quantity) <= 0:
+            raise BadRequest("原订购数量必须大于 0")
+        source_unit = (body.source_unit or row.get("unit") or "").strip()
+        rfq_unit = (body.rfq_unit or "").strip()
+        evidence = (body.evidence or "").strip()
+        if not source_unit or not rfq_unit:
+            raise BadRequest("原订购单位和询价单位不能为空")
+        if not evidence:
+            raise BadRequest("请填写人工确认依据")
+        row.update(
+            {
+                "source_quantity": float(source_quantity),
+                "source_unit": source_unit,
+                "rfq_quantity": body.rfq_quantity,
+                "rfq_unit": rfq_unit,
+                "conversion_evidence": {"verified": True, "evidence": evidence},
+            }
+        )
+
+    products[row_index - 1] = row
+    order.products = products
+    order.product_count = len(products)
+    flag_modified(order, "products")
+
+    try:
+        run_matching(order, db)
+        result = (order.match_results or [])[row_index - 1]
+        if body.action == "bind_product":
+            matched = result.get("matched_product") or {}
+            if result.get("match_status") != "matched" or matched.get("id") != body.product_id:
+                db.rollback()
+                raise BadRequest("所选商品不在当前港口或有效期候选范围内")
+        if body.action == "record_conversion" and result.get("match_status") != "matched":
+            db.rollback()
+            raise BadRequest("商品尚未匹配，不能登记单位换算")
+        pipeline = (order.anomaly_data or {}).get("pipeline") or []
+        order.anomaly_data = anomaly.run_anomaly_check(order, pipeline=pipeline)
+        flag_modified(order, "anomaly_data")
+        order.status = "ready"
+        order.processing_error = None
+        repository.save(db, order)
+    except BadRequest:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    return _to_detail(order, db, user_id)
+
+
 def rematch_order(
     db: Session,
     *,
@@ -649,6 +760,21 @@ def _to_detail(order: Order, db: Session, user_id: int) -> OrderDetail:
     the v2 frontend (which reads `order_metadata.po_number` etc.) keeps working.
     """
     detail = OrderDetail.model_validate(order)
+    related_orders = [order]
+    if order.group_id is not None:
+        related_query = db.query(Order).options(load_only(
+            Order.id,
+            Order.user_id,
+            Order.group_id,
+            Order.anomaly_data,
+            Order.match_results,
+        )).filter(Order.group_id == order.group_id)
+        requesting_user = identity_service.get_business_user(db, user_id)
+        if requesting_user.role != "superadmin":
+            related_query = related_query.filter(Order.user_id == user_id)
+        related_orders = related_query.all()
+    detail.issue_overview = issues.build_issue_overview(order, related_orders)
+    detail.actionable_count = detail.issue_overview["actionable_row_count"]
     if not identity_service.has_capability(db, user_id, CAP_FINANCIALS_VIEW):
         detail.financial_data = None
     flat = _flat_metadata(order, db)
