@@ -1,6 +1,13 @@
 # 项目进度
 
-更新时间：2026-09-16（Asia/Tokyo）
+更新时间：2026-09-24（Asia/Tokyo）
+
+## 2026-09-24 最新上线
+
+- 商品单位换算第一版已合并并部署：生产数据库 `0031_unit_conversion_rules`，后端 `cruise-v3-backend-uc-on-20260924` 接收 100% 流量，镜像 digest 为 `sha256:fafc1b01f6b360d136ae3bb3c512a00a3164465168ba8fdad02fd198d75f6100`。
+- 前端 Production 为 `dpl_8VjLndA9QmwgeojV7mZ65bfZmSy4`；Oracle Job generation 16 与后端使用同一镜像并开启单位换算开关，三个 Scheduler 均为 ENABLED。
+- 生产只有 5 条候选草稿、0 条已验证规则。PO165047CCI 默认仍有 53 行要求人工确认；显式草稿影子审计可覆盖这 53 行，但发布流程没有自动验证任何业务关系。
+- 最终只读基线为 1461 产品、74 订单、32 询价、621 张图片、36 条价格期间。完整证据见 [商品单位换算生产核验](DEPLOYMENT_VERIFIED_2026-09-24_UNIT_CONVERSION.md)。
 
 ## 已上线基线
 
