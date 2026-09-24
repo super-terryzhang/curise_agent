@@ -2,18 +2,40 @@
 
 Personal Cantonese pronunciation practice app powered by cantonese.ai.
 
-This branch is isolated from main and exists only for the MVP deployment.
+This code lives on an isolated branch and does not modify the repository's `main` branch.
+
+## Live MVP
+
+Render service: `terry-cantonese-coach-live`
 
 ## Runtime
-The application source is packaged in `app.tgz.b64`. Render decodes it at runtime and starts the Node 20 zero-dependency server.
 
-## Features
-- Cantonese text -> Jyutping
-- cantonese.ai v6 reference TTS
-- In-browser WAV recording
-- cantonese.ai pronunciation scoring
-- expected vs transcribed Jyutping
-- syllable and tone mismatch feedback
-- experimental local F0 pitch contour
+- Node.js, zero npm dependencies
+- Main entry: `server.mjs`
+- No database
+- No GPU
+- Cantonese.ai API key is entered by the user in the browser and kept in `sessionStorage`; the app forwards it for TTS / pronunciation requests and does not persist it.
 
-No database. The cantonese.ai API key is entered in the browser and kept only in sessionStorage.
+## Current features
+
+- Chinese text → Jyutping
+- cantonese.ai v6 reference TTS with Jyutping guidance
+- Browser microphone recording encoded as WAV
+- cantonese.ai Cantonese pronunciation score
+- Expected Jyutping vs transcribed Jyutping
+- Per-syllable tone mismatch feedback
+- Tone hit rate
+
+## Deployment
+
+Render build command:
+
+```sh
+node --check cantonese-coach-mvp/server.mjs
+```
+
+Render start command:
+
+```sh
+node cantonese-coach-mvp/server.mjs
+```
