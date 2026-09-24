@@ -3,6 +3,7 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/page-header";
 import { Sparkles } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import ProductsTab from "./ProductsTab";
 import SuppliersTab from "./SuppliersTab";
 import CountriesTab from "./CountriesTab";
@@ -12,6 +13,11 @@ import AIQueryTab from "./AIQueryTab";
 import ExchangeRatesTab from "./ExchangeRatesTab";
 
 export default function DataPage() {
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab") || "products";
+  const initialProductId = Number(searchParams.get("product")) || null;
+  const initialAction = searchParams.get("action") === "prices" ? "prices" : searchParams.get("action") === "edit" ? "edit" : null;
+  const initialSearch = searchParams.get("search") || "";
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="shrink-0 px-6 pt-6">
@@ -21,7 +27,7 @@ export default function DataPage() {
         />
       </div>
 
-      <Tabs defaultValue="products" className="flex-1 flex flex-col overflow-hidden px-6 mt-4">
+      <Tabs defaultValue={requestedTab} className="flex-1 flex flex-col overflow-hidden px-6 mt-4">
         <TabsList className="shrink-0 w-fit">
           <TabsTrigger value="products">产品</TabsTrigger>
           <TabsTrigger value="suppliers">供应商</TabsTrigger>
@@ -36,7 +42,7 @@ export default function DataPage() {
         </TabsList>
 
         <TabsContent value="products" className="flex-1 overflow-hidden py-4">
-          <ProductsTab />
+          <ProductsTab initialProductId={initialProductId} initialAction={initialAction} initialSearch={initialSearch} />
         </TabsContent>
         <TabsContent value="suppliers" className="flex-1 overflow-hidden py-4">
           <SuppliersTab />

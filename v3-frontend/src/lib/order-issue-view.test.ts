@@ -6,6 +6,7 @@ import {
   issueStatusText,
   issueSummary,
   normalizedMatchStatus,
+  productResolutionHref,
   resolutionLabel,
 } from "./order-issue-view";
 
@@ -86,5 +87,23 @@ describe("order issue presentation model", () => {
     expect(normalizedMatchStatus("matched")).toBe("matched");
     expect(normalizedMatchStatus("possible_match")).toBe("not_matched");
     expect(normalizedMatchStatus(undefined)).toBe("not_matched");
+  });
+
+  it("builds stable product and price deep links with enough fallback context", () => {
+    const current = row({
+      product_code: "A&B 10",
+      matched_product: {
+        id: 42, code: "MASTER-42", product_name_en: "Master", product_name_jp: null,
+        price: 10, contract_price: 12, currency: "JPY", supplier_id: 3,
+        category_id: null, pack_size: null, unit: "CA",
+      },
+    });
+    expect(productResolutionHref(current, "product_master")).toBe(
+      "/dashboard/data?tab=products&product=42&search=MASTER-42&action=edit",
+    );
+    expect(productResolutionHref(current, "price_periods")).toBe(
+      "/dashboard/data?tab=products&product=42&search=MASTER-42&action=prices",
+    );
+    expect(productResolutionHref(row({ matched_product: undefined }), "product_master")).toBeNull();
   });
 });

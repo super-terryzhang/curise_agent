@@ -1,4 +1,8 @@
-import type { OrderIssueFinding, OrderIssueRow } from "./orders-api";
+import type {
+  OrderIssueFinding,
+  OrderIssueResolutionTarget,
+  OrderIssueRow,
+} from "./orders-api";
 
 export type OrderIssueFilter =
   | "all"
@@ -53,4 +57,19 @@ export function issueSummary(row: OrderIssueRow): string {
 
 export function resolutionLabel(finding: OrderIssueFinding): string {
   return finding.resolution?.label?.trim() || "查看并人工处理";
+}
+
+export function productResolutionHref(
+  row: OrderIssueRow,
+  target: OrderIssueResolutionTarget,
+): string | null {
+  const product = row.matched_product;
+  if (!product?.id || !["product_master", "price_periods"].includes(target)) return null;
+  const params = new URLSearchParams({
+    tab: "products",
+    product: String(product.id),
+    search: product.code || row.product_code || product.product_name_en || "",
+    action: target === "price_periods" ? "prices" : "edit",
+  });
+  return `/dashboard/data?${params.toString()}`;
 }

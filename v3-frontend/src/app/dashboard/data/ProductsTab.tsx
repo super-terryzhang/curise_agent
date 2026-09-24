@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table";
 import { ProductPriceHistoryDialog } from "@/components/data/product-price-history";
@@ -149,7 +149,13 @@ const emptyForm: ProductForm = {
 
 const PAGE_SIZE = 20;
 
-export default function ProductsTab() {
+interface ProductsTabProps {
+  initialProductId?: number | null;
+  initialAction?: "edit" | "prices" | null;
+  initialSearch?: string;
+}
+
+export default function ProductsTab({ initialProductId, initialAction, initialSearch = "" }: ProductsTabProps) {
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [totalProducts, setTotalProducts] = useState(0);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
@@ -166,8 +172,9 @@ export default function ProductsTab() {
   const [filterStatus, setFilterStatus] = useState<"all" | "effective" | "invalid">("all");
   const [currentPage, setCurrentPage] = useState(0);
 
-  const [searchText, setSearchText] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [searchText, setSearchText] = useState(initialSearch);
+  const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
+  const deepLinkHandled = useRef(false);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ProductItem | null>(null);
@@ -228,7 +235,7 @@ export default function ProductsTab() {
 
   // Initial load: reference data + first page of products
   useEffect(() => {
-    Promise.all([listProducts({ limit: PAGE_SIZE, offset: 0 }), listCategories(), listSuppliers(), listCountries(), listPorts()])
+    Promise.all([listProducts({ search: initialSearch || undefined, limit: PAGE_SIZE, offset: 0 }), listCategories(), listSuppliers(), listCountries(), listPorts()])
       .then(([pRes, cat, sup, cty, pts]) => {
         setProducts(pRes.items);
         setTotalProducts(pRes.total);
@@ -239,7 +246,7 @@ export default function ProductsTab() {
       })
       .catch((err) => toast.error(err.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [initialSearch]);
 
   // Debounce search text → 500ms
   useEffect(() => {
@@ -289,6 +296,16 @@ export default function ProductsTab() {
     });
     setDialogOpen(true);
   }
+
+  useEffect(() => {
+    if (deepLinkHandled.current || !initialProductId || !initialAction || loading) return;
+    const target = products.find((product) => product.id === initialProductId);
+    if (!target) return;
+    deepLinkHandled.current = true;
+    if (!isWriter) return;
+    if (initialAction === "prices") setPeriodProduct(target);
+    else openEdit(target);
+  }, [initialAction, initialProductId, isWriter, loading, products]);
 
   function updateForm(key: keyof ProductForm, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }));
