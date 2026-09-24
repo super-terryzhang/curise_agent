@@ -52,19 +52,20 @@ for name,(min_size,digest) in TTS_FILES.items():
     if digest and sha256(dst)!=digest: raise RuntimeError(f"TTS sha mismatch: {name}")
     print(f"[tts-model] ready {name} {dst.stat().st_size:,}",flush=True)
 
-ASR_BASE="https://huggingface.co/zrjin/icefall-asr-mdcc-zipformer-2024-03-11/resolve/main"
+ASR_BASE="https://huggingface.co/csukuangfj/sherpa-onnx-wenetspeech-yue-u2pp-conformer-ctc-zh-en-cantonese-int8-2025-09-10/resolve/main"
 ASR_FILES={
-    "encoder-epoch-45-avg-35.int8.onnx": ("exp/encoder-epoch-45-avg-35.int8.onnx", 60_000_000),
-    "decoder-epoch-45-avg-35.onnx": ("exp/decoder-epoch-45-avg-35.onnx", 10_000_000),
-    "joiner-epoch-45-avg-35.int8.onnx": ("exp/joiner-epoch-45-avg-35.int8.onnx", 2_000_000),
-    "tokens.txt": ("data/lang_char/tokens.txt", 30_000),
+    "model.int8.onnx": (134_000_000, "201bfd9e12ec4ac9ee3b23c5e071d9fa2381a8b21df317e2e08a170d6f1f55d3"),
+    "tokens.txt": (80_000, None),
 }
-for name,(remote,min_size) in ASR_FILES.items():
+for name,(min_size,digest) in ASR_FILES.items():
     p=ASR/name
-    if not p.exists() or p.stat().st_size<min_size:
+    valid=p.exists() and p.stat().st_size>=min_size and (not digest or sha256(p)==digest)
+    if not valid:
         print(f"[asr-model] downloading {name}",flush=True)
-        download(f"{ASR_BASE}/{remote}?download=true",p)
+        download(f"{ASR_BASE}/{name}?download=true",p)
     if not p.exists() or p.stat().st_size<min_size:
         raise RuntimeError(f"ASR asset invalid: {name}")
+    if digest and sha256(p)!=digest:
+        raise RuntimeError(f"ASR sha mismatch: {name}")
     print(f"[asr-model] ready {name} {p.stat().st_size:,}",flush=True)
 print("[models] all assets ready",flush=True)
