@@ -23,6 +23,7 @@ from domains.orders.schemas import (
     OrderDetail,
     OrderRematchRequest,
     OrderReviewRequest,
+    OrderRowResolveRequest,
     OrderUpdateRequest,
 )
 from infrastructure.db import SessionLocal
@@ -149,6 +150,27 @@ def update_order(
     try:
         return service.update_order(
             db, order_id=order_id, user_id=user.id, is_admin=_is_admin(user), body=body
+        )
+    except OrderError as exc:
+        raise _translate(exc) from exc
+
+
+@router.patch("/{order_id}/products/{row_index}/resolve", response_model=OrderDetail)
+def resolve_order_product_row(
+    order_id: int,
+    row_index: int,
+    body: OrderRowResolveRequest,
+    db: DbDep,
+    user: Writer,
+) -> OrderDetail:
+    try:
+        return service.resolve_order_product_row(
+            db,
+            order_id=order_id,
+            row_index=row_index,
+            user_id=user.id,
+            is_admin=_is_admin(user),
+            body=body,
         )
     except OrderError as exc:
         raise _translate(exc) from exc
@@ -354,6 +376,7 @@ def download_inquiry_files_zip(
     import io
     import posixpath
     import zipfile
+
     from domains.inquiry import repository as inquiry_repo
 
     try:
@@ -443,6 +466,7 @@ def _download_file_for_order(
 
     # Case 2: an inquiry-generated Excel for this order.
     import posixpath
+
     from domains.inquiry import repository as inquiry_repo
 
     inquiry = inquiry_repo.get_inquiry_by_order(db, order_id)
