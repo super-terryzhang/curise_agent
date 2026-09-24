@@ -35,6 +35,8 @@ asr=sherpa_onnx.OfflineRecognizer.from_wenet_ctc(
 asr_lock=threading.Lock()
 REFERENCE={}
 reference_lock=threading.Lock()
+CLICK_REFERENCE={}
+click_reference_lock=threading.Lock()
 
 def fixed_audio(text:str,speed:float):
     cleaned=text.strip();requested=float(speed)
@@ -73,6 +75,27 @@ def read_wav(raw:bytes):
         sr=w.getframerate();ch=w.getnchannels();data=np.frombuffer(w.readframes(w.getnframes()),dtype="<i2").astype(np.float32)/32768.0
     if ch>1:data=data.reshape(-1,ch).mean(axis=1)
     return data,sr
+
+def wav_bytes(samples,sr):
+    samples=np.asarray(samples,dtype=np.float32)
+    if samples.size==0:raise ValueError("空音訊")
+    pcm=(np.clip(samples,-1,1)*32767).astype("<i2")
+    out=io.BytesIO()
+    with wave.open(out,"wb") as w:
+        w.setnchannels(1);w.setsampwidth(2);w.setframerate(int(sr));w.writeframes(pcm.tobytes())
+    return out.getvalue()
+
+def padded_clip(samples,sr,start,end):
+    a=max(0,int(float(start)*sr));b=min(len(samples),int(float(end)*sr))
+    if b<=a:return None
+    seg=np.asarray(samples[a:b],dtype=np.float32).copy()
+    fade=max(1,int(.008*sr))
+    if seg.size>2*fade:
+        ramp=np.linspace(0,1,fade,dtype=np.float32)
+        seg[:fade]*=ramp;seg[-fade:]*=ramp[::-1]
+    lead=np.zeros(int(.045*sr),dtype=np.float32)
+    tail=np.zeros(int(.090*sr),dtype=np.float32)
+    return wav_bytes(np.concatenate([lead,seg,tail]),sr)
 
 def recognize(samples,sr):
     st=asr.create_stream();st.accept_waveform(sr,samples)
@@ -422,6 +445,55 @@ def build_reference(line_id):
     print(f"[reference] line{line_id+1} asr={profile['recognized']} jp={profile['recognized_jyutping']} pitch={len(pitch)}/{len(line['chars'])}",flush=True)
     return profile
 
+def build_click_reference(line_id):
+    line=SONG[line_id]
+    raw=fixed_audio(line["text"],.60)
+    if raw is None:raw=proxy_tts(line["text"],.60)
+    samples,sr=read_wav(raw);duration=len(samples)/sr
+    rec=recognize(samples,sr)
+    tokens,times,lps,durs=flatten_tokens(rec["tokens"],rec["timestamps"],rec.get("log_probs"),rec.get("durations"))
+    rec_jp=recognized_jyutping(tokens)
+    rows,_=align(line["chars"],line["jyutping"],tokens,rec_jp)
+    segments={}
+    for row in rows:
+        ti=row["target_index"];ri=row["rec_index"]
+        if ri is None:continue
+        st=max(0.0,(times[ri] if ri<len(times) else 0.0)-.025)
+        if ri<len(durs) and durs[ri] and durs[ri]>.035:
+            en=min(duration,st+float(durs[ri])+.055)
+        else:
+            nxt=times[ri+1] if ri+1<len(times) else duration
+            en=min(duration,float(nxt)+.025)
+        if en-st<.12:en=min(duration,st+.22)
+        segments[ti]={"start":st,"end":en,"heard":tokens[ri] if ri<len(tokens) else ""}
+    # Fallback for any target ASR failed to align: proportional slice of the slow sentence.
+    n=max(1,len(line["chars"]))
+    for ti in range(n):
+        if ti not in segments:
+            st=max(0.0,duration*(ti/n)-.02)
+            en=min(duration,duration*((ti+1)/n)+.02)
+            segments[ti]={"start":st,"end":en,"heard":""}
+    profile={"samples":samples,"sr":sr,"duration":duration,"segments":segments}
+    with click_reference_lock:CLICK_REFERENCE[line_id]=profile
+    print(f"[click-audio] line{line_id+1} segments={len(segments)}/{len(line['chars'])}",flush=True)
+    return profile
+
+def get_click_reference(line_id):
+    with click_reference_lock:
+        p=CLICK_REFERENCE.get(line_id)
+    if p is not None:return p
+    return build_click_reference(line_id)
+
+def character_audio(line_id,char_index):
+    if line_id not in (0,1):raise ValueError("未知歌詞行")
+    if char_index<0 or char_index>=len(SONG[line_id]["chars"]):raise ValueError("未知字位置")
+    p=get_click_reference(line_id)
+    seg=p["segments"].get(char_index)
+    if not seg:raise RuntimeError("此字暫時沒有可用音訊")
+    raw=padded_clip(p["samples"],p["sr"],seg["start"],seg["end"])
+    if raw is None or len(raw)<800:raise RuntimeError("單字音訊切片失敗")
+    return raw
+
 def get_reference(line_id):
     with reference_lock:
         p=REFERENCE.get(line_id)
@@ -601,8 +673,14 @@ class H(BaseHTTPRequestHandler):
   self.send_response(status);self.send_header("Content-Type",ct);self.send_header("Content-Length",str(len(b)));self.send_header("Cache-Control","no-store");self.send_header("X-Content-Type-Options","nosniff");self.end_headers();self.wfile.write(b)
  def js(self,status,obj):self.sendb(status,json.dumps(obj,ensure_ascii=False).encode(),"application/json; charset=utf-8")
  def do_GET(self):
-  p=urlparse(self.path).path
-  if p=="/api/health":return self.js(200,{"ok":True,"version":"phoneme-eval-1","tts":True,"asr":True,"external_api":False,"split_runtime":True})
+  u=urlparse(self.path);p=u.path
+  if p=="/api/health":return self.js(200,{"ok":True,"version":"char-click-1","tts":True,"asr":True,"external_api":False,"split_runtime":True,"char_audio":True})
+  if p=="/api/char":
+   try:
+    qs=parse_qs(u.query);line_id=int(qs.get("line",["-1"])[0]);char_index=int(qs.get("index",["-1"])[0])
+    return self.sendb(200,character_audio(line_id,char_index),"audio/wav")
+   except Exception as e:
+    print("[char-audio]",type(e).__name__,e,flush=True);return self.js(400,{"error":str(e)})
   item=STATIC.get(p)
   if not item:return self.sendb(404,b"Not found","text/plain")
   return self.sendb(200,item[0].read_bytes(),item[1])
@@ -626,8 +704,10 @@ def background_selftest():
     for i,line in enumerate(SONG):
         try:
             ref=build_reference(i)
+            click_ref=build_click_reference(i)
             ev=evaluate(ref["wav"],i,ref)
-            print(f"[selftest] line{i+1} target={line['text']} asr={ev['recognized']} coverage={ev['coverage']} stable={ev['stable_count']} attention={ev['attention_count']} unrated={ev['unrated_count']} score={ev['overall_score']}",flush=True)
+            char_test=character_audio(i,0)
+            print(f"[selftest] line{i+1} target={line['text']} asr={ev['recognized']} coverage={ev['coverage']} stable={ev['stable_count']} attention={ev['attention_count']} unrated={ev['unrated_count']} score={ev['overall_score']} char_segments={len(click_ref['segments'])} char_bytes={len(char_test)}",flush=True)
         except Exception as e:
             print(f"[selftest] line{i+1} deferred: {type(e).__name__}: {e}",flush=True)
 
