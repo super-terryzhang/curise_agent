@@ -358,7 +358,7 @@ def tone_analysis(samples,sr,line,rows,rec_times,duration,reference=None):
                  "notes":notes,"f0_levels":[round(float(x),2) for x in levels],"reference_based":False}
     return raw,out
 
-def evaluate(raw,lindef confidence_score(user_lp,ref_lp):
+def confidence_score(user_lp,ref_lp):
     if user_lp is None:return None
     if ref_lp is None:
         return int(round(max(0,min(100,100*math.exp(min(0.0,user_lp)/2.5)))))
