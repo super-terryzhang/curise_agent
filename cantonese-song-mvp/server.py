@@ -52,7 +52,11 @@ def proxy_tts(text:str,speed:float=.9)->bytes:
     if not text:raise ValueError("文字為空")
     local=fixed_audio(text,speed)
     if local is not None:return local
-    payload=json.dumps({"text":text,"speed":max(.65,min(1.35,float(speed)))},ensure_ascii=False).encode("utf-8")
+    cache_key=(text,round(float(speed),2))
+    with tts_cache_lock:
+        cached=TTS_CACHE.get(cache_key)
+    if cached is not None:return cached
+    payload=json.dumps({"text":text,"speed":max(.60,min(1.35,float(speed)))},ensure_ascii=False).encode("utf-8")
     waits=[0,2,4,8,12,20]
     last=None
     for attempt,wait in enumerate(waits):
@@ -61,6 +65,9 @@ def proxy_tts(text:str,speed:float=.9)->bytes:
         try:
             with urllib.request.urlopen(req,timeout=120) as r:raw=r.read()
             if len(raw)<1000:raise RuntimeError("VITS 標準音回傳異常")
+            with tts_cache_lock:
+                if len(TTS_CACHE)>=96:TTS_CACHE.pop(next(iter(TTS_CACHE)))
+                TTS_CACHE[cache_key]=raw
             return raw
         except urllib.error.HTTPError as e:
             last=e
@@ -155,6 +162,61 @@ def recognized_jyutping(chars):
                 break
         out.append(variants[0] if variants else None)
     return out
+
+MAX_LYRIC_LINES=60
+MAX_LINE_CHARS=120
+DYNAMIC_REFERENCE={}
+DYNAMIC_CLICK_REFERENCE={}
+dynamic_reference_lock=threading.Lock()
+dynamic_click_lock=threading.Lock()
+TTS_CACHE={}
+tts_cache_lock=threading.Lock()
+
+def lookup_jyutping_char(ch):
+    for key in (ch,s2t.convert(ch),t2s.convert(ch)):
+        raw=jp_dict.get(key)
+        if not raw:continue
+        for candidate in re.split(r"[/.]",raw):
+            candidate=str(candidate or "").strip().lower()
+            if jp_parts(candidate)[1] is not None:return candidate
+    return None
+
+def make_line(text):
+    display=str(text or "").strip()
+    if not display:raise ValueError("歌詞行為空")
+    if len(display)>MAX_LINE_CHARS:raise ValueError(f"單行歌詞最多 {MAX_LINE_CHARS} 個字元")
+    chars=[];jyutping=[];source_indices=[];unsupported=[]
+    for idx,ch in enumerate(display):
+        jp=lookup_jyutping_char(ch)
+        if jp:
+            chars.append(ch);jyutping.append(jp);source_indices.append(idx)
+        elif ch.strip() and not re.fullmatch(r"[，。！？、；：,.!?;:'\"“”‘’（）()\[\]【】《》〈〉…—\-·~～]",ch):
+            unsupported.append(ch)
+    if not chars:raise ValueError("這一行沒有找到可評估的粵語漢字")
+    return {
+        "text":display,"chars":chars,"jyutping":jyutping,
+        "tones":[int(x[-1]) for x in jyutping],
+        "source_indices":source_indices,"unsupported":unsupported,
+    }
+
+def line_key(line):
+    return line["text"]+"\n"+" ".join(line["jyutping"])
+
+def parse_lyrics_text(lyrics):
+    raw=str(lyrics or "").replace("\r\n","\n").replace("\r","\n")
+    texts=[x.strip() for x in raw.split("\n") if x.strip()]
+    if not texts:raise ValueError("請先貼上歌詞")
+    if len(texts)>MAX_LYRIC_LINES:raise ValueError(f"目前最多支援 {MAX_LYRIC_LINES} 行歌詞")
+    lines=[];warnings=[]
+    for idx,t in enumerate(texts):
+        try:
+            line=make_line(t);line["id"]=len(lines);line["source_line"]=idx+1;lines.append(line)
+            if line["unsupported"]:
+                warnings.append({"line":idx+1,"chars":line["unsupported"]})
+        except ValueError as e:
+            warnings.append({"line":idx+1,"error":str(e)})
+    if not lines:raise ValueError("沒有可建立的粵語歌詞行")
+    return lines,warnings
 
 def align(target_chars,target_jp,rec_chars,rec_jp):
     n,m=len(target_chars),len(rec_chars)
@@ -661,6 +723,207 @@ def evaluate(raw,line_id,reference=None):
         "insertions":[{"char":tokens[i],"jyutping":rec_jp[i] if i<len(rec_jp) else None} for i in insertions if i<len(tokens)]
     }
 
+def build_reference_dynamic(line):
+    key=line_key(line)
+    raw=proxy_tts(line["text"],.88)
+    samples,sr=read_wav(raw);duration=len(samples)/sr
+    rec=recognize(samples,sr)
+    tokens,times,lps,durs=flatten_tokens(rec["tokens"],rec["timestamps"],rec.get("log_probs"),rec.get("durations"))
+    rec_jp=recognized_jyutping(tokens)
+    rows,_=align(line["chars"],line["jyutping"],tokens,rec_jp)
+    pitch_raw=extract_pitch_segments(samples,sr,rows,times,duration,False)
+    pitch,_=pitch_features(pitch_raw)
+    acoustic=extract_acoustic_segments(samples,sr,rows,times,durs,duration)
+    baseline={}
+    for row in rows:
+        ti=row["target_index"];ri=row["rec_index"]
+        if ri is None:continue
+        baseline[ti]={
+            "char":tokens[ri] if ri<len(tokens) else "",
+            "jyutping":rec_jp[ri] if ri<len(rec_jp) else None,
+            "base":row.get("rec_base"),"tone":row.get("rec_tone"),
+            "initial":row.get("rec_initial"),"final":row.get("rec_final"),
+            "log_prob":lps[ri] if ri<len(lps) else None,
+            "duration":durs[ri] if ri<len(durs) else None,
+            "direct_match":bool(row.get("segmental_match"))
+        }
+    profile={"wav":raw,"recognized":"".join(tokens),"recognized_jyutping":" ".join(x or "?" for x in rec_jp),
+             "baseline":baseline,"pitch":pitch,"acoustic":acoustic}
+    with dynamic_reference_lock:
+        if len(DYNAMIC_REFERENCE)>=80:DYNAMIC_REFERENCE.pop(next(iter(DYNAMIC_REFERENCE)))
+        DYNAMIC_REFERENCE[key]=profile
+    print(f"[dynamic-reference] chars={len(line['chars'])} pitch={len(pitch)} text={line['text'][:24]}",flush=True)
+    return profile
+
+def get_reference_dynamic(line):
+    key=line_key(line)
+    with dynamic_reference_lock:p=DYNAMIC_REFERENCE.get(key)
+    return p if p is not None else build_reference_dynamic(line)
+
+def build_click_reference_dynamic(line):
+    key=line_key(line)
+    raw=proxy_tts(line["text"],.60)
+    samples,sr=read_wav(raw);duration=len(samples)/sr
+    rec=recognize(samples,sr)
+    tokens,times,lps,durs=flatten_tokens(rec["tokens"],rec["timestamps"],rec.get("log_probs"),rec.get("durations"))
+    rec_jp=recognized_jyutping(tokens)
+    rows,_=align(line["chars"],line["jyutping"],tokens,rec_jp)
+    segments={}
+    for row in rows:
+        ti=row["target_index"];ri=row["rec_index"]
+        if ri is None:continue
+        st=max(0.0,(times[ri] if ri<len(times) else 0.0)-.025)
+        if ri<len(durs) and durs[ri] and durs[ri]>.035:
+            en=min(duration,st+float(durs[ri])+.055)
+        else:
+            nxt=times[ri+1] if ri+1<len(times) else duration
+            en=min(duration,float(nxt)+.025)
+        if en-st<.12:en=min(duration,st+.22)
+        segments[ti]={"start":st,"end":en}
+    n=max(1,len(line["chars"]))
+    for ti in range(n):
+        if ti not in segments:
+            st=max(0.0,duration*(ti/n)-.02);en=min(duration,duration*((ti+1)/n)+.02)
+            segments[ti]={"start":st,"end":en}
+    profile={"samples":samples,"sr":sr,"duration":duration,"segments":segments}
+    with dynamic_click_lock:
+        if len(DYNAMIC_CLICK_REFERENCE)>=80:DYNAMIC_CLICK_REFERENCE.pop(next(iter(DYNAMIC_CLICK_REFERENCE)))
+        DYNAMIC_CLICK_REFERENCE[key]=profile
+    print(f"[dynamic-click] segments={len(segments)}/{len(line['chars'])} text={line['text'][:24]}",flush=True)
+    return profile
+
+def get_click_reference_dynamic(line):
+    key=line_key(line)
+    with dynamic_click_lock:p=DYNAMIC_CLICK_REFERENCE.get(key)
+    return p if p is not None else build_click_reference_dynamic(line)
+
+def character_audio_dynamic(line,char_index):
+    if char_index<0 or char_index>=len(line["chars"]):raise ValueError("未知字位置")
+    p=get_click_reference_dynamic(line);seg=p["segments"].get(char_index)
+    if not seg:raise RuntimeError("此字暫時沒有可用音訊")
+    raw=padded_clip(p["samples"],p["sr"],seg["start"],seg["end"])
+    if raw is None or len(raw)<800:raise RuntimeError("單字音訊切片失敗")
+    return raw
+
+def evaluate_dynamic(raw,line,reference=None):
+    samples,sr=read_wav(raw);duration=len(samples)/sr
+    if duration<.4 or duration>15:raise ValueError("錄音長度不合適")
+    if reference is None:reference=get_reference_dynamic(line)
+    rec=recognize(samples,sr)
+    tokens,times,lps,durs=flatten_tokens(rec["tokens"],rec["timestamps"],rec.get("log_probs"),rec.get("durations"))
+    rec_jp=recognized_jyutping(tokens)
+    rows,insertions=align(line["chars"],line["jyutping"],tokens,rec_jp)
+    _,tones=tone_analysis(samples,sr,line,rows,times,duration,reference)
+    user_acoustic=extract_acoustic_segments(samples,sr,rows,times,durs,duration)
+
+    items=[];rated_count=0;stable=0;attention=0;unrated=0
+    refbase=reference.get("baseline",{}) if reference else {}
+    refac=reference.get("acoustic",{}) if reference else {}
+
+    for row in rows:
+        ti=row["target_index"];ri=row["rec_index"]
+        heard=tokens[ri] if ri is not None and ri<len(tokens) else ""
+        heard_jp=rec_jp[ri] if ri is not None and ri<len(rec_jp) else None
+        user_lp=lps[ri] if ri is not None and ri<len(lps) else None
+        user_dur=durs[ri] if ri is not None and ri<len(durs) else None
+        baseline=refbase.get(ti,{})
+        ua=user_acoustic.get(ti,{})
+        ra=refac.get(ti,{})
+        whole_ac=acoustic_score(ua.get("whole"),ra.get("whole"))
+        init_ac=acoustic_score(ua.get("initial"),ra.get("initial"))
+        final_ac=acoustic_score(ua.get("final"),ra.get("final"))
+
+        direct=bool(row.get("segmental_match"))
+        baseline_confusion=bool(
+            ri is not None and not direct and row.get("rec_base") and
+            baseline.get("base") and row.get("rec_base")==baseline.get("base") and
+            not baseline.get("direct_match",False)
+        )
+
+        # Second judge: reference-audio spectral shape. This is specifically used
+        # to resolve positions where free ASR is known to be unreliable.
+        acoustic_accept=whole_ac is not None and whole_ac>=58
+        acoustic_reject=whole_ac is not None and whole_ac<=38
+        accepted=bool(direct or acoustic_accept)
+
+        acoustic=confidence_score(user_lp,baseline.get("log_prob"))
+        timing=duration_score(user_dur,baseline.get("duration"))
+        tone=tones.get(ti) if (accepted or baseline_confusion) else None
+        tone_score=tone["tone_score"] if tone else None
+
+        # Initial/final scores blend phonetic alignment with direct acoustic
+        # comparison to the fixed reference syllable.
+        initial_match=bool(row.get("initial_match")) or direct
+        final_match=bool(row.get("final_match")) or direct
+        asr_initial=100 if initial_match else 18
+        asr_final=100 if final_match else 18
+        initial_score=(
+            round(.35*asr_initial+.65*init_ac) if init_ac is not None
+            else (asr_initial if not baseline_confusion else None)
+        )
+        final_score=(
+            round(.30*asr_final+.70*final_ac) if final_ac is not None
+            else (asr_final if not baseline_confusion else None)
+        )
+
+        unresolved=bool(
+            not direct and not acoustic_accept and not acoustic_reject and
+            (baseline_confusion or whole_ac is None or (38<whole_ac<58))
+        )
+
+        issues=[]
+        if unresolved:
+            status="unrated";certainty="system";score=None;unrated+=1
+        else:
+            rated_count+=1
+            if initial_score is not None and initial_score<58:issues.append("聲母")
+            if final_score is not None and final_score<58:issues.append("韻母")
+            if tone_score is not None and tone_score<70:issues.append("聲調")
+            if timing is not None and timing<50:issues.append("時長")
+
+            if acoustic_reject and not direct:
+                status="segmental";certainty="high"
+            elif "聲母" in issues or "韻母" in issues:
+                status="segmental";certainty="medium"
+            elif "聲調" in issues:
+                status="tone";certainty="high"
+            else:
+                status="ok";certainty="high"
+
+            segmental_parts=[x for x in (initial_score,final_score,whole_ac) if x is not None]
+            segmental_score=round(sum(segmental_parts)/len(segmental_parts)) if segmental_parts else (100 if direct else 60)
+            tone_component=tone_score if tone_score is not None else 78
+            timing_component=timing if timing is not None else 85
+            score=round(.50*segmental_score+.40*tone_component+.10*timing_component)
+            if status=="ok":stable+=1
+            else:attention+=1
+
+        items.append({
+            "index":ti,"char":line["chars"][ti],"jyutping":line["jyutping"][ti],
+            "expected_tone":line["tones"][ti],"heard":heard,"heard_jyutping":heard_jp,
+            "same_char":bool(row.get("same_char")),"segmental_match":direct,
+            "acoustic_accept":acoustic_accept,"baseline_confusion":baseline_confusion,
+            "certainty":certainty,"homophone":bool(row.get("homophone")),
+            "target_initial":row.get("target_initial"),"target_final":row.get("target_final"),
+            "heard_initial":row.get("rec_initial"),"heard_final":row.get("rec_final"),
+            "initial_score":initial_score,"final_score":final_score,
+            "reference_acoustic_score":whole_ac,
+            "acoustic_score":acoustic,"duration_score":timing,
+            "status":status,"issues":issues,"score":score,"tone":tone
+        })
+
+    scored=[x["score"] for x in items if x["score"] is not None]
+    overall=round(sum(scored)/len(scored)) if scored else None
+    coverage=round(100*rated_count/len(line["chars"])) if line["chars"] else 0
+    return {
+        "ok":True,"version":"dynamic-song-1","line_id":None,"target":line["text"],
+        "recognized":"".join(tokens),"recognized_jyutping":" ".join(x or "?" for x in rec_jp),
+        "overall_score":overall,"coverage":coverage,
+        "stable_count":stable,"attention_count":attention,"unrated_count":unrated,
+        "items":items,
+        "insertions":[{"char":tokens[i],"jyutping":rec_jp[i] if i<len(rec_jp) else None} for i in insertions if i<len(tokens)]
+    }
+
 STATIC={
  "/":(ROOT/"index.html","text/html; charset=utf-8"),
  "/app.js":(ROOT/"app.js","application/javascript; charset=utf-8"),
@@ -674,10 +937,14 @@ class H(BaseHTTPRequestHandler):
  def js(self,status,obj):self.sendb(status,json.dumps(obj,ensure_ascii=False).encode(),"application/json; charset=utf-8")
  def do_GET(self):
   u=urlparse(self.path);p=u.path
-  if p=="/api/health":return self.js(200,{"ok":True,"version":"char-click-1","tts":True,"asr":True,"external_api":False,"split_runtime":True,"char_audio":True})
+  if p=="/api/health":return self.js(200,{"ok":True,"version":"dynamic-song-1","tts":True,"asr":True,"external_api":False,"char_audio":True,"dynamic_lyrics":True})
   if p=="/api/char":
    try:
-    qs=parse_qs(u.query);line_id=int(qs.get("line",["-1"])[0]);char_index=int(qs.get("index",["-1"])[0])
+    qs=parse_qs(u.query)
+    if qs.get("text"):
+     line=make_line(qs.get("text",[""])[0]);char_index=int(qs.get("index",["-1"])[0])
+     return self.sendb(200,character_audio_dynamic(line,char_index),"audio/wav")
+    line_id=int(qs.get("line",["-1"])[0]);char_index=int(qs.get("index",["-1"])[0])
     return self.sendb(200,character_audio(line_id,char_index),"audio/wav")
    except Exception as e:
     print("[char-audio]",type(e).__name__,e,flush=True);return self.js(400,{"error":str(e)})
@@ -689,10 +956,17 @@ class H(BaseHTTPRequestHandler):
   if length<=0 or length>12*1024*1024:return self.js(400,{"error":"請求大小不正確"})
   raw=self.rfile.read(length)
   try:
+   if u.path=="/api/parse-lyrics":
+    d=json.loads(raw.decode());lines,warnings=parse_lyrics_text(d.get("lyrics",""))
+    public=[{"id":i,"text":x["text"],"chars":x["chars"],"jyutping":x["jyutping"],"source_indices":x["source_indices"],"unsupported":x["unsupported"]} for i,x in enumerate(lines)]
+    return self.js(200,{"ok":True,"lines":public,"warnings":warnings})
    if u.path=="/api/tts":
     d=json.loads(raw.decode());return self.sendb(200,proxy_tts(str(d.get("text","")),float(d.get("speed",.9))),"audio/wav")
    if u.path=="/api/evaluate":
-    line_id=int(parse_qs(u.query).get("line",["-1"])[0]);return self.js(200,evaluate(raw,line_id))
+    qs=parse_qs(u.query)
+    if qs.get("text"):
+     line=make_line(qs.get("text",[""])[0]);return self.js(200,evaluate_dynamic(raw,line))
+    line_id=int(qs.get("line",["-1"])[0]);return self.js(200,evaluate(raw,line_id))
    return self.js(404,{"error":"Not found"})
   except Exception as e:
    print("[error]",type(e).__name__,e,flush=True);return self.js(400,{"error":str(e)})
