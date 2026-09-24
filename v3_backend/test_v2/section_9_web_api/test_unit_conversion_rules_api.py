@@ -84,7 +84,6 @@ def test_employee_cannot_mutate_reusable_rules(client, db):
     assert response.status_code == 403
     assert db.query(UnitConversionRule).count() == 0
 
-
 def test_invalid_rule_business_values_return_chinese_400(client, db):
     """Letting schema 422 leak would give users no actionable Chinese explanation."""
 
@@ -104,4 +103,3 @@ def test_invalid_rule_business_values_return_chinese_400(client, db):
         assert expected in response.json()["detail"]
 
     assert db.query(UnitConversionRule).count() == 0
-
