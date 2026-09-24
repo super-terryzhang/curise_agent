@@ -307,53 +307,60 @@ def _row_matching(context: RuleContext) -> list[Finding]:
         source = products[index] if index < len(products) else {}
         result = results[index] if index < len(results) else {}
         row = {**source, **result, "row_index": index + 1}
-        if result.get("match_status") != "matched":
-            items.append(
-                finding(
-                    code="PRODUCT_NOT_MATCHED",
-                    step=5,
-                    severity="error",
-                    scope="row",
-                    row=row,
-                    message=result.get("match_reason") or "未找到唯一匹配商品",
-                    suggestion="选择正确商品或补充产品主数据后重新匹配",
-                    evidence={"candidate_ids": result.get("candidate_ids") or []},
-                )
+        items.extend(findings_for_order_row(row))
+    return items
+
+
+def findings_for_order_row(row: dict[str, Any]) -> list[Finding]:
+    """Run row-only rules for inquiry snapshots without duplicating rule logic."""
+    items: list[Finding] = []
+    if row.get("match_status") != "matched":
+        items.append(
+            finding(
+                code="PRODUCT_NOT_MATCHED",
+                step=5,
+                severity="error",
+                scope="row",
+                row=row,
+                message=row.get("match_reason") or "未找到唯一匹配商品",
+                suggestion="选择正确商品或补充产品主数据后重新匹配",
+                evidence={"candidate_ids": row.get("candidate_ids") or []},
             )
-            continue
-        matched = result.get("matched_product") or {}
-        if not matched.get("supplier_id"):
+        )
+        return items
+    matched = row.get("matched_product") or {}
+    if not matched.get("supplier_id"):
+        items.append(
+            finding(
+                code="SUPPLIER_REQUIRED",
+                step=7,
+                severity="error",
+                scope="row",
+                row=row,
+                message="匹配商品未配置供应商",
+                suggestion="为商品配置供应商后重新生成询价版本",
+            )
+        )
+    _append_price_period_findings(items, row, matched)
+    _append_price_deviation(items, row, matched)
+    source_unit = str(row.get("source_unit") or row.get("unit") or "").strip()
+    supplier_unit = str(row.get("rfq_unit") or matched.get("unit") or "").strip()
+    if source_unit and supplier_unit and source_unit.upper() != supplier_unit.upper():
+        evidence = row.get("conversion_evidence")
+        if not isinstance(evidence, dict) or not evidence.get("verified"):
             items.append(
                 finding(
-                    code="SUPPLIER_REQUIRED",
+                    code="UNIT_CONVERSION_REQUIRED",
                     step=7,
                     severity="error",
                     scope="row",
+                    category="quantity",
                     row=row,
-                    message="匹配商品未配置供应商",
-                    suggestion="为商品配置供应商后重新生成询价版本",
+                    message=f"订购单位 {source_unit} 与供应商单位 {supplier_unit} 不一致",
+                    suggestion="确认换算关系后重新生成询价版本",
+                    evidence={"source_unit": source_unit, "supplier_unit": supplier_unit},
                 )
             )
-        _append_price_period_findings(items, row, matched)
-        _append_price_deviation(items, row, matched)
-        source_unit = str(result.get("source_unit") or result.get("unit") or "").strip()
-        supplier_unit = str(result.get("rfq_unit") or matched.get("unit") or "").strip()
-        if source_unit and supplier_unit and source_unit.upper() != supplier_unit.upper():
-            evidence = result.get("conversion_evidence")
-            if not isinstance(evidence, dict) or not evidence.get("verified"):
-                items.append(
-                    finding(
-                        code="UNIT_CONVERSION_REQUIRED",
-                        step=7,
-                        severity="error",
-                        scope="row",
-                        category="quantity",
-                        row=row,
-                        message=f"订购单位 {source_unit} 与供应商单位 {supplier_unit} 不一致",
-                        suggestion="确认换算关系后重新生成询价版本",
-                        evidence={"source_unit": source_unit, "supplier_unit": supplier_unit},
-                    )
-                )
     return items
 
 

@@ -38,6 +38,7 @@ from domains.inquiry.schemas import InquiryState
 from domains.inquiry.sinks import InquiryProgressSink, NullSink
 from domains.inquiry.template_selector import select_template
 from domains.orders import Order
+from domains.orders import anomaly as order_anomaly
 from infrastructure.db import session as session_module
 
 logger = logging.getLogger(__name__)
@@ -351,7 +352,15 @@ def run_inquiry_for_group(
                 result["inquiry_eligibility"] = "excluded"
                 unavailable.append(result)
             else:
-                result["inquiry_eligibility"] = "included"
+                warnings = [
+                    item
+                    for item in order_anomaly.findings_for_order_row(result)
+                    if item.get("severity") == "warning"
+                ]
+                result["inquiry_warnings"] = warnings
+                result["inquiry_eligibility"] = (
+                    "included_with_warning" if warnings else "included"
+                )
                 merged_groups[sid].append(result)
 
         inquiry.member_snapshot = member_snapshot
@@ -720,7 +729,17 @@ def _group_products_by_supplier(order: Order) -> dict[int, list[dict[str, Any]]]
     for r in order.match_results or []:
         sid = _supplier_id_of(r)
         if sid is not None:
-            groups[sid].append(r)
+            prepared = dict(r)
+            warnings = [
+                item
+                for item in order_anomaly.findings_for_order_row(prepared)
+                if item.get("severity") == "warning"
+            ]
+            prepared["inquiry_warnings"] = warnings
+            prepared["inquiry_eligibility"] = (
+                "included_with_warning" if warnings else "included"
+            )
+            groups[sid].append(prepared)
     return dict(groups)
 
 

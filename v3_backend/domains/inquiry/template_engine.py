@@ -35,6 +35,8 @@ from domains.inquiry.template_contract import (
 
 logger = logging.getLogger(__name__)
 
+_WARNING_FILL = PatternFill(fill_type="solid", fgColor="FFF2CC")
+
 
 def render_inquiry_excel(
     template: SupplierTemplate | None,
@@ -168,6 +170,7 @@ def _fill_zoned_template(
             if isinstance(cell, MergedCell):
                 raise ValueError(f"TEMPLATE_FORMULA_CELL_MERGED: {col}{row}")
             cell.value = formula_template.replace("{row}", str(row))
+        _highlight_warning_row(ws, row, product, writable_columns)
 
     # Keep one structurally valid blank product row when no products exist.
     if not products:
@@ -474,6 +477,7 @@ def _fill_with_template(
                 cell.data_type = "s"  # PO text must never become an Excel formula.
             if field_key in ("unit_price", "total_price", "amount"):
                 cell.number_format = "0.00"
+        _highlight_warning_row(ws, row_idx, product, set(columns) | formula_columns)
 
 
 def _detect_filled_data_rows(
@@ -725,7 +729,7 @@ def _fill_generic(
         # `_resolve_product_value` for the full rationale).
         db_price = matched.get("price")
         unit_price = db_price if db_price is not None else ""
-        qty = product.get("quantity", "")
+        qty = product.get("rfq_quantity", product.get("quantity", ""))
         # Line total uses the DB price too. If DB price is missing this row
         # contributes nothing to the supplier inquiry total — the row will
         # show empty cells, signalling the catalog is incomplete for this
@@ -746,17 +750,37 @@ def _fill_generic(
             product.get("product_code") or matched.get("code", ""),
             product.get("product_name") or matched.get("product_name_en", ""),
             qty,
-            product.get("unit") or matched.get("unit", ""),
+            product.get("rfq_unit") or matched.get("unit") or product.get("unit", ""),
             unit_price,
             total_price,
         ]
         for col_idx, value in enumerate(values, 1):
             cell = ws.cell(row=row, column=col_idx, value=value)
             cell.border = border
+        _highlight_warning_row(ws, row, product, set(range(1, 8)))
 
     total_row = table_start + len(products) + 1
     ws.cell(row=total_row, column=5, value="Total:").font = label_font
     ws.cell(row=total_row, column=7, value=total_amount).font = label_font
+
+
+def _highlight_warning_row(
+    ws: Any,
+    row: int,
+    product: dict[str, Any],
+    columns: set[str] | set[int],
+) -> None:
+    """Mark only included warning rows; excluded rows never reach the renderer."""
+    if not product.get("inquiry_warnings") or not columns:
+        return
+    numeric_columns = sorted(
+        column if isinstance(column, int) else ws[f"{column}{row}"].column
+        for column in columns
+    )
+    for column in range(numeric_columns[0], numeric_columns[-1] + 1):
+        cell = ws.cell(row=row, column=column)
+        if not isinstance(cell, MergedCell):
+            cell.fill = copy(_WARNING_FILL)
 
 
 __all__ = ["render_inquiry_excel"]

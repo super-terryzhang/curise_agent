@@ -32,7 +32,6 @@ from domains.inquiry.models import SupplierTemplate
 from domains.orders.models import Order
 from test_v2.fixtures.helpers import login, seed_user
 
-
 # ─── Helpers ──────────────────────────────────────────────────
 
 
@@ -331,6 +330,36 @@ def test_inquiry_data_preview_products_have_required_fields(
     assert p["product_code"] == "A1"
     assert p["quantity"] == 5
     assert p["unit_price"] == 2.0
+
+
+def test_inquiry_data_preview_returns_saved_row_warning_messages(
+    client, db, _local_storage
+):
+    admin = seed_user(db, email="admin@example.com", role="superadmin")
+    headers = login(client, "admin@example.com")
+    order, _, _, _ = _seed_order_with_inquiry(
+        db, _local_storage, user_id=admin.id
+    )
+    order.match_results = [
+        {
+            **order.match_results[0],
+            "inquiry_warnings": [
+                {
+                    "code": "SELLING_PRICE_DEVIATION",
+                    "severity": "warning",
+                    "message": "客户 PO 单价与有效卖价偏差较大",
+                }
+            ],
+        }
+    ]
+    db.commit()
+
+    response = client.get(
+        f"/api/orders/{order.id}/inquiry-data-preview/100", headers=headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["warnings"] == ["客户 PO 单价与有效卖价偏差较大"]
 
 
 def test_inquiry_data_preview_404_when_supplier_unknown(client, db, _local_storage):

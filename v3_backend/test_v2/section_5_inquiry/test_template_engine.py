@@ -32,7 +32,6 @@ from domains.inquiry.template_selector import (
     template_has_zone_config,
 )
 
-
 # ─── Helpers ──────────────────────────────────────────────────
 
 
@@ -154,6 +153,35 @@ def test_render_generic_uses_matched_product_when_extracted_missing():
     assert ws.cell(row=10, column=6).value == 12.5
 
 
+def test_render_generic_highlights_included_warning_row_yellow():
+    products = [
+        {
+            "product_code": "W-1",
+            "product_name": "Warning",
+            "quantity": 1,
+            "unit": "EA",
+            "inquiry_warnings": [
+                {"code": "SELLING_PRICE_DEVIATION", "message": "卖价偏差"}
+            ],
+            "matched_product": {
+                "code": "W-1",
+                "product_name_en": "Warning",
+                "price": 2,
+                "unit": "EA",
+            },
+        }
+    ]
+
+    ws = _open(
+        render_inquiry_excel(None, metadata={}, products=products, supplier_id=1)
+    ).active
+
+    assert all(
+        ws.cell(row=10, column=column).fill.fgColor.rgb.endswith("FFF2CC")
+        for column in range(1, 8)
+    )
+
+
 # ─── render_inquiry_excel — template-driven ───────────────────
 
 
@@ -217,6 +245,35 @@ def test_render_with_template_fills_field_positions():
     # PO quote (745) stays out. Repros prod 2026-05-20 order #104 incident.
     assert ws["M22"].value == 690.0
     assert ws["M22"].value != 745.0
+
+
+def test_render_template_highlights_actual_warning_product_columns():
+    template = _make_template(
+        id=99,
+        field_positions={"po_number": "A1"},
+        product_table_config={
+            "start_row": 22,
+            "columns": {"C": "product_code", "K": "quantity"},
+        },
+        zoned=False,
+    )
+    products = [
+        {
+            "product_code": "W-2",
+            "quantity": 3,
+            "inquiry_warnings": [
+                {"code": "SELLING_PRICE_DEVIATION", "message": "卖价偏差"}
+            ],
+            "matched_product": {"price": 2, "unit": "EA"},
+        }
+    ]
+
+    ws = _open(
+        render_inquiry_excel(template, metadata={}, products=products, supplier_id=1)
+    ).active
+
+    assert ws["C22"].fill.fgColor.rgb.endswith("FFF2CC")
+    assert ws["K22"].fill.fgColor.rgb.endswith("FFF2CC")
 
 
 def test_render_template_skips_formula_columns():
@@ -498,7 +555,6 @@ from domains.inquiry.template_engine import (  # noqa: E402 — grouped with reg
     _detect_filled_data_rows,
     _to_number_or_none,
 )
-
 
 # --- _to_number_or_none (pure) -----------------------------------------
 
