@@ -52,32 +52,19 @@ for name,(min_size,digest) in TTS_FILES.items():
     if digest and sha256(dst)!=digest: raise RuntimeError(f"TTS sha mismatch: {name}")
     print(f"[tts-model] ready {name} {dst.stat().st_size:,}",flush=True)
 
-ASR_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-zipformer-cantonese-2024-03-13.tar.bz2"
+ASR_BASE="https://huggingface.co/zrjin/icefall-asr-mdcc-zipformer-2024-03-11/resolve/main"
 ASR_FILES={
-    "encoder-epoch-45-avg-35.int8.onnx":60_000_000,
-    "decoder-epoch-45-avg-35.onnx":10_000_000,
-    "joiner-epoch-45-avg-35.int8.onnx":2_000_000,
-    "tokens.txt":30_000,
+    "encoder-epoch-45-avg-35.int8.onnx": ("exp/encoder-epoch-45-avg-35.int8.onnx", 60_000_000),
+    "decoder-epoch-45-avg-35.onnx": ("exp/decoder-epoch-45-avg-35.onnx", 10_000_000),
+    "joiner-epoch-45-avg-35.int8.onnx": ("exp/joiner-epoch-45-avg-35.int8.onnx", 2_000_000),
+    "tokens.txt": ("data/lang_char/tokens.txt", 30_000),
 }
-if not all((ASR/k).exists() and (ASR/k).stat().st_size>=v for k,v in ASR_FILES.items()):
-    archive=MODEL/"cantonese-asr.tar.bz2"
-    print("[asr-model] downloading Cantonese Zipformer archive",flush=True)
-    download(ASR_URL,archive)
-    wanted=set(ASR_FILES)
-    with tarfile.open(archive,"r:bz2") as tf:
-        members=[]
-        for m in tf.getmembers():
-            base=pathlib.PurePosixPath(m.name).name
-            if base in wanted:
-                m.name=base
-                members.append(m)
-        found={m.name for m in members}
-        if found!=wanted: raise RuntimeError(f"Missing ASR members: {wanted-found}")
-        tf.extractall(ASR,members=members)
-    archive.unlink(missing_ok=True)
-
-for name,min_size in ASR_FILES.items():
+for name,(remote,min_size) in ASR_FILES.items():
     p=ASR/name
-    if not p.exists() or p.stat().st_size<min_size: raise RuntimeError(f"ASR asset invalid: {name}")
+    if not p.exists() or p.stat().st_size<min_size:
+        print(f"[asr-model] downloading {name}",flush=True)
+        download(f"{ASR_BASE}/{remote}?download=true",p)
+    if not p.exists() or p.stat().st_size<min_size:
+        raise RuntimeError(f"ASR asset invalid: {name}")
     print(f"[asr-model] ready {name} {p.stat().st_size:,}",flush=True)
 print("[models] all assets ready",flush=True)
