@@ -1,49 +1,74 @@
 "use strict";(function(){
-const SONG=[
- {text:"流水像清得沒帶半顆沙",jp:["lau4","seoi2","zoeng6","cing1","dak1","mut6","daai3","bun3","fo2","saa1"]},
- {text:"前身被擱在上游風化",jp:["cin4","san1","bei6","gok3","zoi6","soeng6","jau4","fung1","faa3"]}
-];
+let SONG=[];
 const lessons=document.querySelector("#lessons"),health=document.querySelector("#health");
+const lyricsInput=document.querySelector("#lyricsInput"),buildBtn=document.querySelector("#buildSong"),buildStatus=document.querySelector("#buildStatus");
 let active=null,urls={},activeSyl=null;
+
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
+function card(i){return document.querySelector("#line"+i);}
+function cleanupUrls(){Object.values(urls).forEach(u=>{try{URL.revokeObjectURL(u)}catch(e){}});urls={};}
+
 function render(){
- lessons.innerHTML=SONG.map((l,i)=>'<section class="card" id="line'+i+'"><div class="lineNo">第 '+(i+1)+' 句</div><div class="lyric">'+esc(l.text)+'</div><div class="syls">'+[...l.text].map((ch,j)=>'<button type="button" class="syl" data-line="'+i+'" data-char="'+j+'" aria-label="播放 '+esc(ch)+' '+l.jp[j]+'"><b>'+esc(ch)+'</b><code>'+l.jp[j]+'</code><span class="tapHint">點擊聽</span></button>').join("")+'</div><div class="speedRow"><label>朗讀速度</label><select class="speechSpeed"><option value="0.60" selected>教學慢速 · 0.60×</option><option value="0.75">清晰 · 0.75×</option><option value="0.88">自然 · 0.88×</option></select></div><div class="buttons"><button class="listen" data-i="'+i+'">▶ 標準粵語</button><button class="record" data-i="'+i+'">● 跟讀並評分</button></div><audio class="reference hidden" controls></audio><audio class="mine hidden" controls></audio><audio class="charAudio hidden" preload="none"></audio><div class="status">預設使用教學慢速，先把每個字聽清楚，再跟讀整句。</div><div class="result hidden"></div></section>').join("");
+ if(!SONG.length){lessons.innerHTML='<div class="empty">還沒有歌詞。把歌詞貼到上面，每個換行會變成一句練習。</div>';return;}
+ lessons.innerHTML=SONG.map((l,i)=>{
+   const skipped=(l.unsupported||[]).length?'<div class="lineWarn">暫不評估：'+esc((l.unsupported||[]).join(" "))+'</div>':'';
+   const units=l.chars.map((ch,j)=>'<button type="button" class="syl" data-line="'+i+'" data-char="'+j+'" aria-label="播放 '+esc(ch)+' '+esc(l.jp[j])+'"><b>'+esc(ch)+'</b><code>'+esc(l.jp[j])+'</code><span class="tapHint">點擊聽</span></button>').join("");
+   return '<section class="card lesson" id="line'+i+'"><div class="lineNo">第 '+(i+1)+' 句</div><div class="lyric">'+esc(l.text)+'</div><div class="syls">'+units+'</div>'+skipped+'<div class="speedRow"><label>朗讀速度</label><select class="speechSpeed"><option value="0.60" selected>教學慢速 · 0.60×</option><option value="0.75">清晰 · 0.75×</option><option value="0.88">自然 · 0.88×</option></select></div><div class="buttons"><button class="listen" data-i="'+i+'">▶ 標準粵語</button><button class="record" data-i="'+i+'">● 跟讀並評分</button></div><audio class="reference hidden" controls></audio><audio class="mine hidden" controls></audio><audio class="charAudio hidden" preload="none"></audio><div class="status">先點字聽單字，或播放整句；第一次使用新句子時可能需要先生成語音。</div><div class="result hidden"></div></section>';
+ }).join("");
  document.querySelectorAll(".listen").forEach(b=>b.onclick=()=>listen(+b.dataset.i,b));
  document.querySelectorAll(".record").forEach(b=>b.onclick=()=>toggleRecord(+b.dataset.i,b));
  document.querySelectorAll(".syl").forEach(b=>b.onclick=()=>playCharacter(+b.dataset.line,+b.dataset.char,b));
 }
-function card(i){return document.querySelector("#line"+i);}
+
+async function buildLessons(){
+ if(active){buildStatus.textContent="請先停止目前的錄音，再重新建立歌詞。";return;}
+ const lyrics=lyricsInput.value.trim();
+ if(!lyrics){buildStatus.textContent="請先貼上歌詞。";return;}
+ buildBtn.disabled=true;buildStatus.textContent="正在拆分歌詞並生成粵拼…";
+ try{
+   const r=await fetch("/api/parse-lyrics",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({lyrics})});
+   const d=await r.json();if(!r.ok)throw new Error(d.error||("HTTP "+r.status));
+   cleanupUrls();
+   SONG=(d.lines||[]).map(x=>({text:x.text,chars:x.chars||[],jp:x.jyutping||[],unsupported:x.unsupported||[]}));
+   render();
+   const warnings=(d.warnings||[]).length;
+   buildStatus.textContent="已建立 "+SONG.length+" 句歌詞"+(warnings?"；有 "+warnings+" 行/字元需要略過或檢查。":"。")+" 每句會在第一次播放/評估時建立快取。";
+ }catch(e){buildStatus.textContent="建立失敗："+e.message;}
+ finally{buildBtn.disabled=false;}
+}
+
 async function playCharacter(lineIndex,charIndex,el){
+ const line=SONG[lineIndex];if(!line)return;
  const c=card(lineIndex),st=c.querySelector(".status"),audio=c.querySelector(".charAudio");
  if(activeSyl)activeSyl.classList.remove("playing");
- activeSyl=el;el.classList.add("playing");
- audio.pause();
- audio.src="/api/char?line="+lineIndex+"&index="+charIndex+"&v=1";
+ activeSyl=el;el.classList.add("playing");audio.pause();
+ audio.src="/api/char?text="+encodeURIComponent(line.text)+"&index="+charIndex+"&v=dynamic1";
  audio.currentTime=0;
- const ch=SONG[lineIndex].text[charIndex],jp=SONG[lineIndex].jp[charIndex];
- st.textContent="播放單字："+ch+" · "+jp;
+ const ch=line.chars[charIndex],jp=line.jp[charIndex];
+ st.textContent="準備單字："+ch+" · "+jp+(audio.readyState?"":"");
+ audio.onplaying=()=>{st.textContent="播放單字："+ch+" · "+jp;};
  audio.onended=()=>{el.classList.remove("playing");if(activeSyl===el)activeSyl=null;};
- audio.onerror=()=>{el.classList.remove("playing");st.textContent="單字音訊載入失敗，請再點一次。";};
- try{await audio.play();}catch(e){st.textContent="請再點一次「"+ch+"」播放。";}
+ audio.onerror=()=>{el.classList.remove("playing");st.textContent="單字音訊載入失敗；新句子第一次可能需要較久，請再點一次。";};
+ try{await audio.play();}catch(e){st.textContent="正在準備「"+ch+"」；若沒有自動播放，請再點一次。";}
 }
 
 async function listen(i,btn){
- const c=card(i),st=c.querySelector(".status"),a=c.querySelector(".reference"),speed=Number(c.querySelector(".speechSpeed").value||.60);
- btn.disabled=true;st.textContent="正在準備標準粵語…";
+ const line=SONG[i],c=card(i),st=c.querySelector(".status"),a=c.querySelector(".reference"),speed=Number(c.querySelector(".speechSpeed").value||.60);
+ if(!line)return;btn.disabled=true;st.textContent="正在準備這一句的標準粵語…";
  try{
-  const r=await fetch("/api/tts",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({text:SONG[i].text,speed})});
-  if(!r.ok)throw new Error("TTS HTTP "+r.status);
-  const blob=await r.blob();
-  if(urls["ref"+i])URL.revokeObjectURL(urls["ref"+i]);
-  urls["ref"+i]=URL.createObjectURL(blob);a.src=urls["ref"+i];a.classList.remove("hidden");
-  await a.play();
+  const r=await fetch("/api/tts",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({text:line.text,speed})});
+  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||("HTTP "+r.status));}
+  const blob=await r.blob(),key="ref"+i+"-"+speed;
+  if(urls[key])URL.revokeObjectURL(urls[key]);urls[key]=URL.createObjectURL(blob);
+  a.src=urls[key];a.classList.remove("hidden");await a.play();
   const label=speed<=.61?"教學慢速":speed<=.76?"清晰速度":"自然速度";
   st.textContent="正在播放"+label+"（"+speed.toFixed(2)+"×）。";
  }catch(e){st.textContent="標準音錯誤："+e.message;}finally{btn.disabled=false;}
 }
+
 async function toggleRecord(i,btn){
- if(active){if(active.i===i){active.mr.stop();}return;}
- const c=card(i),st=c.querySelector(".status");
+ if(active){if(active.i===i)active.mr.stop();return;}
+ const line=SONG[i],c=card(i),st=c.querySelector(".status");if(!line)return;
  try{
   const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
   const mime=MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":(MediaRecorder.isTypeSupported("audio/mp4")?"audio/mp4":"");
@@ -53,6 +78,7 @@ async function toggleRecord(i,btn){
   mr.start();btn.textContent="■ 停止並評分";st.textContent="正在錄音…完整念這一句，念完後按停止。";
  }catch(e){st.textContent="錄音錯誤："+e.message;}
 }
+
 async function wav16k(blob){
  const buf=await blob.arrayBuffer(),AC=window.AudioContext||window.webkitAudioContext,ac=new AC();
  try{
@@ -62,13 +88,19 @@ async function wav16k(blob){
   const ab=new ArrayBuffer(44+out.length*2),v=new DataView(ab);const w=(o,s)=>{for(let k=0;k<s.length;k++)v.setUint8(o+k,s.charCodeAt(k));};w(0,"RIFF");v.setUint32(4,36+out.length*2,true);w(8,"WAVE");w(12,"fmt ");v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,16000,true);v.setUint32(28,32000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,"data");v.setUint32(40,out.length*2,true);for(let i=0,o=44;i<out.length;i++,o+=2){const x=Math.max(-1,Math.min(1,out[i]));v.setInt16(o,x<0?x*32768:x*32767,true);}return ab;
  }finally{await ac.close();}
 }
+
 async function evaluate(i,blob){
- const c=card(i),st=c.querySelector(".status"),mine=c.querySelector(".mine"),result=c.querySelector(".result");st.textContent="正在做逐字粵語 ASR + 聲調分析…";
- if(urls["mine"+i])URL.revokeObjectURL(urls["mine"+i]);urls["mine"+i]=URL.createObjectURL(blob);mine.src=urls["mine"+i];mine.classList.remove("hidden");
+ const line=SONG[i],c=card(i),st=c.querySelector(".status"),mine=c.querySelector(".mine"),result=c.querySelector(".result");
+ if(!line)return;st.textContent="正在建立/載入這一句的評分基準，然後做逐音節分析…";
+ const key="mine"+i;if(urls[key])URL.revokeObjectURL(urls[key]);urls[key]=URL.createObjectURL(blob);mine.src=urls[key];mine.classList.remove("hidden");
  try{
-  const wav=await wav16k(blob),r=await fetch("/api/evaluate?line="+i,{method:"POST",headers:{"content-type":"audio/wav"},body:wav}),d=await r.json();if(!r.ok)throw new Error(d.error||("HTTP "+r.status));showResult(i,d);st.textContent="評估完成。評估完成。只有有足夠證據的音節才會計分；系統不確定的位置不扣分。";
+  const wav=await wav16k(blob);
+  const r=await fetch("/api/evaluate?text="+encodeURIComponent(line.text),{method:"POST",headers:{"content-type":"audio/wav"},body:wav});
+  const d=await r.json();if(!r.ok)throw new Error(d.error||("HTTP "+r.status));
+  showResult(i,d);st.textContent="評估完成。只有有足夠證據的音節才會計分；系統不確定的位置不扣分。";
  }catch(e){st.textContent="評估錯誤："+e.message;}
 }
+
 function showResult(i,d){
  const c=card(i),box=c.querySelector(".result");box.classList.remove("hidden");
  const attention=d.attention_count??d.items.filter(x=>["wrong","tone","segmental"].includes(x.status)).length;
@@ -96,6 +128,16 @@ function detail(box,x){
  if(x.issues?.length)s+='<br><b>主要問題：</b>'+x.issues.map(esc).join("、");
  box.querySelector(".detail").innerHTML=s;
 }
-async function boot(){render();try{const r=await fetch("/api/health",{cache:"no-store"}),d=await r.json();if(!d.ok)throw new Error("not ready");health.textContent="✓ VITS + 粵語 Zipformer ASR 已就緒。錄音只送到這個 Demo 伺服器即時計算，不保存。";}catch(e){health.textContent="模型尚未就緒："+e.message;}}
+
+buildBtn.addEventListener("click",buildLessons);
+lyricsInput.addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.key==="Enter")buildLessons();});
+
+async function boot(){
+ try{
+  const r=await fetch("/api/health",{cache:"no-store"}),d=await r.json();if(!d.ok)throw new Error("not ready");
+  health.textContent="✓ 粵語 TTS + 逐音節評估引擎已就緒。歌詞只在這個 Demo 中即時計算；錄音不保存。";
+ }catch(e){health.textContent="模型尚未就緒："+e.message;}
+ await buildLessons();
+}
 boot();
 })();
