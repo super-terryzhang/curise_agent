@@ -10,7 +10,10 @@ ROOT=pathlib.Path(__file__).resolve().parent
 PORT=int(os.environ.get("PORT","10000"))
 ASR_DIR=ROOT/"model"/"asr"
 TTS_URL=os.environ.get("TTS_URL","https://terry-cantonese-tts-stable.onrender.com/api/tts")
-FIXED_AUDIO=[ROOT/"reference"/"line0.wav",ROOT/"reference"/"line1.wav"]
+FIXED_AUDIO={
+    0:{0.60:ROOT/"reference"/"line0_slow.wav",0.75:ROOT/"reference"/"line0_clear.wav",0.88:ROOT/"reference"/"line0.wav"},
+    1:{0.60:ROOT/"reference"/"line1_slow.wav",0.75:ROOT/"reference"/"line1_clear.wav",0.88:ROOT/"reference"/"line1.wav"},
+}
 t2s=OpenCC("t2s")
 s2t=OpenCC("s2t")
 jp_js=(ROOT.parent/"cantonese-coach-mvp"/"vendor"/"cantojpmin_data.js").read_text(encoding="utf-8")
@@ -34,11 +37,12 @@ REFERENCE={}
 reference_lock=threading.Lock()
 
 def fixed_audio(text:str,speed:float):
-    cleaned=text.strip()
+    cleaned=text.strip();requested=float(speed)
     for i,line in enumerate(SONG):
-        if cleaned==line["text"] and abs(float(speed)-.88)<.025:
-            p=FIXED_AUDIO[i]
-            if p.is_file() and p.stat().st_size>3000:return p.read_bytes()
+        if cleaned!=line["text"]:continue
+        for variant_speed,path in FIXED_AUDIO.get(i,{}).items():
+            if abs(requested-variant_speed)<.025 and path.is_file() and path.stat().st_size>3000:
+                return path.read_bytes()
     return None
 
 def proxy_tts(text:str,speed:float=.9)->bytes:
@@ -577,7 +581,7 @@ def evaluate(raw,line_id,reference=None):
     overall=round(sum(scored)/len(scored)) if scored else None
     coverage=round(100*rated_count/len(line["chars"])) if line["chars"] else 0
     return {
-        "ok":True,"version":"acoustic-fallback-1","line_id":line_id,"target":line["text"],
+        "ok":True,"version":"teaching-speed-1","line_id":line_id,"target":line["text"],
         "recognized":"".join(tokens),"recognized_jyutping":" ".join(x or "?" for x in rec_jp),
         "overall_score":overall,"coverage":coverage,
         "stable_count":stable,"attention_count":attention,"unrated_count":unrated,
