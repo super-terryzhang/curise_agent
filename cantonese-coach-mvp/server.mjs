@@ -37,10 +37,12 @@ const PAGE = `<!doctype html>
 <script>
 var $=function(s){return document.querySelector(s)}, jy='', list=[], rec=null;
 var key=$('#key'), txt=$('#text'), status=$('#status'), btnA=$('#analyse'), btnL=$('#listen'), btnR=$('#record');
-key.value=sessionStorage.getItem('cai-key')||''; key.oninput=function(){sessionStorage.setItem('cai-key',key.value)};
+try{key.value=sessionStorage.getItem('cai-key')||''}catch(e){} key.oninput=function(){try{sessionStorage.setItem('cai-key',key.value)}catch(e){}};
 function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 async function api(url,body){
- var r=await fetch(url,{method:'POST',headers:{'content-type':'application/json','x-cantonese-key':key.value.trim()},body:JSON.stringify(body)});
+ var c=new AbortController(),timer=setTimeout(function(){c.abort()},10000),r;
+ try{r=await fetch(url,{method:'POST',headers:{'content-type':'application/json','x-cantonese-key':key.value.trim()},body:JSON.stringify(body),signal:c.signal})}
+ catch(e){if(e&&e.name==='AbortError')throw Error('請求超時（10 秒）');throw e}finally{clearTimeout(timer)}
  var d=await r.json().catch(function(){return {error:'Invalid response'}}); if(!r.ok)throw Error(d.error||('HTTP '+r.status)); return d;
 }
 async function analyse(){
@@ -87,7 +89,7 @@ async function upstream(r){var ct=r.headers.get('content-type')||'';return ct.in
 function err(d,f){return (d&&((d.error&&d.error.message)||d.message||d.error))||f}
 
 http.createServer(async function(req,res){
- var u=new URL(req.url,'http://localhost');
+ var u=new URL(req.url,'http://localhost'); console.log('[request]',req.method,u.pathname);
  if(req.method==='GET'&&u.pathname==='/'){return send(res,200,PAGE,'text/html; charset=utf-8')}
  if(req.method==='GET'&&u.pathname==='/api/health'){return js(res,200,{ok:true})}
  if(req.method!=='POST'||!u.pathname.startsWith('/api/'))return js(res,404,{error:'Not found'});
@@ -95,7 +97,7 @@ http.createServer(async function(req,res){
  try{
   if(u.pathname==='/api/jyutping'){
    var text=String(d.text||'').trim();if(!text)return js(res,400,{error:'請先輸入文字。'});
-   var r=await fetch(CAI+'/text-to-jyutping',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:text,outputType:'list'})}),x=await upstream(r);if(!r.ok||!x.success)return js(res,r.status,{error:err(x,'粵拼轉換失敗')});
+   var r=await fetch(CAI+'/text-to-jyutping',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:text,outputType:'list'}),signal:AbortSignal.timeout(8000)}),x=await upstream(r);if(!r.ok||!x.success)return js(res,r.status,{error:err(x,'粵拼轉換失敗')});
    var list=Array.isArray(x.result)?x.result:[];return js(res,200,{success:true,list:list,jyutping:list.map(function(z){return z.jyutping}).filter(Boolean).join(' ')})
   }
   if(u.pathname==='/api/tts'){
@@ -110,4 +112,9 @@ http.createServer(async function(req,res){
   }
   return js(res,404,{error:'Not found'})
  }catch(e){return js(res,502,{error:'上游服務連接失敗：'+e.message})}
-}).listen(PORT,'0.0.0.0',function(){console.log('Cantonese Coach on '+PORT)});
+}).listen(PORT,'0.0.0.0',function(){
+ console.log('Cantonese Coach on '+PORT);
+ fetch(CAI+'/text-to-jyutping',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:'你好嗎',outputType:'text'}),signal:AbortSignal.timeout(8000)})
+  .then(async function(r){console.log('[selftest] jyutping',r.status,await r.text())})
+  .catch(function(e){console.error('[selftest] jyutping failed',e.name,e.message)});
+});
