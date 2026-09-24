@@ -1,18 +1,19 @@
 from __future__ import annotations
-import io,json,math,os,pathlib,re,threading,time,wave
+import io,json,math,os,pathlib,re,threading,urllib.request,wave
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from urllib.parse import urlparse,parse_qs
 import numpy as np
 import sherpa_onnx
-import pycantonese
 from opencc import OpenCC
 
 ROOT=pathlib.Path(__file__).resolve().parent
 PORT=int(os.environ.get("PORT","10000"))
-TTS_DIR=ROOT/"model"/"tts"
 ASR_DIR=ROOT/"model"/"asr"
+TTS_URL=os.environ.get("TTS_URL","https://terry-cantonese-vits.onrender.com/api/tts")
 t2s=OpenCC("t2s")
 s2t=OpenCC("s2t")
+jp_js=(ROOT.parent/"cantonese-coach-mvp"/"vendor"/"cantojpmin_data.js").read_text(encoding="utf-8")
+jp_dict=json.loads(jp_js[jp_js.index("{"):jp_js.rfind("}")+1])
 
 SONG=[
  {"id":0,"text":"流水像清得沒帶半顆沙","jyutping":["lau4","seoi2","zoeng6","cing1","dak1","mut6","daai3","bun3","fo2","saa1"]},
@@ -22,16 +23,6 @@ for line in SONG:
     line["chars"]=list(line["text"])
     line["tones"]=[int(x[-1]) for x in line["jyutping"]]
 
-tts_cfg=sherpa_onnx.OfflineTtsConfig(
- model=sherpa_onnx.OfflineTtsModelConfig(
-  vits=sherpa_onnx.OfflineTtsVitsModelConfig(
-   model=str(TTS_DIR/"vits-cantonese-hf-xiaomaiiwn.onnx"),
-   lexicon=str(TTS_DIR/"lexicon.txt"),tokens=str(TTS_DIR/"tokens.txt"),length_scale=1.0),
-  provider="cpu",debug=False,num_threads=1),
- rule_fsts=str(TTS_DIR/"rule.fst"),rule_fars="",max_num_sentences=1)
-if not tts_cfg.validate(): raise RuntimeError("TTS config invalid")
-tts=sherpa_onnx.OfflineTts(tts_cfg); tts_lock=threading.Lock()
-
 asr=sherpa_onnx.OfflineRecognizer.from_wenet_ctc(
  model=str(ASR_DIR/"model.int8.onnx"),
  tokens=str(ASR_DIR/"tokens.txt"),
@@ -39,20 +30,15 @@ asr=sherpa_onnx.OfflineRecognizer.from_wenet_ctc(
  decoding_method="greedy_search",provider="cpu")
 asr_lock=threading.Lock()
 
-def wav_bytes(samples:np.ndarray,sr:int)->bytes:
-    pcm=(np.clip(samples,-1,1)*32767).astype("<i2")
-    out=io.BytesIO()
-    with wave.open(out,"wb") as w:
-        w.setnchannels(1);w.setsampwidth(2);w.setframerate(sr);w.writeframes(pcm.tobytes())
-    return out.getvalue()
-
-def synth(text:str,speed:float=.9):
+def proxy_tts(text:str,speed:float=.9)->bytes:
     text=text.strip()
-    if not text: raise ValueError("文字為空")
-    with tts_lock: a=tts.generate(text=t2s.convert(text),sid=0,speed=max(.65,min(1.35,float(speed))))
-    s=np.asarray(a.samples,dtype=np.float32)
-    if s.size<100: raise RuntimeError("TTS 生成空音訊")
-    return wav_bytes(s,int(a.sample_rate))
+    if not text:raise ValueError("文字為空")
+    payload=json.dumps({"text":text,"speed":max(.65,min(1.35,float(speed)))},ensure_ascii=False).encode("utf-8")
+    req=urllib.request.Request(TTS_URL,data=payload,headers={"Content-Type":"application/json","User-Agent":"cantonese-song-coach/1.0"},method="POST")
+    with urllib.request.urlopen(req,timeout=120) as r:
+        raw=r.read()
+    if len(raw)<1000:raise RuntimeError("VITS 標準音回傳異常")
+    return raw
 
 def read_wav(raw:bytes):
     with wave.open(io.BytesIO(raw),"rb") as w:
@@ -83,29 +69,15 @@ def jp_parts(jp):
     return (m.group(1),int(m.group(2))) if m else (None,None)
 
 def recognized_jyutping(chars):
-    if not chars:return []
-    original=list(chars)
-    trad=s2t.convert("".join(original))
     out=[]
-    try:
-        pairs=pycantonese.characters_to_jyutping(trad)
-        flat=[]
-        for word,jp in pairs:
-            sylls=str(jp).split() if jp else [None]*len(word)
-            if len(sylls)==len(word):
-                flat.extend(sylls)
-            else:
-                flat.extend([None]*len(word))
-        if len(flat)==len(original):return flat
-    except Exception as e:
-        print("[g2p] phrase conversion failed",e,flush=True)
-    for ch in original:
-        try:
-            pairs=pycantonese.characters_to_jyutping([s2t.convert(ch)])
-            jp=pairs[0][1] if pairs else None
-            out.append(str(jp).split()[0] if jp else None)
-        except Exception:
-            out.append(None)
+    for ch in chars:
+        variants=None
+        for key in (ch,s2t.convert(ch),t2s.convert(ch)):
+            raw=jp_dict.get(key)
+            if raw:
+                variants=re.split(r"[/.]",raw)
+                break
+        out.append(variants[0] if variants else None)
     return out
 
 def align(target_chars,target_jp,rec_chars,rec_jp):
@@ -308,7 +280,7 @@ class H(BaseHTTPRequestHandler):
  def js(self,status,obj):self.sendb(status,json.dumps(obj,ensure_ascii=False).encode(),"application/json; charset=utf-8")
  def do_GET(self):
   p=urlparse(self.path).path
-  if p=="/api/health":return self.js(200,{"ok":True,"version":"song-lesson-3","tts":True,"asr":True,"external_api":False})
+  if p=="/api/health":return self.js(200,{"ok":True,"version":"song-lesson-4","tts":True,"asr":True,"external_api":False,"split_runtime":True})
   item=STATIC.get(p)
   if not item:return self.sendb(404,b"Not found","text/plain")
   return self.sendb(200,item[0].read_bytes(),item[1])
@@ -318,7 +290,7 @@ class H(BaseHTTPRequestHandler):
   raw=self.rfile.read(length)
   try:
    if u.path=="/api/tts":
-    d=json.loads(raw.decode());return self.sendb(200,synth(str(d.get("text","")),float(d.get("speed",.9))),"audio/wav")
+    d=json.loads(raw.decode());return self.sendb(200,proxy_tts(str(d.get("text","")),float(d.get("speed",.9))),"audio/wav")
    if u.path=="/api/evaluate":
     line_id=int(parse_qs(u.query).get("line",["-1"])[0]);return self.js(200,evaluate(raw,line_id))
    return self.js(404,{"error":"Not found"})
@@ -329,7 +301,7 @@ class H(BaseHTTPRequestHandler):
 
 print("[selftest] TTS + Cantonese ASR + Jyutping alignment",flush=True)
 for i,line in enumerate(SONG):
-    raw=synth(line["text"],1.0)
+    raw=proxy_tts(line["text"],1.0)
     ev=evaluate(raw,i)
     print(f"[selftest] line{i+1} target={line['text']} asr={ev['recognized']} jp={ev['recognized_jyutping']} syllable={ev['syllable_accuracy']} score={ev['overall_score']}",flush=True)
     if not ev["recognized"]:raise RuntimeError("ASR selftest returned no tokens")
