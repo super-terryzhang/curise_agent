@@ -21,7 +21,7 @@
   async function jsonPost(url,body,timeoutMs){
     var c=new AbortController(), t=setTimeout(function(){c.abort();},timeoutMs||10000);
     try{
-      var r=await fetch(url,{method:"POST",headers:{"content-type":"application/json","x-cantonese-key":key.value.trim()},body:JSON.stringify(body),signal:c.signal});
+      var r=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body),signal:c.signal});
       var d=await r.json().catch(function(){return {error:"伺服器回應不是 JSON"};});
       if(!r.ok)throw new Error(d.error||("HTTP "+r.status));
       return d;
@@ -60,7 +60,7 @@
     btnL.disabled=true; status.textContent="TTS 請求已送出，正在生成標準音…";
     var c=new AbortController(), t=setTimeout(function(){c.abort();},25000);
     try{
-      var r=await fetch("/api/tts",{method:"POST",headers:{"content-type":"application/json","x-cantonese-key":key.value.trim()},body:JSON.stringify({text:txt.value,jyutping:jyutping}),signal:c.signal});
+      var r=await fetch("/api/tts",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({text:txt.value,jyutping:jyutping,apiKey:key.value.trim()}),signal:c.signal});
       if(!r.ok){var d=await r.json().catch(function(){return {};});throw new Error(d.error||("HTTP "+r.status));}
       var b=await r.blob(); if(!b.size)throw new Error("收到空音訊");
       var u=URL.createObjectURL(b); audio.src=u; audio.classList.remove("hidden");
@@ -97,7 +97,7 @@
     var wav=encodeWav(samples,rate), blob=new Blob([wav],{type:"audio/wav"});
     btnR.textContent="● 開始跟讀"; status.textContent="正在評分…";
     try{
-      var b64=await toB64(blob), d=await jsonPost("/api/score",{text:txt.value,audioBase64:b64},25000);
+      var b64=await toB64(blob), d=await jsonPost("/api/score",{text:txt.value,audioBase64:b64,apiKey:key.value.trim()},25000);
       renderScore(d); status.textContent="評分完成。可以再試一次。";
     }catch(e){status.textContent="評分錯誤："+e.message;report("score",e.message);}
   }
