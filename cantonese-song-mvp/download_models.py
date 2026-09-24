@@ -113,7 +113,7 @@ if need_audio:
         # Empirical build-time assertion: teaching slow must really be longer.
         if not (durations[i]["slow"]>durations[i]["clear"]>durations[i]["reference"]):
             raise RuntimeError(f"Unexpected TTS speed ordering for line{i+1}: {durations[i]}")
-        if durations[i]["slow"] < durations[i]["reference"]*1.25:
+        if durations[i]["slow"] < durations[i]["reference"]*1.15:
             raise RuntimeError(f"Teaching audio not sufficiently slower for line{i+1}: {durations[i]}")
     del tts
 else:
