@@ -1,6 +1,6 @@
 # 当前 PO 待处理统计修复生产核验（2026-09-24）
 
-核验时间：2026-09-24 23:16–23:50 JST。
+核验时间：2026-09-24 23:16–2026-09-25 00:09 JST。
 
 ## 结论
 
@@ -44,6 +44,10 @@
 核验确认数据库 head 为 `0031_unit_conversion_rules`。随后正式后端切换为该 revision 接收 100% 流量；正式后端 `/health` 返回新 revision，正式 `/dashboard/orders` 返回 HTTP 200。
 
 Oracle Job 已同步相同镜像，generation 为 17；`oracle-po-hourly`、`bulk-image-gc-hourly`、`fx-refresh-daily` 均保持 ENABLED。临时核验 Job 已重新锁定，不能误重复执行生产脚本。
+
+2026-09-25 00:00 JST 的首次新版自动执行 `cruise-v3-po-hourly-qbj2l` 由 Scheduler 正常创建，明确使用 generation 17 和上述 digest，并在 1 分 35 秒后成功结束（`succeededCount=1`）。业务 scan run 366 为 `error_code=null`，32 项由 28 个历史待采纳、3 个需复核和 1 个延期组成；它与上一轮 run 365 的项目 JSON 哈希完全相同（`041f7a2174de6d45c4dcff6d94d309215efde18490863d00b6ddac9e5eb7c8f0`），没有新导入结果或新询价。
+
+只读复核 execution `cruise-v3-unit-conv-preflight-20260924-lc9j7` 与哈希复核 `cruise-v3-unit-conv-preflight-20260924-49p6b` 均成功。此前 `8q47g` 因核验命令使用错误模块路径，在导入数据库模块前即退出，未查询或写入数据；执行参数是一次性覆盖，Job 模板随后核验仍为 `READ_ONLY_RELEASE_CHECK is required` 锁定命令。
 
 ## 回退
 
