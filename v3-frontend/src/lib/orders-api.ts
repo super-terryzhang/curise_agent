@@ -125,6 +125,63 @@ export interface AnomalyData {
   completeness_issues: Array<string | Record<string, unknown>>;
 }
 
+export type OrderIssueResolutionTarget =
+  | "product_match"
+  | "order_row"
+  | "unit_conversion"
+  | "product_master"
+  | "price_periods"
+  | "order"
+  | "template"
+  | "pipeline"
+  | "review";
+
+export interface OrderIssueFinding {
+  code: string;
+  rule_version?: number;
+  step: number;
+  severity: "warning" | "error" | "blocking";
+  scope: string;
+  category?: string;
+  field?: string | null;
+  row_index?: number | null;
+  line_id?: string | null;
+  source_line?: string | number | null;
+  product_code?: string | null;
+  product_name?: string | null;
+  message: string;
+  suggestion?: string;
+  evidence?: Record<string, unknown>;
+  resolution?: {
+    target: OrderIssueResolutionTarget;
+    label: string;
+  };
+}
+
+export interface OrderIssueRow {
+  row_index: number;
+  line_id?: string | null;
+  product_code?: string | null;
+  product_name?: string | null;
+  quantity?: number | null;
+  unit?: string | null;
+  unit_price?: number | null;
+  match_status: string;
+  match_reason?: string | null;
+  matched_product?: MatchResult["matched_product"];
+  inquiry_disposition: "included" | "included_with_warning" | "excluded";
+  inquiry_disposition_reason?: string | null;
+  findings: OrderIssueFinding[];
+}
+
+export interface OrderIssueOverview {
+  schema_version: number;
+  actionable_row_count: number;
+  warning_row_count: number;
+  rows: OrderIssueRow[];
+  non_row_findings: OrderIssueFinding[];
+}
+
 export interface GeneratedFile {
   supplier_id: number;
   filename: string | null;
@@ -386,6 +443,7 @@ export interface Order {
   match_statistics: MatchStatistics | null;
   anomaly_data: AnomalyData | null;
   actionable_count?: number;
+  issue_overview?: OrderIssueOverview | null;
   // Legacy JSON blob from the deleted /financial-analysis endpoint.
   // Surfaced for completeness on historical orders; new code reads
   // /financials instead. See `getOrderFinancials()`.
@@ -548,6 +606,41 @@ export async function updateOrder(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+  return handleResponse<Order>(res);
+}
+
+export type OrderRowResolveRequest =
+  | {
+      action: "edit_source";
+      product_code?: string;
+      product_name?: string;
+      quantity?: number;
+      unit?: string;
+      unit_price?: number;
+    }
+  | { action: "bind_product"; product_id: number }
+  | {
+      action: "record_conversion";
+      source_quantity?: number;
+      source_unit?: string;
+      rfq_quantity: number;
+      rfq_unit: string;
+      evidence: string;
+    };
+
+export async function resolveOrderProductRow(
+  orderId: number,
+  rowIndex: number,
+  payload: OrderRowResolveRequest,
+): Promise<Order> {
+  const res = await fetchWithAuth(
+    `${API_BASE}/api/orders/${orderId}/products/${rowIndex}/resolve`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
   return handleResponse<Order>(res);
 }
 
