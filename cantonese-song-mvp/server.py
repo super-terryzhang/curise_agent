@@ -9,7 +9,14 @@ from opencc import OpenCC
 ROOT=pathlib.Path(__file__).resolve().parent
 PORT=int(os.environ.get("PORT","10000"))
 ASR_DIR=ROOT/"model"/"asr"
-TTS_URL=os.environ.get("TTS_URL","https://terry-cantonese-tts-stable.onrender.com/api/tts")
+TTS_URLS=[
+    x.strip() for x in os.environ.get(
+        "TTS_URLS",
+        "https://terry-cantonese-tts-stable.onrender.com/api/tts,"
+        "https://terry-cantonese-vits.onrender.com/api/tts,"
+        "https://terry-cantonese-tonelab.onrender.com/api/tts"
+    ).split(",") if x.strip()
+]
 FIXED_AUDIO={
     0:{0.60:ROOT/"reference"/"line0_slow.wav",0.75:ROOT/"reference"/"line0_clear.wav",0.88:ROOT/"reference"/"line0.wav"},
     1:{0.60:ROOT/"reference"/"line1_slow.wav",0.75:ROOT/"reference"/"line1_clear.wav",0.88:ROOT/"reference"/"line1.wav"},
@@ -53,26 +60,31 @@ def proxy_tts(text:str,speed:float=.9)->bytes:
     local=fixed_audio(text,speed)
     if local is not None:return local
     cache_key=(text,round(float(speed),2))
-    with tts_cache_lock:
-        cached=TTS_CACHE.get(cache_key)
+    with tts_cache_lock:cached=TTS_CACHE.get(cache_key)
     if cached is not None:return cached
+
     payload=json.dumps({"text":text,"speed":max(.60,min(1.35,float(speed)))},ensure_ascii=False).encode("utf-8")
-    waits=[0,2,4,8,12,20]
+    waits=[0,3,7,12,20,30]
     last=None
-    for attempt,wait in enumerate(waits):
+    for round_idx,wait in enumerate(waits):
         if wait:time.sleep(wait)
-        req=urllib.request.Request(TTS_URL,data=payload,headers={"Content-Type":"application/json","User-Agent":"cantonese-song-coach/1.0"},method="POST")
-        try:
-            with urllib.request.urlopen(req,timeout=120) as r:raw=r.read()
-            if len(raw)<1000:raise RuntimeError("VITS 標準音回傳異常")
-            with tts_cache_lock:
-                if len(TTS_CACHE)>=96:TTS_CACHE.pop(next(iter(TTS_CACHE)))
-                TTS_CACHE[cache_key]=raw
-            return raw
-        except urllib.error.HTTPError as e:
-            last=e
-            if e.code not in (502,503,504):raise
-        except Exception as e:last=e
+        for url in TTS_URLS:
+            req=urllib.request.Request(url,data=payload,headers={"Content-Type":"application/json","User-Agent":"cantonese-song-coach/1.0"},method="POST")
+            try:
+                with urllib.request.urlopen(req,timeout=120) as r:raw=r.read()
+                if len(raw)<1000:raise RuntimeError("VITS 標準音回傳異常")
+                with tts_cache_lock:
+                    if len(TTS_CACHE)>=96:TTS_CACHE.pop(next(iter(TTS_CACHE)))
+                    TTS_CACHE[cache_key]=raw
+                if round_idx:
+                    print(f"[tts-failover] recovered round={round_idx+1} host={url.split('/')[2]}",flush=True)
+                return raw
+            except urllib.error.HTTPError as e:
+                last=e
+                if e.code not in (502,503,504):break
+            except Exception as e:
+                last=e
+        print(f"[tts-failover] round {round_idx+1} unavailable across {len(TTS_URLS)} services",flush=True)
     raise RuntimeError(f"VITS 服務暫時不可用：{last}")
 
 
