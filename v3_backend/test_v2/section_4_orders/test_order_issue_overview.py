@@ -119,7 +119,7 @@ def test_overview_uses_row_identity_not_duplicate_product_name():
     }
 
 
-def test_overview_attributes_cross_po_findings_to_source_order():
+def test_overview_keeps_historical_inquiry_exclusions_out_of_current_issues():
     target_row = _matched_row(line_id="target-line")
     target = _order(products=[dict(target_row)], match_results=[target_row])
     owner = _order(
@@ -142,10 +142,9 @@ def test_overview_attributes_cross_po_findings_to_source_order():
 
     overview = build_issue_overview(target, [target, owner])
 
-    assert [item["code"] for item in overview["rows"][0]["findings"]] == [
-        "RFQ_ROW_EXCLUDED"
-    ]
-    assert overview["actionable_row_count"] == 1
+    assert overview["rows"][0]["findings"] == []
+    assert overview["rows"][0]["inquiry_disposition"] == "included"
+    assert overview["actionable_row_count"] == 0
 
 
 def test_overview_treats_legacy_possible_match_as_unmatched():

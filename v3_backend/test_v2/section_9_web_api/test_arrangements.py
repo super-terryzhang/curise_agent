@@ -153,7 +153,7 @@ def test_arrangement_summary_surfaces_orders_requiring_human_review(client, db):
     assert summary['anomaly_count'] == 3
 
 
-def test_arrangement_counts_unique_actionable_rows_under_their_source_po(client, db):
+def test_arrangement_counts_current_issues_without_historical_inquiry_exclusions(client, db):
     user = seed_user(db, email='actionable-rows@test')
     existing = order(db, user.id, po_number='PO-EXISTING', product_count=2)
     latest = order(
@@ -206,17 +206,20 @@ def test_arrangement_counts_unique_actionable_rows_under_their_source_po(client,
     arrangement = listing['arrangements'][0]
     counts = {item['po_number']: item['anomaly_count'] for item in arrangement['orders']}
 
-    assert counts == {'PO-EXISTING': 2, 'PO-LATEST': 1}
+    assert counts == {'PO-EXISTING': 0, 'PO-LATEST': 1}
+    summaries = {item['po_number']: item for item in arrangement['orders']}
+    assert summaries['PO-EXISTING']['requires_human_review'] is False
+    assert summaries['PO-LATEST']['requires_human_review'] is True
 
     workspace = client.get(
         f"/api/order-groups/arrangements/{arrangement['id']}", headers=headers
     ).json()
-    assert workspace['summary']['anomaly_count'] == 3
+    assert workspace['summary']['anomaly_count'] == 1
 
     detail = client.get(f'/api/orders/{latest.id}', headers=headers).json()
     assert detail['actionable_count'] == 1
     existing_detail = client.get(f'/api/orders/{existing.id}', headers=headers).json()
-    assert existing_detail['actionable_count'] == 2
+    assert existing_detail['actionable_count'] == 0
 
 
 def test_removed_po_marks_latest_inquiry_membership_as_changed(client, db):

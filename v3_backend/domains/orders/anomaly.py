@@ -29,6 +29,27 @@ class RuleContext:
 Rule = Callable[[RuleContext], list[Finding]]
 _RULES: dict[str, Rule] = {}
 
+# This finding records what happened in an immutable inquiry version.  It is
+# useful audit history, but the underlying current PO problem is represented by
+# PRODUCT_NOT_MATCHED, UNIT_CONVERSION_REQUIRED, etc.  Counting both makes an
+# old inquiry snapshot keep a corrected PO permanently actionable.
+_HISTORICAL_INQUIRY_FINDINGS = frozenset({"RFQ_ROW_EXCLUDED"})
+
+
+def is_historical_inquiry_finding(item: dict[str, Any]) -> bool:
+    """Return whether a finding is an immutable inquiry-version outcome."""
+
+    return str(item.get("code") or "").upper() in _HISTORICAL_INQUIRY_FINDINGS
+
+
+def is_current_actionable_finding(item: dict[str, Any]) -> bool:
+    """Return whether a finding represents a current PO problem."""
+
+    return (
+        item.get("severity") in {"error", "blocking"}
+        and not is_historical_inquiry_finding(item)
+    )
+
 
 def actionable_row_counts(
     orders: Iterable[Order], *, include_match_results: bool = True
@@ -45,7 +66,7 @@ def actionable_row_counts(
         if isinstance(findings, list):
             structured_ids.add(owner.id)
             for index, item in enumerate(findings):
-                if not isinstance(item, dict) or item.get("severity") not in {"error", "blocking"}:
+                if not isinstance(item, dict) or not is_current_actionable_finding(item):
                     continue
                 identity = _actionable_row_identity(item, fallback=index)
                 if identity is None:
@@ -555,6 +576,8 @@ __all__ = [
     "RuleContext",
     "actionable_row_counts",
     "finding",
+    "is_current_actionable_finding",
+    "is_historical_inquiry_finding",
     "list_rules",
     "register_rule",
     "run_anomaly_check",
