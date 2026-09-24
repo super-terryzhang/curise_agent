@@ -188,6 +188,87 @@ def align(target_chars,target_jp,rec_chars,rec_jp):
     rows.reverse();insertions.reverse()
     return rows,insertions
 
+def _mel(hz):
+    return 2595.0*math.log10(1.0+hz/700.0)
+
+def _inv_mel(m):
+    return 700.0*(10**(m/2595.0)-1.0)
+
+def acoustic_fingerprint(samples,sr,start,end,time_bins=12,mel_bins=24):
+    a=max(0,int(start*sr));b=min(len(samples),int(end*sr))
+    x=np.asarray(samples[a:b],dtype=np.float32)
+    if x.size<int(.07*sr):return None
+    x=x-float(np.mean(x))
+    peak=float(np.max(np.abs(x)))+1e-9
+    x=x/peak
+    frame=max(128,int(.025*sr));hop=max(64,int(.010*sr))
+    nfft=1
+    while nfft<frame:nfft*=2
+    nfft=max(512,nfft)
+    if x.size<frame:x=np.pad(x,(0,frame-x.size))
+    starts=list(range(0,max(1,x.size-frame+1),hop))
+    if not starts:starts=[0]
+    win=np.hanning(frame).astype(np.float32)
+    fmax=min(7000.0,sr*.46);fmin=180.0
+    mel_edges=np.linspace(_mel(fmin),_mel(fmax),mel_bins+2)
+    hz_edges=np.asarray([_inv_mel(v) for v in mel_edges])
+    freqs=np.fft.rfftfreq(nfft,1.0/sr)
+    filters=[]
+    for k in range(mel_bins):
+        l,c,r=hz_edges[k:k+3]
+        w=np.zeros_like(freqs)
+        left=(freqs>=l)&(freqs<=c);right=(freqs>=c)&(freqs<=r)
+        if c>l:w[left]=(freqs[left]-l)/(c-l)
+        if r>c:w[right]=(r-freqs[right])/(r-c)
+        filters.append(w)
+    fb=np.asarray(filters)
+    frames=[]
+    for st in starts:
+        y=x[st:st+frame]
+        if y.size<frame:y=np.pad(y,(0,frame-y.size))
+        spec=np.abs(np.fft.rfft(y*win,nfft))**2
+        bands=np.log(np.maximum(fb@spec,1e-8))
+        bands=bands-float(np.mean(bands))
+        sd=float(np.std(bands))
+        if sd>1e-6:bands=bands/sd
+        frames.append(bands)
+    mat=np.asarray(frames,dtype=np.float32)
+    old=np.linspace(0,1,mat.shape[0]);new=np.linspace(0,1,time_bins)
+    fixed=np.stack([np.interp(new,old,mat[:,k]) for k in range(mat.shape[1])],axis=1)
+    v=fixed.reshape(-1)
+    norm=float(np.linalg.norm(v))
+    if norm<1e-6:return None
+    return (v/norm).astype(np.float32)
+
+def acoustic_score(a,b):
+    if a is None or b is None:return None
+    sim=float(np.dot(a,b))
+    # Conservative mapping: same reference ~=100; cross-speaker same syllable should
+    # still score well after per-frame spectral normalization.
+    return int(round(max(0,min(100,100*(sim-.20)/.80))))
+
+def extract_acoustic_segments(samples,sr,rows,rec_times,rec_durations,duration):
+    out={}
+    for row in rows:
+        ri=row.get("rec_index");ti=row["target_index"]
+        if ri is None or ri>=len(rec_times):continue
+        st=max(0.0,float(rec_times[ri])-.02)
+        if ri<len(rec_durations) and rec_durations[ri] and rec_durations[ri]>.035:
+            en=min(duration,st+float(rec_durations[ri])+.04)
+        else:
+            en=min(duration,(rec_times[ri+1] if ri+1<len(rec_times) else duration)+.02)
+        if en-st<.08:en=min(duration,st+.18)
+        dur=max(.08,en-st)
+        onset_end=min(en,st+.42*dur)
+        rhyme_start=max(st,en-.72*dur)
+        out[ti]={
+            "whole":acoustic_fingerprint(samples,sr,st,en),
+            "initial":acoustic_fingerprint(samples,sr,st,onset_end),
+            "final":acoustic_fingerprint(samples,sr,rhyme_start,en),
+            "start":st,"end":en
+        }
+    return out
+
 def f0_track(samples,sr,start,end):
     a=max(0,int(start*sr));b=min(len(samples),int(end*sr))
     x=samples[a:b]
@@ -317,6 +398,7 @@ def build_reference(line_id):
     rows,_=align(line["chars"],line["jyutping"],tokens,rec_jp)
     pitch_raw=extract_pitch_segments(samples,sr,rows,times,duration,False)
     pitch,_=pitch_features(pitch_raw)
+    acoustic=extract_acoustic_segments(samples,sr,rows,times,durs,duration)
     baseline={}
     for row in rows:
         ti=row["target_index"];ri=row["rec_index"]
@@ -331,7 +413,7 @@ def build_reference(line_id):
             "direct_match":bool(row.get("segmental_match"))
         }
     profile={"wav":raw,"recognized":"".join(tokens),"recognized_jyutping":" ".join(x or "?" for x in rec_jp),
-             "baseline":baseline,"pitch":pitch}
+             "baseline":baseline,"pitch":pitch,"acoustic":acoustic}
     with reference_lock:REFERENCE[line_id]=profile
     print(f"[reference] line{line_id+1} asr={profile['recognized']} jp={profile['recognized_jyutping']} pitch={len(pitch)}/{len(line['chars'])}",flush=True)
     return profile
@@ -393,9 +475,12 @@ def evaluate(raw,line_id,reference=None):
     rec_jp=recognized_jyutping(tokens)
     rows,insertions=align(line["chars"],line["jyutping"],tokens,rec_jp)
     _,tones=tone_analysis(samples,sr,line,rows,times,duration,reference)
+    user_acoustic=extract_acoustic_segments(samples,sr,rows,times,durs,duration)
 
-    items=[];accepted_matches=0;uncertain_count=0
+    items=[];rated_count=0;stable=0;attention=0;unrated=0
     refbase=reference.get("baseline",{}) if reference else {}
+    refac=reference.get("acoustic",{}) if reference else {}
+
     for row in rows:
         ti=row["target_index"];ri=row["rec_index"]
         heard=tokens[ri] if ri is not None and ri<len(tokens) else ""
@@ -403,89 +488,99 @@ def evaluate(raw,line_id,reference=None):
         user_lp=lps[ri] if ri is not None and ri<len(lps) else None
         user_dur=durs[ri] if ri is not None and ri<len(durs) else None
         baseline=refbase.get(ti,{})
+        ua=user_acoustic.get(ti,{})
+        ra=refac.get(ti,{})
+        whole_ac=acoustic_score(ua.get("whole"),ra.get("whole"))
+        init_ac=acoustic_score(ua.get("initial"),ra.get("initial"))
+        final_ac=acoustic_score(ua.get("final"),ra.get("final"))
+
+        direct=bool(row.get("segmental_match"))
         baseline_confusion=bool(
-            ri is not None and not row.get("segmental_match") and row.get("rec_base") and
+            ri is not None and not direct and row.get("rec_base") and
             baseline.get("base") and row.get("rec_base")==baseline.get("base") and
             not baseline.get("direct_match",False)
         )
-        accepted=bool(row.get("segmental_match") or baseline_confusion)
-        if accepted:accepted_matches+=1
-        if baseline_confusion:uncertain_count+=1
+
+        # Second judge: reference-audio spectral shape. This is specifically used
+        # to resolve positions where free ASR is known to be unreliable.
+        acoustic_accept=whole_ac is not None and whole_ac>=58
+        acoustic_reject=whole_ac is not None and whole_ac<=38
+        accepted=bool(direct or acoustic_accept)
 
         acoustic=confidence_score(user_lp,baseline.get("log_prob"))
         timing=duration_score(user_dur,baseline.get("duration"))
-        tone=tones.get(ti) if accepted else None
+        tone=tones.get(ti) if (accepted or baseline_confusion) else None
         tone_score=tone["tone_score"] if tone else None
 
-        initial_match=bool(row.get("initial_match"))
-        final_match=bool(row.get("final_match"))
-        if row.get("segmental_match"):
-            initial_match=True;final_match=True
+        # Initial/final scores blend phonetic alignment with direct acoustic
+        # comparison to the fixed reference syllable.
+        initial_match=bool(row.get("initial_match")) or direct
+        final_match=bool(row.get("final_match")) or direct
+        asr_initial=100 if initial_match else 18
+        asr_final=100 if final_match else 18
+        initial_score=(
+            round(.35*asr_initial+.65*init_ac) if init_ac is not None
+            else (asr_initial if not baseline_confusion else None)
+        )
+        final_score=(
+            round(.30*asr_final+.70*final_ac) if final_ac is not None
+            else (asr_final if not baseline_confusion else None)
+        )
 
-        initial_score=component_score(initial_match,acoustic,baseline_confusion)
-        final_score=component_score(final_match,acoustic,baseline_confusion)
-
-        if baseline_confusion:
-            segmental_score=acoustic if acoustic is not None else 82
-        elif row.get("segmental_match"):
-            segmental_score=acoustic if acoustic is not None else 100
-        else:
-            pieces=[x for x in (initial_score,final_score) if x is not None]
-            segmental_score=round(sum(pieces)/len(pieces)) if pieces else 0
-
-        tone_component=tone_score if tone_score is not None else (75 if accepted else 0)
-        timing_component=timing if timing is not None else 85
-        score=round(.50*segmental_score+.40*tone_component+.10*timing_component)
-
-        if not accepted and acoustic is not None and acoustic>=72:
-            status="wrong";certainty="high"
-        elif not accepted:
-            status="uncertain";certainty="low";uncertain_count+=1
-        elif baseline_confusion:
-            status="uncertain";certainty="low"
-        elif tone_score is not None and tone_score<70:
-            status="tone";certainty="high"
-        elif acoustic is not None and acoustic<62:
-            status="segmental";certainty="medium"
-        else:
-            status="ok";certainty="high"
+        unresolved=bool(
+            not direct and not acoustic_accept and not acoustic_reject and
+            (baseline_confusion or whole_ac is None or (38<whole_ac<58))
+        )
 
         issues=[]
-        if not baseline_confusion:
-            if initial_score is not None and initial_score<65:issues.append("聲母")
-            if final_score is not None and final_score<65:issues.append("韻母")
-        if tone_score is not None and tone_score<70:issues.append("聲調")
-        if acoustic is not None and acoustic<62 and not issues:issues.append("音節清晰度")
-        if timing is not None and timing<55:issues.append("時長")
+        if unresolved:
+            status="unrated";certainty="system";score=None;unrated+=1
+        else:
+            rated_count+=1
+            if initial_score is not None and initial_score<58:issues.append("聲母")
+            if final_score is not None and final_score<58:issues.append("韻母")
+            if tone_score is not None and tone_score<70:issues.append("聲調")
+            if timing is not None and timing<50:issues.append("時長")
+
+            if acoustic_reject and not direct:
+                status="segmental";certainty="high"
+            elif "聲母" in issues or "韻母" in issues:
+                status="segmental";certainty="medium"
+            elif "聲調" in issues:
+                status="tone";certainty="high"
+            else:
+                status="ok";certainty="high"
+
+            segmental_parts=[x for x in (initial_score,final_score,whole_ac) if x is not None]
+            segmental_score=round(sum(segmental_parts)/len(segmental_parts)) if segmental_parts else (100 if direct else 60)
+            tone_component=tone_score if tone_score is not None else 78
+            timing_component=timing if timing is not None else 85
+            score=round(.50*segmental_score+.40*tone_component+.10*timing_component)
+            if status=="ok":stable+=1
+            else:attention+=1
 
         items.append({
             "index":ti,"char":line["chars"][ti],"jyutping":line["jyutping"][ti],
             "expected_tone":line["tones"][ti],"heard":heard,"heard_jyutping":heard_jp,
-            "same_char":bool(row.get("same_char")),"segmental_match":bool(row.get("segmental_match")),
-            "accepted_match":accepted,"baseline_confusion":baseline_confusion,"certainty":certainty,
-            "homophone":bool(row.get("homophone")),
+            "same_char":bool(row.get("same_char")),"segmental_match":direct,
+            "acoustic_accept":acoustic_accept,"baseline_confusion":baseline_confusion,
+            "certainty":certainty,"homophone":bool(row.get("homophone")),
             "target_initial":row.get("target_initial"),"target_final":row.get("target_final"),
             "heard_initial":row.get("rec_initial"),"heard_final":row.get("rec_final"),
             "initial_score":initial_score,"final_score":final_score,
+            "reference_acoustic_score":whole_ac,
             "acoustic_score":acoustic,"duration_score":timing,
-            "asr_log_prob":round(user_lp,3) if user_lp is not None else None,
-            "reference_log_prob":round(float(baseline.get("log_prob")),3) if baseline.get("log_prob") is not None else None,
-            "duration":round(user_dur,3) if user_dur is not None else None,
-            "reference_duration":round(float(baseline.get("duration")),3) if baseline.get("duration") is not None else None,
             "status":status,"issues":issues,"score":score,"tone":tone
         })
 
-    overall=round(sum(x["score"] for x in items)/len(items)) if items else 0
-    accepted_accuracy=round(100*accepted_matches/len(line["chars"]))
-    stable=sum(1 for x in items if x["status"]=="ok")
-    attention=sum(1 for x in items if x["status"] in ("wrong","tone","segmental"))
+    scored=[x["score"] for x in items if x["score"] is not None]
+    overall=round(sum(scored)/len(scored)) if scored else None
+    coverage=round(100*rated_count/len(line["chars"])) if line["chars"] else 0
     return {
-        "ok":True,"version":"phoneme-eval-2","line_id":line_id,"target":line["text"],
+        "ok":True,"version":"acoustic-fallback-1","line_id":line_id,"target":line["text"],
         "recognized":"".join(tokens),"recognized_jyutping":" ".join(x or "?" for x in rec_jp),
-        "syllable_accuracy":accepted_accuracy,"overall_score":overall,
-        "stable_count":stable,"attention_count":attention,"uncertain_count":uncertain_count,
-        "has_token_log_probs":any(x is not None for x in lps),
-        "has_token_durations":any(x is not None for x in durs),
+        "overall_score":overall,"coverage":coverage,
+        "stable_count":stable,"attention_count":attention,"unrated_count":unrated,
         "items":items,
         "insertions":[{"char":tokens[i],"jyutping":rec_jp[i] if i<len(rec_jp) else None} for i in insertions if i<len(tokens)]
     }
@@ -528,7 +623,7 @@ def background_selftest():
         try:
             ref=build_reference(i)
             ev=evaluate(ref["wav"],i,ref)
-            print(f"[selftest] line{i+1} target={line['text']} asr={ev['recognized']} accepted={ev['syllable_accuracy']} stable={ev['stable_count']} attention={ev['attention_count']} uncertain={ev['uncertain_count']} score={ev['overall_score']} logp={ev['has_token_log_probs']} dur={ev['has_token_durations']}",flush=True)
+            print(f"[selftest] line{i+1} target={line['text']} asr={ev['recognized']} coverage={ev['coverage']} stable={ev['stable_count']} attention={ev['attention_count']} unrated={ev['unrated_count']} score={ev['overall_score']}",flush=True)
         except Exception as e:
             print(f"[selftest] line{i+1} deferred: {type(e).__name__}: {e}",flush=True)
 
