@@ -7,7 +7,8 @@ The legacy category arrays remain in the response until the old order UI is gone
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections import defaultdict
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -27,6 +28,90 @@ class RuleContext:
 
 Rule = Callable[[RuleContext], list[Finding]]
 _RULES: dict[str, Rule] = {}
+
+
+def actionable_row_counts(
+    orders: Iterable[Order], *, include_match_results: bool = True
+) -> dict[int, int]:
+    """Count unique actionable product rows and attribute them to their source PO."""
+    rows = list(orders)
+    visible_ids = {order.id for order in rows}
+    keys: dict[int, set[tuple[Any, ...]]] = defaultdict(set)
+    structured_ids: set[int] = set()
+
+    for owner in rows:
+        data = owner.anomaly_data or {}
+        findings = data.get("findings")
+        if isinstance(findings, list):
+            structured_ids.add(owner.id)
+            for index, item in enumerate(findings):
+                if not isinstance(item, dict) or item.get("severity") not in {"error", "blocking"}:
+                    continue
+                identity = _actionable_row_identity(item, fallback=index)
+                if identity is None:
+                    continue
+                source_order_id = _visible_source_order_id(
+                    item.get("source_order_id"), owner.id, visible_ids
+                )
+                if source_order_id is not None:
+                    keys[source_order_id].add(identity)
+
+        if not include_match_results:
+            continue
+        match_results = owner.match_results
+        if isinstance(match_results, list):
+            structured_ids.add(owner.id)
+            for index, result in enumerate(match_results):
+                if not isinstance(result, dict) or result.get("match_status") == "matched":
+                    continue
+                identity = _actionable_row_identity(result, fallback=index)
+                if identity is None:
+                    continue
+                source_order_id = _visible_source_order_id(
+                    result.get("source_order_id"), owner.id, visible_ids
+                )
+                if source_order_id is not None:
+                    keys[source_order_id].add(identity)
+
+    result: dict[int, int] = {}
+    for order in rows:
+        if keys[order.id] or order.id in structured_ids:
+            result[order.id] = len(keys[order.id])
+            continue
+        data = order.anomaly_data or {}
+        result[order.id] = (
+            int(data.get("error_count") or 0)
+            + int(data.get("blocking_count") or 0)
+        )
+        if "requires_human_review" not in data:
+            result[order.id] = int(data.get("total_anomalies") or 0)
+    return result
+
+
+def _visible_source_order_id(value: Any, owner_id: int, visible_ids: set[int]) -> int | None:
+    if value is None:
+        return owner_id
+    try:
+        source_order_id = int(value)
+    except (TypeError, ValueError):
+        return None
+    return source_order_id if source_order_id in visible_ids else None
+
+
+def _actionable_row_identity(item: dict[str, Any], *, fallback: int) -> tuple[Any, ...] | None:
+    row_identity = (
+        item.get("line_id")
+        or item.get("source_line_id")
+        or item.get("arrangement_line_id")
+        or item.get("source_line")
+        or item.get("line_number")
+        or item.get("row_index")
+    )
+    if row_identity is not None:
+        return ("row", str(row_identity))
+    if item.get("scope") == "row" or item.get("match_status") != "matched":
+        return ("unidentified-row", fallback)
+    return None
 
 
 def register_rule(code: str, rule: Rule, *, replace: bool = False) -> None:
@@ -437,6 +522,7 @@ def _deduplicate(items: list[Finding]) -> list[Finding]:
 
 __all__ = [
     "RuleContext",
+    "actionable_row_counts",
     "finding",
     "list_rules",
     "register_rule",

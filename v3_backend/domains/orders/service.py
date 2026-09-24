@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 from sqlalchemy.orm.attributes import flag_modified
 
 from domains.document import repository as doc_repo
@@ -649,6 +649,20 @@ def _to_detail(order: Order, db: Session, user_id: int) -> OrderDetail:
     the v2 frontend (which reads `order_metadata.po_number` etc.) keeps working.
     """
     detail = OrderDetail.model_validate(order)
+    related_orders = [order]
+    if order.group_id is not None:
+        related_query = db.query(Order).options(load_only(
+            Order.id,
+            Order.user_id,
+            Order.group_id,
+            Order.anomaly_data,
+            Order.match_results,
+        )).filter(Order.group_id == order.group_id)
+        requesting_user = identity_service.get_business_user(db, user_id)
+        if requesting_user.role != "superadmin":
+            related_query = related_query.filter(Order.user_id == user_id)
+        related_orders = related_query.all()
+    detail.actionable_count = anomaly.actionable_row_counts(related_orders).get(order.id, 0)
     if not identity_service.has_capability(db, user_id, CAP_FINANCIALS_VIEW):
         detail.financial_data = None
     flat = _flat_metadata(order, db)

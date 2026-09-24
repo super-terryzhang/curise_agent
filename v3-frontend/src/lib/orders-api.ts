@@ -385,6 +385,7 @@ export interface Order {
   match_results: MatchResult[] | null;
   match_statistics: MatchStatistics | null;
   anomaly_data: AnomalyData | null;
+  actionable_count?: number;
   // Legacy JSON blob from the deleted /financial-analysis endpoint.
   // Surfaced for completeness on historical orders; new code reads
   // /financials instead. See `getOrderFinancials()`.

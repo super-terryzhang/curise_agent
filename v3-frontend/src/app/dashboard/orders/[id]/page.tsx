@@ -26,7 +26,7 @@ import {
   type PortItem,
 } from "@/lib/orders-api";
 import { getArrangementWorkspace, type ArrangementWorkspace } from "@/lib/order-groups-api";
-import { formatBusinessDateTime, type BusinessTone } from "@/lib/order-workspace-view";
+import { formatBusinessDateTime, orderDetailStatus, type BusinessTone } from "@/lib/order-workspace-view";
 
 type Tab = "products" | "info" | "source" | "history";
 type ResultFilter = "all" | "matched" | "not_matched";
@@ -45,14 +45,6 @@ function StatusText({ label, tone }: { label: string; tone: BusinessTone }) {
 
 function Panel({ title, aside, children, className = "" }: { title: string; aside?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return <section className={`overflow-hidden rounded-[3px] border bg-background ${className}`}><div className="flex min-h-9 items-center gap-3 border-b bg-slate-50 px-3 py-1.5 dark:bg-slate-900/50"><h2 className="text-sm font-semibold">{title}</h2>{aside ? <div className="ml-auto">{aside}</div> : null}</div>{children}</section>;
-}
-
-function orderStatus(order: Order): { label: string; tone: BusinessTone } {
-  if (order.status === "error") return { label: "处理失败", tone: "danger" };
-  if (["uploading", "extracting", "matching"].includes(order.status)) return { label: "自动处理中", tone: "progress" };
-  const attention = (order.anomaly_data?.error_count || 0) + (order.anomaly_data?.blocking_count || 0) + (order.match_statistics?.not_matched || 0);
-  if (order.anomaly_data?.requires_human_review || attention > 0) return { label: `需要处理${attention ? ` ${attention} 项` : ""}`, tone: "warning" };
-  return { label: "检查完成", tone: "success" };
 }
 
 function rowFinding(order: Order, result: MatchResult, index: number) {
@@ -189,7 +181,7 @@ export default function OrderDetailPage() {
   const parentName = workspace?.arrangement.ship || "未分类 PO";
   const selectedResult = selectedRow != null ? matchRows[selectedRow] : undefined;
   const selectedFinding = selectedResult && selectedRow != null ? rowFinding(order, selectedResult, selectedRow) : undefined;
-  const status = orderStatus(order);
+  const status = orderDetailStatus(order);
   const matched = order.match_statistics?.matched ?? matchRows.filter((item) => item.match_status === "matched").length;
   const unmatched = order.match_statistics?.not_matched ?? matchRows.length - matched;
   const findings = order.anomaly_data?.findings || [];
@@ -204,7 +196,7 @@ export default function OrderDetailPage() {
 
         <Panel title="PO 基本信息"><div className="grid grid-cols-2 md:grid-cols-5">{[
           ["所属供船订单", parentName], ["装船日期", order.loading_date || String(metadata.loading_date || "待确认")], ["目标港口", portName], ["接收文件", order.filename], ["接收时间", formatBusinessDateTime(order.created_at)],
-          ["商品数量", `${order.product_count || order.products?.length || 0} 项`], ["匹配成功", `${matched} 项`], ["未匹配", `${unmatched} 项`], ["数据检查", `${Math.max((order.product_count || 0) - (order.anomaly_data?.total_anomalies || 0), 0)}/${order.product_count || 0} 通过`], ["最后处理", formatBusinessDateTime(order.processed_at || order.updated_at)],
+          ["商品数量", `${order.product_count || order.products?.length || 0} 项`], ["匹配成功", `${matched} 项`], ["未匹配", `${unmatched} 项`], ["数据检查", `${Math.max((order.product_count || 0) - (order.actionable_count ?? order.anomaly_data?.total_anomalies ?? 0), 0)}/${order.product_count || 0} 通过`], ["最后处理", formatBusinessDateTime(order.processed_at || order.updated_at)],
         ].map(([label, value]) => <div key={label} className="min-h-[70px] border-b border-r px-4 py-2.5 md:[&:nth-child(5n)]:border-r-0 md:[&:nth-last-child(-n+5)]:border-b-0"><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1.5 truncate text-sm font-medium" title={value}>{value}</div></div>)}</div></Panel>
 
         <div className="flex border-b text-sm">{([
@@ -218,7 +210,7 @@ export default function OrderDetailPage() {
             </tbody></table></div>
           </Panel>
           <div className="space-y-3">
-            <Panel title={`异常详情（${findings.length || unmatched}）`}>
+            <Panel title={`待处理商品（${order.actionable_count ?? (findings.length || unmatched)}）`}>
               {selectedResult ? <div className="text-xs"><dl className="divide-y">{[
                 ["异常类型", selectedResult.match_status === "matched" ? selectedFinding?.code || "数据检查" : "商品未匹配"], ["发生位置", `第 ${(selectedRow || 0) + 1} 行`], ["原始名称", selectedResult.product_name || "—"], ["原因", selectedFinding?.message || selectedResult.match_reason || "检查通过"], ["处理状态", selectedResult.match_status === "matched" && !selectedFinding ? "无需处理" : "等待人工确认"],
               ].map(([label, value]) => <div key={label} className="grid grid-cols-[88px_1fr]"><dt className="border-r bg-slate-50 px-3 py-2 text-muted-foreground dark:bg-slate-900/40">{label}</dt><dd className="px-3 py-2 leading-5">{value}</dd></div>)}</dl><div className="grid grid-cols-2 gap-2 border-t p-3"><Button size="sm" disabled={busy} onClick={() => void runAction(() => rematchOrder(order.id), "已重新匹配")}>重新匹配</Button><Button variant="outline" size="sm" onClick={openEdit}>编辑 PO 数据</Button></div></div> : <div className="px-3 py-6 text-xs text-muted-foreground">选择一行查看数据与异常详情。</div>}

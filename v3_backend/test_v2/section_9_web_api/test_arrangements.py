@@ -153,6 +153,72 @@ def test_arrangement_summary_surfaces_orders_requiring_human_review(client, db):
     assert summary['anomaly_count'] == 3
 
 
+def test_arrangement_counts_unique_actionable_rows_under_their_source_po(client, db):
+    user = seed_user(db, email='actionable-rows@test')
+    existing = order(db, user.id, po_number='PO-EXISTING', product_count=2)
+    latest = order(
+        db,
+        user.id,
+        po_number='PO-LATEST',
+        product_count=1,
+        match_statistics={'total': 1, 'matched': 0, 'not_matched': 1},
+        match_results=[{
+            'source_order_id': None,
+            'source_line_id': 'latest-1',
+            'product_name': 'RED BULL',
+            'match_status': 'not_matched',
+        }],
+    )
+    db.flush()
+    latest.match_results[0]['source_order_id'] = latest.id
+    latest.anomaly_data = {
+        'requires_human_review': True,
+        'error_count': 5,
+        'blocking_count': 0,
+        'findings': [
+            {
+                'code': 'RFQ_ROW_EXCLUDED', 'severity': 'error', 'scope': 'row',
+                'source_order_id': existing.id, 'line_id': 'existing-1',
+            },
+            {
+                'code': 'RFQ_ROW_EXCLUDED', 'severity': 'error', 'scope': 'row',
+                'source_order_id': existing.id, 'line_id': 'existing-2',
+            },
+            {
+                'code': 'PRODUCT_NOT_MATCHED', 'severity': 'error', 'scope': 'row',
+                'source_order_id': latest.id, 'line_id': 'latest-1',
+            },
+            {
+                'code': 'EXACT_UNIQUE_MATCH_REQUIRED', 'severity': 'error', 'scope': 'row',
+                'line_id': 'latest-1',
+            },
+            {
+                'code': 'RFQ_ROW_EXCLUDED', 'severity': 'error', 'scope': 'row',
+                'source_order_id': latest.id, 'line_id': 'latest-1',
+            },
+        ],
+    }
+    db.commit()
+    regroup(db, apply=True)
+
+    headers = login(client, 'actionable-rows@test')
+    listing = client.get('/api/order-groups/arrangements', headers=headers).json()
+    arrangement = listing['arrangements'][0]
+    counts = {item['po_number']: item['anomaly_count'] for item in arrangement['orders']}
+
+    assert counts == {'PO-EXISTING': 2, 'PO-LATEST': 1}
+
+    workspace = client.get(
+        f"/api/order-groups/arrangements/{arrangement['id']}", headers=headers
+    ).json()
+    assert workspace['summary']['anomaly_count'] == 3
+
+    detail = client.get(f'/api/orders/{latest.id}', headers=headers).json()
+    assert detail['actionable_count'] == 1
+    existing_detail = client.get(f'/api/orders/{existing.id}', headers=headers).json()
+    assert existing_detail['actionable_count'] == 2
+
+
 def test_removed_po_marks_latest_inquiry_membership_as_changed(client, db):
     user = seed_user(db, email='membership@test')
     first = order(db, user.id, po_number='PO-1')
