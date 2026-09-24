@@ -7,15 +7,24 @@ const lessons=document.querySelector("#lessons"),health=document.querySelector("
 let active=null,urls={};
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 function render(){
- lessons.innerHTML=SONG.map((l,i)=>'<section class="card" id="line'+i+'"><div class="lineNo">第 '+(i+1)+' 句</div><div class="lyric">'+esc(l.text)+'</div><div class="syls">'+[...l.text].map((ch,j)=>'<div class="syl"><b>'+esc(ch)+'</b><code>'+l.jp[j]+'</code></div>').join("")+'</div><div class="buttons"><button class="listen" data-i="'+i+'">▶ 標準粵語</button><button class="record" data-i="'+i+'">● 跟讀並評分</button></div><audio class="reference hidden" controls></audio><audio class="mine hidden" controls></audio><div class="status">準備好後先聽，再跟讀整句。</div><div class="result hidden"></div></section>').join("");
+ lessons.innerHTML=SONG.map((l,i)=>'<section class="card" id="line'+i+'"><div class="lineNo">第 '+(i+1)+' 句</div><div class="lyric">'+esc(l.text)+'</div><div class="syls">'+[...l.text].map((ch,j)=>'<div class="syl"><b>'+esc(ch)+'</b><code>'+l.jp[j]+'</code></div>').join("")+'</div><div class="speedRow"><label>朗讀速度</label><select class="speechSpeed"><option value="0.60" selected>教學慢速 · 0.60×</option><option value="0.75">清晰 · 0.75×</option><option value="0.88">自然 · 0.88×</option></select></div><div class="buttons"><button class="listen" data-i="'+i+'">▶ 標準粵語</button><button class="record" data-i="'+i+'">● 跟讀並評分</button></div><audio class="reference hidden" controls></audio><audio class="mine hidden" controls></audio><div class="status">預設使用教學慢速，先把每個字聽清楚，再跟讀整句。</div><div class="result hidden"></div></section>').join("");
  document.querySelectorAll(".listen").forEach(b=>b.onclick=()=>listen(+b.dataset.i,b));
  document.querySelectorAll(".record").forEach(b=>b.onclick=()=>toggleRecord(+b.dataset.i,b));
 }
 function card(i){return document.querySelector("#line"+i);}
 async function listen(i,btn){
- const c=card(i),st=c.querySelector(".status"),a=c.querySelector(".reference");btn.disabled=true;st.textContent="正在生成標準粵語…";
- try{const r=await fetch("/api/tts",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({text:SONG[i].text,speed:.88})});if(!r.ok)throw new Error("TTS HTTP "+r.status);const blob=await r.blob();if(urls["ref"+i])URL.revokeObjectURL(urls["ref"+i]);urls["ref"+i]=URL.createObjectURL(blob);a.src=urls["ref"+i];a.classList.remove("hidden");await a.play();st.textContent="正在播放標準粵語。";}
- catch(e){st.textContent="標準音錯誤："+e.message;}finally{btn.disabled=false;}
+ const c=card(i),st=c.querySelector(".status"),a=c.querySelector(".reference"),speed=Number(c.querySelector(".speechSpeed").value||.60);
+ btn.disabled=true;st.textContent="正在準備標準粵語…";
+ try{
+  const r=await fetch("/api/tts",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({text:SONG[i].text,speed})});
+  if(!r.ok)throw new Error("TTS HTTP "+r.status);
+  const blob=await r.blob();
+  if(urls["ref"+i])URL.revokeObjectURL(urls["ref"+i]);
+  urls["ref"+i]=URL.createObjectURL(blob);a.src=urls["ref"+i];a.classList.remove("hidden");
+  await a.play();
+  const label=speed<=.61?"教學慢速":speed<=.76?"清晰速度":"自然速度";
+  st.textContent="正在播放"+label+"（"+speed.toFixed(2)+"×）。";
+ }catch(e){st.textContent="標準音錯誤："+e.message;}finally{btn.disabled=false;}
 }
 async function toggleRecord(i,btn){
  if(active){if(active.i===i){active.mr.stop();}return;}
