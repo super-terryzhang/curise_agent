@@ -34,52 +34,9 @@ const PAGE = `<!doctype html>
 <p class="note">標準音：Cantonese.ai v6 TTS（用粵拼約束發音）。評分：Cantonese.ai Pronunciation Score。聲調診斷：把 expectedJyutping 與 transcribedJyutping 的每個音節拆成「音節主體 + tone 1–6」後比較。錄音只在記憶體中轉發，不落盤；API key 只存在 browser sessionStorage。</p></section>
 </main><audio id="audio"></audio>
 
-<script>
-var $=function(s){return document.querySelector(s)}, jy='', list=[], rec=null;
-var key=$('#key'), txt=$('#text'), status=$('#status'), btnA=$('#analyse'), btnL=$('#listen'), btnR=$('#record');
-try{key.value=sessionStorage.getItem('cai-key')||''}catch(e){} key.oninput=function(){try{sessionStorage.setItem('cai-key',key.value)}catch(e){}};
-function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
-async function api(url,body){
- var c=new AbortController(),timer=setTimeout(function(){c.abort()},10000),r;
- try{r=await fetch(url,{method:'POST',headers:{'content-type':'application/json','x-cantonese-key':key.value.trim()},body:JSON.stringify(body),signal:c.signal})}
- catch(e){if(e&&e.name==='AbortError')throw Error('請求超時（10 秒）');throw e}finally{clearTimeout(timer)}
- var d=await r.json().catch(function(){return {error:'Invalid response'}}); if(!r.ok)throw Error(d.error||('HTTP '+r.status)); return d;
-}
-async function analyse(){
- btnA.disabled=true; status.textContent='分析中…';
- try{var d=await api('/api/jyutping',{text:txt.value});jy=d.jyutping;list=d.list||[];$('#syllables').innerHTML=list.map(function(x){return '<div class="sy"><b>'+esc(x.character||'')+'</b><small>'+esc(x.jyutping||'—')+'</small></div>'}).join('');btnL.disabled=false;btnR.disabled=false;status.textContent='標準粵拼：'+jy}
- catch(e){status.textContent='錯誤：'+e.message}finally{btnA.disabled=false}
-}
-btnA.onclick=analyse; txt.onchange=analyse;
-btnL.onclick=async function(){
- if(!key.value.trim()){status.textContent='先填 Cantonese.ai API key。';return}
- btnL.disabled=true;status.textContent='正在生成標準音…';
- try{var r=await fetch('/api/tts',{method:'POST',headers:{'content-type':'application/json','x-cantonese-key':key.value.trim()},body:JSON.stringify({text:txt.value,jyutping:jy})});if(!r.ok){var d=await r.json();throw Error(d.error||'TTS failed')}var b=await r.blob(),u=URL.createObjectURL(b),a=$('#audio');a.src=u;await a.play();a.onended=function(){URL.revokeObjectURL(u)};status.textContent='播放完成。現在跟讀一次。'}catch(e){status.textContent='TTS 錯誤：'+e.message}finally{btnL.disabled=false}
-};
-btnR.onclick=async function(){if(rec){stopRec();return}if(!key.value.trim()){status.textContent='先填 Cantonese.ai API key。';return}try{await startRec()}catch(e){status.textContent='麥克風錯誤：'+e.message}};
-async function startRec(){
- var stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:false}});
- var ctx=new AudioContext(),src=ctx.createMediaStreamSource(stream),proc=ctx.createScriptProcessor(4096,1,1),chunks=[];
- proc.onaudioprocess=function(e){chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))};src.connect(proc);proc.connect(ctx.destination);
- rec={stream:stream,ctx:ctx,src:src,proc:proc,chunks:chunks};btnR.textContent='■ 停止並評分';status.textContent='正在錄音…請正常說，不要唱。';
-}
-async function stopRec(){
- var r=rec;rec=null;r.proc.disconnect();r.src.disconnect();r.stream.getTracks().forEach(function(t){t.stop()});var rate=r.ctx.sampleRate;await r.ctx.close();
- var n=r.chunks.reduce(function(a,c){return a+c.length},0),samples=new Float32Array(n),o=0;r.chunks.forEach(function(c){samples.set(c,o);o+=c.length});
- var wav=encodeWav(samples,rate),blob=new Blob([wav],{type:'audio/wav'});btnR.textContent='● 開始跟讀';status.textContent='正在評分…';
- try{var b64=await toB64(blob),d=await api('/api/score',{text:txt.value,audioBase64:b64});render(d);status.textContent='評分完成。可以再試一次。'}catch(e){status.textContent='評分錯誤：'+e.message}
-}
-function encodeWav(s,rate){var b=new ArrayBuffer(44+s.length*2),v=new DataView(b),w=function(o,x){for(var i=0;i<x.length;i++)v.setUint8(o+i,x.charCodeAt(i))};w(0,'RIFF');v.setUint32(4,36+s.length*2,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,s.length*2,true);for(var i=0,o=44;i<s.length;i++,o+=2){var x=Math.max(-1,Math.min(1,s[i]));v.setInt16(o,x<0?x*32768:x*32767,true)}return b}
-async function toB64(blob){var a=await blob.arrayBuffer(),u=new Uint8Array(a),str='',step=32768;for(var i=0;i<u.length;i+=step)str+=String.fromCharCode.apply(null,u.subarray(i,i+step));return btoa(str)}
-function parts(x){var m=String(x||'').match(/^(.*?)([1-6])$/);return {raw:x||'∅',base:m?m[1]:x,tone:m?m[2]:null}}
-function render(d){
- $('#result').classList.remove('hidden');$('#score').textContent=Math.round(d.score||0);var p=$('#pass');p.textContent=d.passed?'發音通過':'需要再練';p.className='badge'+(d.passed?'':' bad');$('#expected').textContent=d.expectedJyutping||'—';$('#heard').textContent=d.transcribedJyutping||'—';
- var a=String(d.expectedJyutping||'').trim().split(/\\s+/).filter(Boolean),b=String(d.transcribedJyutping||'').trim().split(/\\s+/).filter(Boolean),n=Math.max(a.length,b.length),html='',hit=0,total=0;
- for(var i=0;i<n;i++){var e=parts(a[i]),h=parts(b[i]),exact=e.raw===h.raw,base=e.base===h.base,tone=e.tone&&e.tone===h.tone;if(e.tone){total++;if(tone)hit++}var msg=exact?'完全一致':base&&!tone?('音節對，但聲調 '+e.tone+' → '+h.tone):(!a[i]?'多讀':!b[i]?'漏讀':tone?'聲調對，但音節不同':'音節與聲調都有差異');html+='<div class="diag"><code>'+esc(e.raw)+'</code><code class="'+(exact?'ok':'bad')+'">'+esc(h.raw)+'</code><span class="'+(exact?'ok':'bad')+'">'+esc(msg)+'</span></div>'}
- $('#diags').innerHTML=html;$('#tone').textContent=total?Math.round(hit/total*100)+'%':'—';$('#result').scrollIntoView({behavior:'smooth'})
-}
-analyse();
-</script></body></html>`;
+<script src="/app.js?v=20260924b"></script></body></html>`;
+
+const APP_JS = "\nvar $=function(s){return document.querySelector(s)}, jy='', list=[], rec=null;\nvar key=$('#key'), txt=$('#text'), status=$('#status'), btnA=$('#analyse'), btnL=$('#listen'), btnR=$('#record');\ntry{key.value=sessionStorage.getItem('cai-key')||''}catch(e){} key.oninput=function(){try{sessionStorage.setItem('cai-key',key.value)}catch(e){}};\nfunction esc(s){return String(s).replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]})}\nasync function api(url,body){\n var c=new AbortController(),timer=setTimeout(function(){c.abort()},10000),r;\n try{r=await fetch(url,{method:'POST',headers:{'content-type':'application/json','x-cantonese-key':key.value.trim()},body:JSON.stringify(body),signal:c.signal})}\n catch(e){if(e&&e.name==='AbortError')throw Error('請求超時（10 秒）');throw e}finally{clearTimeout(timer)}\n var d=await r.json().catch(function(){return {error:'Invalid response'}}); if(!r.ok)throw Error(d.error||('HTTP '+r.status)); return d;\n}\nasync function analyse(){\n btnA.disabled=true; status.textContent='分析中…';\n try{var d=await api('/api/jyutping',{text:txt.value});jy=d.jyutping;list=d.list||[];$('#syllables').innerHTML=list.map(function(x){return '<div class=\"sy\"><b>'+esc(x.character||'')+'</b><small>'+esc(x.jyutping||'—')+'</small></div>'}).join('');btnL.disabled=false;btnR.disabled=false;status.textContent='標準粵拼：'+jy}\n catch(e){status.textContent='錯誤：'+e.message}finally{btnA.disabled=false}\n}\nbtnA.onclick=analyse; txt.onchange=analyse;\nbtnL.onclick=async function(){\n if(!key.value.trim()){status.textContent='先填 Cantonese.ai API key。';return}\n btnL.disabled=true;status.textContent='正在生成標準音…';\n try{var r=await fetch('/api/tts',{method:'POST',headers:{'content-type':'application/json','x-cantonese-key':key.value.trim()},body:JSON.stringify({text:txt.value,jyutping:jy})});if(!r.ok){var d=await r.json();throw Error(d.error||'TTS failed')}var b=await r.blob(),u=URL.createObjectURL(b),a=$('#audio');a.src=u;await a.play();a.onended=function(){URL.revokeObjectURL(u)};status.textContent='播放完成。現在跟讀一次。'}catch(e){status.textContent='TTS 錯誤：'+e.message}finally{btnL.disabled=false}\n};\nbtnR.onclick=async function(){if(rec){stopRec();return}if(!key.value.trim()){status.textContent='先填 Cantonese.ai API key。';return}try{await startRec()}catch(e){status.textContent='麥克風錯誤：'+e.message}};\nasync function startRec(){\n var stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:false}});\n var ctx=new AudioContext(),src=ctx.createMediaStreamSource(stream),proc=ctx.createScriptProcessor(4096,1,1),chunks=[];\n proc.onaudioprocess=function(e){chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))};src.connect(proc);proc.connect(ctx.destination);\n rec={stream:stream,ctx:ctx,src:src,proc:proc,chunks:chunks};btnR.textContent='■ 停止並評分';status.textContent='正在錄音…請正常說，不要唱。';\n}\nasync function stopRec(){\n var r=rec;rec=null;r.proc.disconnect();r.src.disconnect();r.stream.getTracks().forEach(function(t){t.stop()});var rate=r.ctx.sampleRate;await r.ctx.close();\n var n=r.chunks.reduce(function(a,c){return a+c.length},0),samples=new Float32Array(n),o=0;r.chunks.forEach(function(c){samples.set(c,o);o+=c.length});\n var wav=encodeWav(samples,rate),blob=new Blob([wav],{type:'audio/wav'});btnR.textContent='● 開始跟讀';status.textContent='正在評分…';\n try{var b64=await toB64(blob),d=await api('/api/score',{text:txt.value,audioBase64:b64});render(d);status.textContent='評分完成。可以再試一次。'}catch(e){status.textContent='評分錯誤：'+e.message}\n}\nfunction encodeWav(s,rate){var b=new ArrayBuffer(44+s.length*2),v=new DataView(b),w=function(o,x){for(var i=0;i<x.length;i++)v.setUint8(o+i,x.charCodeAt(i))};w(0,'RIFF');v.setUint32(4,36+s.length*2,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,s.length*2,true);for(var i=0,o=44;i<s.length;i++,o+=2){var x=Math.max(-1,Math.min(1,s[i]));v.setInt16(o,x<0?x*32768:x*32767,true)}return b}\nasync function toB64(blob){var a=await blob.arrayBuffer(),u=new Uint8Array(a),str='',step=32768;for(var i=0;i<u.length;i+=step)str+=String.fromCharCode.apply(null,u.subarray(i,i+step));return btoa(str)}\nfunction parts(x){var m=String(x||'').match(/^(.*?)([1-6])$/);return {raw:x||'∅',base:m?m[1]:x,tone:m?m[2]:null}}\nfunction render(d){\n $('#result').classList.remove('hidden');$('#score').textContent=Math.round(d.score||0);var p=$('#pass');p.textContent=d.passed?'發音通過':'需要再練';p.className='badge'+(d.passed?'':' bad');$('#expected').textContent=d.expectedJyutping||'—';$('#heard').textContent=d.transcribedJyutping||'—';\n var a=String(d.expectedJyutping||'').trim().split(/\\\\s+/).filter(Boolean),b=String(d.transcribedJyutping||'').trim().split(/\\\\s+/).filter(Boolean),n=Math.max(a.length,b.length),html='',hit=0,total=0;\n for(var i=0;i<n;i++){var e=parts(a[i]),h=parts(b[i]),exact=e.raw===h.raw,base=e.base===h.base,tone=e.tone&&e.tone===h.tone;if(e.tone){total++;if(tone)hit++}var msg=exact?'完全一致':base&&!tone?('音節對，但聲調 '+e.tone+' → '+h.tone):(!a[i]?'多讀':!b[i]?'漏讀':tone?'聲調對，但音節不同':'音節與聲調都有差異');html+='<div class=\"diag\"><code>'+esc(e.raw)+'</code><code class=\"'+(exact?'ok':'bad')+'\">'+esc(h.raw)+'</code><span class=\"'+(exact?'ok':'bad')+'\">'+esc(msg)+'</span></div>'}\n $('#diags').innerHTML=html;$('#tone').textContent=total?Math.round(hit/total*100)+'%':'—';$('#result').scrollIntoView({behavior:'smooth'})\n}\nstatus.textContent='前端已載入。請按「拆成粵拼」開始。'; btnA.disabled=false;";
 
 function send(res,status,body,type){res.writeHead(status,{'content-type':type||'application/json; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});res.end(body)}
 function js(res,status,obj){send(res,status,JSON.stringify(obj),'application/json; charset=utf-8')}
@@ -91,6 +48,7 @@ function err(d,f){return (d&&((d.error&&d.error.message)||d.message||d.error))||
 http.createServer(async function(req,res){
  var u=new URL(req.url,'http://localhost'); console.log('[request]',req.method,u.pathname);
  if(req.method==='GET'&&u.pathname==='/'){return send(res,200,PAGE,'text/html; charset=utf-8')}
+ if(req.method==='GET'&&u.pathname==='/app.js'){return send(res,200,APP_JS,'application/javascript; charset=utf-8')}
  if(req.method==='GET'&&u.pathname==='/api/health'){return js(res,200,{ok:true})}
  if(req.method!=='POST'||!u.pathname.startsWith('/api/'))return js(res,404,{error:'Not found'});
  var d;try{d=await body(req)}catch(e){return js(res,400,{error:'Bad request'})}
