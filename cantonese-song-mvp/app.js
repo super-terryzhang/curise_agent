@@ -42,30 +42,34 @@ async function evaluate(i,blob){
  const c=card(i),st=c.querySelector(".status"),mine=c.querySelector(".mine"),result=c.querySelector(".result");st.textContent="正在做逐字粵語 ASR + 聲調分析…";
  if(urls["mine"+i])URL.revokeObjectURL(urls["mine"+i]);urls["mine"+i]=URL.createObjectURL(blob);mine.src=urls["mine"+i];mine.classList.remove("hidden");
  try{
-  const wav=await wav16k(blob),r=await fetch("/api/evaluate?line="+i,{method:"POST",headers:{"content-type":"audio/wav"},body:wav}),d=await r.json();if(!r.ok)throw new Error(d.error||("HTTP "+r.status));showResult(i,d);st.textContent="評估完成。評估完成。每個音節都可點開看聲母、韻母、聲調、清晰度與時長。";
+  const wav=await wav16k(blob),r=await fetch("/api/evaluate?line="+i,{method:"POST",headers:{"content-type":"audio/wav"},body:wav}),d=await r.json();if(!r.ok)throw new Error(d.error||("HTTP "+r.status));showResult(i,d);st.textContent="評估完成。評估完成。只有有足夠證據的音節才會計分；系統不確定的位置不扣分。";
  }catch(e){st.textContent="評估錯誤："+e.message;}
 }
 function showResult(i,d){
  const c=card(i),box=c.querySelector(".result");box.classList.remove("hidden");
  const attention=d.attention_count??d.items.filter(x=>["wrong","tone","segmental"].includes(x.status)).length;
- box.innerHTML='<div class="summary"><div class="metric"><span>整句分數</span><strong>'+d.overall_score+'</strong></div><div class="metric"><span>音節匹配</span><strong>'+d.syllable_accuracy+'%</strong></div><div class="metric"><span>明確需注意</span><strong>'+attention+' 音節</strong></div></div><div class="status">ASR 聽到：'+esc(d.recognized||"（沒有辨識結果）")+'<br>粵拼候選：'+esc(d.recognized_jyutping||"—")+'<br><small>同音異字不算錯；藍色位置代表 ASR 對標準音本身也會混淆，不會武斷判錯。</small></div><div class="legend"><span><i class="dot g"></i>字 + 聲調穩定</span><span><i class="dot a"></i>字正確，但聲調需調整</span><span><i class="dot r"></i>高置信度讀錯 / 漏讀</span><span><i class="dot b"></i>ASR 基線不確定</span></div><div class="chars">'+d.items.map(x=>'<div class="charResult '+x.status+'" data-index="'+x.index+'"><b>'+esc(x.char)+'</b><code>'+esc(x.jyutping)+'</code><small>總 '+x.score+'</small><div class="miniParts"><span>聲 '+fmt(x.initial_score)+'</span><span>韻 '+fmt(x.final_score)+'</span><span>調 '+fmt(x.tone?.tone_score)+'</span></div></div>').join("")+'</div><div class="detail">點一個字查看細節。</div>';
+ const overall=d.overall_score==null?"—":d.overall_score;
+ box.innerHTML='<div class="summary"><div class="metric"><span>整句分數</span><strong>'+overall+'</strong></div><div class="metric"><span>有效判定</span><strong>'+d.coverage+'%</strong></div><div class="metric"><span>需要練習</span><strong>'+attention+' 音節</strong></div></div><div class="status">ASR 聽到：'+esc(d.recognized||"（沒有辨識結果）")+'<br>粵拼候選：'+esc(d.recognized_jyutping||"—")+'<br><small>同音異字不算錯；ASR 不可靠的位置會再用標準音聲學相似度判斷。若仍無法判定，該音節不計分。</small></div><div class="legend"><span><i class="dot g"></i>字 + 聲調穩定</span><span><i class="dot a"></i>字正確，但聲調需調整</span><span><i class="dot r"></i>聲母 / 韻母需練習</span><span><i class="dot u"></i>系統未能判定 · 不計分</span></div><div class="chars">'+d.items.map(x=>'<div class="charResult '+x.status+'" data-index="'+x.index+'"><b>'+esc(x.char)+'</b><code>'+esc(x.jyutping)+'</code><small>'+(x.score==null?'未判定':'總 '+x.score)+'</small><div class="miniParts"><span>聲 '+fmt(x.initial_score)+'</span><span>韻 '+fmt(x.final_score)+'</span><span>調 '+fmt(x.tone?.tone_score)+'</span></div></div>').join("")+'</div><div class="detail">點一個字查看細節。</div>';
  box.querySelectorAll(".charResult").forEach(el=>el.onclick=()=>detail(box,d.items[+el.dataset.index]));
 }
 function fmt(v){return v==null?"—":Math.round(v);}
 function detail(box,x){
- let s='<b>'+esc(x.char)+' · '+esc(x.jyutping)+' · 總分 '+x.score+'</b><br>';
- s+='<b>聲母：</b>'+esc(x.target_initial||"—")+' → '+(x.initial_score==null?'基線盲區':fmt(x.initial_score)+' 分');
- if(x.heard_initial&&x.heard_initial!==x.target_initial)s+='（ASR 聽到 '+esc(x.heard_initial)+'）';
- s+='<br><b>韻母：</b>'+esc(x.target_final||"—")+' → '+(x.final_score==null?'基線盲區':fmt(x.final_score)+' 分');
- if(x.heard_final&&x.heard_final!==x.target_final)s+='（ASR 聽到 '+esc(x.heard_final)+'）';
+ let s='<b>'+esc(x.char)+' · '+esc(x.jyutping)+'</b><br>';
+ if(x.status==="unrated"){
+   s+='<b>本次：系統未能可靠判定，因此這個音節不計入總分。</b><br>這不代表你讀錯；可以再錄一次。';
+   if(x.reference_acoustic_score!=null)s+='<br>標準音聲學相似度：'+fmt(x.reference_acoustic_score);
+   box.querySelector(".detail").innerHTML=s;return;
+ }
+ s+='總分：'+fmt(x.score);
+ s+='<br><b>聲母：</b>'+esc(x.target_initial||"—")+' → '+fmt(x.initial_score)+' 分';
+ if(x.heard_initial&&x.heard_initial!==x.target_initial)s+='（ASR 候選 '+esc(x.heard_initial)+'）';
+ s+='<br><b>韻母：</b>'+esc(x.target_final||"—")+' → '+fmt(x.final_score)+' 分';
+ if(x.heard_final&&x.heard_final!==x.target_final)s+='（ASR 候選 '+esc(x.heard_final)+'）';
  s+='<br><b>聲調：</b>T'+x.expected_tone+' → '+(x.tone?fmt(x.tone.tone_score)+' 分':'沒有足夠 F0');
  if(x.tone){s+='；F0 最接近 T'+x.tone.predicted_tone;if(x.tone.notes?.length)s+='；'+x.tone.notes.map(esc).join("、");}
- s+='<br><b>音節聲學置信：</b>'+(x.acoustic_score==null?'—':fmt(x.acoustic_score)+' 分');
- s+='<br><b>時長：</b>'+(x.duration_score==null?'—':fmt(x.duration_score)+' 分');
- if(x.baseline_confusion)s+='<br><b>藍色基線盲區：</b>標準音本身在此位置也會被 ASR 系統性誤聽，因此不武斷判聲母/韻母錯。';
- else if(!x.accepted_match)s+='<br><b>ASR 候選：</b>'+esc(x.heard||"∅")+' '+esc(x.heard_jyutping||"");
+ if(x.reference_acoustic_score!=null)s+='<br><b>標準音聲學相似：</b>'+fmt(x.reference_acoustic_score)+' 分';
+ if(x.duration_score!=null)s+='<br><b>時長：</b>'+fmt(x.duration_score)+' 分';
  if(x.issues?.length)s+='<br><b>主要問題：</b>'+x.issues.map(esc).join("、");
- if(x.certainty==="low")s+='<br><b>判定置信度：低，建議重錄一次。</b>';
  box.querySelector(".detail").innerHTML=s;
 }
 async function boot(){render();try{const r=await fetch("/api/health",{cache:"no-store"}),d=await r.json();if(!d.ok)throw new Error("not ready");health.textContent="✓ VITS + 粵語 Zipformer ASR 已就緒。錄音只送到這個 Demo 伺服器即時計算，不保存。";}catch(e){health.textContent="模型尚未就緒："+e.message;}}
