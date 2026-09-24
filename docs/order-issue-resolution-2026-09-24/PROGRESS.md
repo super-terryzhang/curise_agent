@@ -27,13 +27,21 @@
 - Python wheel 构建、独立安装与生产资源导入检查通过；wheel SHA-256 为 `05f19c435cb7c100b40b551b03a6d349caed3a615df5e1662c5a9554471484ef`。
 - ESLint 10 因仓库没有 `eslint.config.*` 无法启动，这是既有工具链债务；不以其结果代替 TypeScript 或生产构建。
 
-## 尚未完成
+## 合并与生产部署
 
-- 推送功能分支、创建/合并 PR、等待 GitHub CI。
-- 确认数据库 head 保持 0030，以 main 精确源码构建并部署 Cloud Run 候选。
-- 后端 100% 切流、Oracle Job 同 digest 更新、Vercel 正式发布及生产只读核验。
-- 根目录 `PROGRESS.md` 和新的生产核验文档只在生产验证后更新。
+- GitHub PR `#3` 已合并；生产源码为 `main@c8b6c0141b413477d34c08c792be64422752c64b`，CI run `35956752342` 前后端均成功。
+- Cloud Build `ffed93c8-7925-4646-9013-7001681878a5` 从精确 Git 归档成功构建 digest `sha256:9225ce40087de4e2422ac6d0d8285ad9d0e9a625478fb917a8cd6b74b5f4c357`。
+- 0% 候选通过健康、OpenAPI 新路由、未登录 401、正式 Origin CORS 与错误日志检查；`cruise-v3-backend-order-issues-20260924` 现接收 100% 流量。
+- 前端 `dpl_HSNN75qZpRSgoZJ4ZEkSY7kFdyAP` 已提升正式域名，登录、订单列表、PO 详情与供船安排路由均返回应用页面 200。
+- 数据库无迁移并保持 `0030_direct_bulk_images`；最终只读核验为 1449 产品、73 订单、32 询价、621 张图片。
+- Oracle Job generation 14 使用相同 digest，环境摘要更新前后相同；14:00 JST 首次自动执行成功，业务 run 356 未创建订单或询价。三个 Scheduler 均保持 `ENABLED`。
+
+## 尚待用户验收
+
+- 用真实账号打开一个未匹配商品，检查原因说明并完成一次修正字段或关联商品。
+- 检查一个已匹配 warning 行是否仍能生成询价，并确认预览与下载 Excel 的黄色行位置正确。
+- 自动化没有向生产 PO 行写入测试修正；这部分主观交互与业务结果不能由只读发布检查替代。
 
 ## 发布边界
 
-本轮没有数据库迁移，不修改原始 PO 文件，不删除历史询价版本。当前记录仅代表功能分支本地状态，**尚未部署生产环境**。
+本轮没有数据库迁移，不修改原始 PO 文件，不删除历史询价版本。功能已部署生产；完整平台证据、已知债务和回退方式见根目录 `DEPLOYMENT_VERIFIED_2026-09-24_ORDER_ISSUES.md`。
