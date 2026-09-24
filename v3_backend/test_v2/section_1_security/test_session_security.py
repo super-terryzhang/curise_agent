@@ -191,6 +191,12 @@ def test_startup_requires_current_migration(engine):
         verify_schema(engine)
     with engine.begin() as connection:
         connection.execute(text("UPDATE alembic_version SET version_num = '0030_direct_bulk_images'"))
+    with pytest.raises(RuntimeError, match="migration required"):
+        verify_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text("UPDATE alembic_version SET version_num = '0031_unit_conversion_rules'")
+        )
     verify_schema(engine)
 
 
