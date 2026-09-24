@@ -4,14 +4,29 @@ const SONG=[
  {text:"前身被擱在上游風化",jp:["cin4","san1","bei6","gok3","zoi6","soeng6","jau4","fung1","faa3"]}
 ];
 const lessons=document.querySelector("#lessons"),health=document.querySelector("#health");
-let active=null,urls={};
+let active=null,urls={},activeSyl=null;
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));}
 function render(){
- lessons.innerHTML=SONG.map((l,i)=>'<section class="card" id="line'+i+'"><div class="lineNo">第 '+(i+1)+' 句</div><div class="lyric">'+esc(l.text)+'</div><div class="syls">'+[...l.text].map((ch,j)=>'<div class="syl"><b>'+esc(ch)+'</b><code>'+l.jp[j]+'</code></div>').join("")+'</div><div class="speedRow"><label>朗讀速度</label><select class="speechSpeed"><option value="0.60" selected>教學慢速 · 0.60×</option><option value="0.75">清晰 · 0.75×</option><option value="0.88">自然 · 0.88×</option></select></div><div class="buttons"><button class="listen" data-i="'+i+'">▶ 標準粵語</button><button class="record" data-i="'+i+'">● 跟讀並評分</button></div><audio class="reference hidden" controls></audio><audio class="mine hidden" controls></audio><div class="status">預設使用教學慢速，先把每個字聽清楚，再跟讀整句。</div><div class="result hidden"></div></section>').join("");
+ lessons.innerHTML=SONG.map((l,i)=>'<section class="card" id="line'+i+'"><div class="lineNo">第 '+(i+1)+' 句</div><div class="lyric">'+esc(l.text)+'</div><div class="syls">'+[...l.text].map((ch,j)=>'<button type="button" class="syl" data-line="'+i+'" data-char="'+j+'" aria-label="播放 '+esc(ch)+' '+l.jp[j]+'"><b>'+esc(ch)+'</b><code>'+l.jp[j]+'</code><span class="tapHint">點擊聽</span></button>').join("")+'</div><div class="speedRow"><label>朗讀速度</label><select class="speechSpeed"><option value="0.60" selected>教學慢速 · 0.60×</option><option value="0.75">清晰 · 0.75×</option><option value="0.88">自然 · 0.88×</option></select></div><div class="buttons"><button class="listen" data-i="'+i+'">▶ 標準粵語</button><button class="record" data-i="'+i+'">● 跟讀並評分</button></div><audio class="reference hidden" controls></audio><audio class="mine hidden" controls></audio><audio class="charAudio hidden" preload="none"></audio><div class="status">預設使用教學慢速，先把每個字聽清楚，再跟讀整句。</div><div class="result hidden"></div></section>').join("");
  document.querySelectorAll(".listen").forEach(b=>b.onclick=()=>listen(+b.dataset.i,b));
  document.querySelectorAll(".record").forEach(b=>b.onclick=()=>toggleRecord(+b.dataset.i,b));
+ document.querySelectorAll(".syl").forEach(b=>b.onclick=()=>playCharacter(+b.dataset.line,+b.dataset.char,b));
 }
 function card(i){return document.querySelector("#line"+i);}
+async function playCharacter(lineIndex,charIndex,el){
+ const c=card(lineIndex),st=c.querySelector(".status"),audio=c.querySelector(".charAudio");
+ if(activeSyl)activeSyl.classList.remove("playing");
+ activeSyl=el;el.classList.add("playing");
+ audio.pause();
+ audio.src="/api/char?line="+lineIndex+"&index="+charIndex+"&v=1";
+ audio.currentTime=0;
+ const ch=SONG[lineIndex].text[charIndex],jp=SONG[lineIndex].jp[charIndex];
+ st.textContent="播放單字："+ch+" · "+jp;
+ audio.onended=()=>{el.classList.remove("playing");if(activeSyl===el)activeSyl=null;};
+ audio.onerror=()=>{el.classList.remove("playing");st.textContent="單字音訊載入失敗，請再點一次。";};
+ try{await audio.play();}catch(e){st.textContent="請再點一次「"+ch+"」播放。";}
+}
+
 async function listen(i,btn){
  const c=card(i),st=c.querySelector(".status"),a=c.querySelector(".reference"),speed=Number(c.querySelector(".speechSpeed").value||.60);
  btn.disabled=true;st.textContent="正在準備標準粵語…";
