@@ -29,6 +29,8 @@ asr=sherpa_onnx.OfflineRecognizer.from_wenet_ctc(
  num_threads=2,sample_rate=16000,feature_dim=80,
  decoding_method="greedy_search",provider="cpu")
 asr_lock=threading.Lock()
+REFERENCE={}
+reference_lock=threading.Lock()
 
 def proxy_tts(text:str,speed:float=.9)->bytes:
     text=text.strip()
@@ -188,97 +190,174 @@ def tmpl(t,n=20):
     else:y=np.full(n,2.0)
     return y
 
-def tone_analysis(samples,sr,line,rows,rec_times,duration):
+def extract_pitch_segments(samples,sr,rows,rec_times,duration,segmental_only=False):
     raw={}
     for row in rows:
         ri=row["rec_index"];ti=row["target_index"]
-        if ri is None or ri>=len(rec_times) or not row.get("segmental_match"):continue
-        st=rec_times[ri]
-        en=rec_times[ri+1] if ri+1<len(rec_times) else duration
+        if ri is None or ri>=len(rec_times):continue
+        if segmental_only and not row.get("segmental_match"):continue
+        st=max(0.0,rec_times[ri]-0.025)
+        en=(rec_times[ri+1] if ri+1<len(rec_times) else duration)+0.025
+        en=min(duration,en)
         if en-st<.08:en=min(duration,st+.18)
         tr=f0_track(samples,sr,st,en)
         if tr:raw[ti]={"semi":tr,"start":st,"end":en}
-    anchors={1:[],3:[],6:[]};allsemi=[]
-    for ti,d in raw.items():
-        tone=line["tones"][ti];center=float(np.median(d["semi"]));allsemi.extend(d["semi"])
-        if tone in anchors:anchors[tone].append(center)
-    if not allsemi:return raw,{}
-    p15,p50,p85=np.percentile(np.asarray(allsemi),[15,50,85]).tolist()
-    high=float(np.median(anchors[1])) if anchors[1] else p85
-    mid=float(np.median(anchors[3])) if anchors[3] else p50
-    low=float(np.median(anchors[6])) if anchors[6] else p15
-    if not(high>mid+.25 and mid>low+.15):
-        high,mid,low=p85,p50,p15
-        if high-mid<.25:high=mid+.75
-        if mid-low<.15:low=mid-.55
-    def level(s):
-        if s>=mid:return 3+2*(s-mid)/(high-mid)
-        return 3-(mid-s)/(mid-low)
+    return raw
+
+def normalize_pitch_segments(raw):
+    allsemi=[v for d in raw.values() for v in d["semi"]]
+    if len(allsemi)<4:return {}
+    lo,hi=np.percentile(np.asarray(allsemi,dtype=float),[10,90]).tolist()
+    if hi-lo<1.0:
+        mid=float(np.median(allsemi));lo=mid-1.5;hi=mid+1.5
     out={}
     for ti,d in raw.items():
-        vals=np.clip(np.asarray(resample(d["semi"],20)),low-2,high+2)
-        levels=np.asarray([level(float(x)) for x in vals])
-        distances=[];targets=[]
-        for t in range(1,7):
-            z=tmpl(t);targets.append(z);distances.append(float(np.sqrt(np.mean((levels-z)**2))))
-        pred=int(np.argmin(distances))+1;goal=line["tones"][ti];dist=distances[goal-1]
+        semi=np.asarray(resample(d["semi"],20),dtype=float)
+        levels=1+4*(semi-lo)/(hi-lo)
+        levels=np.clip(levels,0.3,5.7)
+        out[ti]=levels
+    return out
+
+def canonical_tone_details(levels,goal):
+    distances=[];targets=[]
+    for t in range(1,7):
+        z=tmpl(t);targets.append(z);distances.append(float(np.sqrt(np.mean((levels-z)**2))))
+    pred=int(np.argmin(distances))+1
+    z=targets[goal-1]
+    us=float(np.mean(levels[:4]));ue=float(np.mean(levels[-4:]))
+    ts=float(np.mean(z[:4]));te=float(np.mean(z[-4:]))
+    return pred,us,ue,ts,te
+
+def reference_tone_details(levels,ref_levels,goal):
+    dist=float(np.sqrt(np.mean((levels-ref_levels)**2)))
+    quality=int(round(100*math.exp(-.5*(dist/.72)**2)))
+    pred,_,_,_,_=canonical_tone_details(levels,goal)
+    us=float(np.mean(levels[:4]));ue=float(np.mean(levels[-4:]))
+    rs=float(np.mean(ref_levels[:4]));re=float(np.mean(ref_levels[-4:]))
+    slope=(ue-us)-(re-rs)
+    notes=[]
+    if abs(us-rs)>.55:notes.append("起點相對標準音偏"+("高" if us>rs else "低"))
+    if abs(ue-re)>.55:notes.append("終點相對標準音偏"+("高" if ue>re else "低"))
+    if abs(slope)>.55:notes.append("升降幅度"+("過大" if abs(ue-us)>abs(re-rs) else "不足"))
+    return {
+        "tone_score":quality,"predicted_tone":pred,
+        "start_error":round(us-rs,2),"end_error":round(ue-re,2),"slope_error":round(slope,2),
+        "notes":notes,"f0_levels":[round(float(x),2) for x in levels],
+        "reference_levels":[round(float(x),2) for x in ref_levels],
+        "reference_based":True
+    }
+
+def build_reference(line_id):
+    line=SONG[line_id]
+    raw=proxy_tts(line["text"],.88)
+    samples,sr=read_wav(raw);duration=len(samples)/sr
+    rec=recognize(samples,sr)
+    tokens,times=flatten_tokens(rec["tokens"],rec["timestamps"])
+    rec_jp=recognized_jyutping(tokens)
+    rows,_=align(line["chars"],line["jyutping"],tokens,rec_jp)
+    pitch=normalize_pitch_segments(extract_pitch_segments(samples,sr,rows,times,duration,False))
+    baseline={}
+    for row in rows:
+        ti=row["target_index"];ri=row["rec_index"]
+        if ri is None:continue
+        baseline[ti]={
+            "char":tokens[ri] if ri<len(tokens) else "",
+            "jyutping":rec_jp[ri] if ri<len(rec_jp) else None,
+            "base":row.get("rec_base"),"tone":row.get("rec_tone"),
+            "direct_match":bool(row.get("segmental_match"))
+        }
+    profile={"wav":raw,"recognized":"".join(tokens),"recognized_jyutping":" ".join(x or "?" for x in rec_jp),
+             "baseline":baseline,"pitch":pitch}
+    with reference_lock:REFERENCE[line_id]=profile
+    print(f"[reference] line{line_id+1} asr={profile['recognized']} jp={profile['recognized_jyutping']} pitch={len(pitch)}/{len(line['chars'])}",flush=True)
+    return profile
+
+def get_reference(line_id):
+    with reference_lock:
+        p=REFERENCE.get(line_id)
+    return p
+
+def tone_analysis(samples,sr,line,rows,rec_times,duration,reference=None):
+    raw=extract_pitch_segments(samples,sr,rows,rec_times,duration,False)
+    levels=normalize_pitch_segments(raw)
+    out={}
+    for ti,curve in levels.items():
+        goal=line["tones"][ti]
+        ref_curve=reference.get("pitch",{}).get(ti) if reference else None
+        if ref_curve is not None and len(ref_curve)==len(curve):
+            out[ti]=reference_tone_details(curve,np.asarray(ref_curve,dtype=float),goal)
+            continue
+        pred,us,ue,ts,te=canonical_tone_details(curve,goal)
+        z=tmpl(goal);dist=float(np.sqrt(np.mean((curve-z)**2)))
         quality=int(round(100*math.exp(-.5*(dist/.82)**2)))
-        z=targets[goal-1]
-        us=float(np.mean(levels[:4]));ue=float(np.mean(levels[-4:]));ts=float(np.mean(z[:4]));te=float(np.mean(z[-4:]))
-        slope=(ue-us)-(te-ts)
-        probs=np.exp(-.5*(np.asarray(distances)/.72)**2);probs=(probs/probs.sum()).tolist()
-        notes=[]
-        if abs(us-ts)>.5:notes.append("起點偏"+("高" if us>ts else "低"))
-        if abs(ue-te)>.5:notes.append("終點偏"+("高" if ue>te else "低"))
-        if abs(slope)>.5:notes.append("升降幅度"+("過大" if abs(ue-us)>abs(te-ts) else "不足"))
-        out[ti]={"tone_score":quality,"predicted_tone":pred,"tone_probs":[round(x,3) for x in probs],
+        slope=(ue-us)-(te-ts);notes=[]
+        if abs(us-ts)>.55:notes.append("起點偏"+("高" if us>ts else "低"))
+        if abs(ue-te)>.55:notes.append("終點偏"+("高" if ue>te else "低"))
+        if abs(slope)>.55:notes.append("升降幅度"+("過大" if abs(ue-us)>abs(te-ts) else "不足"))
+        out[ti]={"tone_score":quality,"predicted_tone":pred,
                  "start_error":round(us-ts,2),"end_error":round(ue-te,2),"slope_error":round(slope,2),
-                 "notes":notes,"f0_levels":[round(float(x),2) for x in levels]}
+                 "notes":notes,"f0_levels":[round(float(x),2) for x in curve],"reference_based":False}
     return raw,out
 
-def evaluate(raw,line_id):
+def evaluate(raw,line_id,reference=None):
     if line_id not in (0,1):raise ValueError("未知歌詞行")
     samples,sr=read_wav(raw);duration=len(samples)/sr
     if duration<.4 or duration>15:raise ValueError("錄音長度不合適")
     line=SONG[line_id]
+    if reference is None:reference=get_reference(line_id)
     rec=recognize(samples,sr)
     tokens,times=flatten_tokens(rec["tokens"],rec["timestamps"])
     rec_jp=recognized_jyutping(tokens)
     rows,insertions=align(line["chars"],line["jyutping"],tokens,rec_jp)
-    _,tones=tone_analysis(samples,sr,line,rows,times,duration)
+    _,tones=tone_analysis(samples,sr,line,rows,times,duration,reference)
 
-    items=[];segmental_matches=0
+    items=[];direct_matches=0;accepted_matches=0;uncertain_count=0
+    refbase=reference.get("baseline",{}) if reference else {}
     for row in rows:
         ti=row["target_index"];ri=row["rec_index"]
-        segmental=bool(row.get("segmental_match"))
-        if segmental:segmental_matches+=1
-        tone=tones.get(ti)
-        segmental_score=100 if segmental else 0
-        tone_score=tone["tone_score"] if tone else None
-
-        if not segmental:
-            score=0;status="wrong"
-        else:
-            score=round(.65*segmental_score+.35*(tone_score if tone_score is not None else 72))
-            status="tone" if tone_score is not None and tone_score<68 else "ok"
-
+        direct=bool(row.get("segmental_match"))
+        if direct:direct_matches+=1
         heard=tokens[ri] if ri is not None and ri<len(tokens) else ""
         heard_jp=rec_jp[ri] if ri is not None and ri<len(rec_jp) else None
+        baseline=refbase.get(ti,{})
+        baseline_confusion=bool(
+            (not direct) and ri is not None and row.get("rec_base") and
+            baseline.get("base") and row.get("rec_base")==baseline.get("base") and
+            not baseline.get("direct_match",False)
+        )
+        accepted=direct or baseline_confusion
+        if accepted:accepted_matches+=1
+        if baseline_confusion:uncertain_count+=1
+        tone=tones.get(ti) if accepted else None
+        tone_score=tone["tone_score"] if tone else None
+
+        if not accepted:
+            score=0;status="wrong";certainty="high"
+        elif baseline_confusion:
+            score=round(.65*82+.35*(tone_score if tone_score is not None else 78))
+            status="uncertain" if tone_score is None or tone_score>=62 else "tone";certainty="low"
+        else:
+            score=round(.65*100+.35*(tone_score if tone_score is not None else 78))
+            status="tone" if tone_score is not None and tone_score<65 else "ok";certainty="high"
+
         items.append({
             "index":ti,"char":line["chars"][ti],"jyutping":line["jyutping"][ti],
             "expected_tone":line["tones"][ti],"heard":heard,"heard_jyutping":heard_jp,
-            "op":row["op"],"same_char":bool(row.get("same_char")),"segmental_match":segmental,
+            "op":row["op"],"same_char":bool(row.get("same_char")),"segmental_match":direct,
+            "accepted_match":accepted,"baseline_confusion":baseline_confusion,"certainty":certainty,
             "asr_tone_match":bool(row.get("asr_tone_match")),"homophone":bool(row.get("homophone")),
             "target_base":row.get("target_base"),"rec_base":row.get("rec_base"),"rec_tone":row.get("rec_tone"),
             "status":status,"score":score,"tone":tone
         })
 
     overall=round(sum(x["score"] for x in items)/len(items)) if items else 0
-    syllable_accuracy=round(100*segmental_matches/len(line["chars"]))
+    direct_accuracy=round(100*direct_matches/len(line["chars"]))
+    accepted_accuracy=round(100*accepted_matches/len(line["chars"]))
     return {
         "ok":True,"line_id":line_id,"target":line["text"],"recognized":"".join(tokens),
         "recognized_jyutping":" ".join(x or "?" for x in rec_jp),"asr_text":rec["text"],
-        "syllable_accuracy":syllable_accuracy,"overall_score":overall,"items":items,
+        "syllable_accuracy":accepted_accuracy,"direct_asr_accuracy":direct_accuracy,
+        "asr_uncertain_count":uncertain_count,"overall_score":overall,"items":items,
         "insertions":[{"char":tokens[i],"jyutping":rec_jp[i] if i<len(rec_jp) else None} for i in insertions if i<len(tokens)]
     }
 
@@ -295,7 +374,7 @@ class H(BaseHTTPRequestHandler):
  def js(self,status,obj):self.sendb(status,json.dumps(obj,ensure_ascii=False).encode(),"application/json; charset=utf-8")
  def do_GET(self):
   p=urlparse(self.path).path
-  if p=="/api/health":return self.js(200,{"ok":True,"version":"song-lesson-4","tts":True,"asr":True,"external_api":False,"split_runtime":True})
+  if p=="/api/health":return self.js(200,{"ok":True,"version":"song-lesson-5","tts":True,"asr":True,"external_api":False,"split_runtime":True})
   item=STATIC.get(p)
   if not item:return self.sendb(404,b"Not found","text/plain")
   return self.sendb(200,item[0].read_bytes(),item[1])
@@ -315,12 +394,12 @@ class H(BaseHTTPRequestHandler):
   self.send_response(200);self.end_headers()
 
 def background_selftest():
-    print("[selftest] background TTS + Cantonese ASR + Jyutping alignment",flush=True)
+    print("[selftest] building sentence-specific reference profiles",flush=True)
     for i,line in enumerate(SONG):
         try:
-            raw=proxy_tts(line["text"],1.0)
-            ev=evaluate(raw,i)
-            print(f"[selftest] line{i+1} target={line['text']} asr={ev['recognized']} jp={ev['recognized_jyutping']} syllable={ev['syllable_accuracy']} score={ev['overall_score']}",flush=True)
+            ref=build_reference(i)
+            ev=evaluate(ref["wav"],i,ref)
+            print(f"[selftest] line{i+1} target={line['text']} asr={ev['recognized']} direct={ev['direct_asr_accuracy']} accepted={ev['syllable_accuracy']} uncertain={ev['asr_uncertain_count']} score={ev['overall_score']}",flush=True)
         except Exception as e:
             print(f"[selftest] line{i+1} deferred: {type(e).__name__}: {e}",flush=True)
 
