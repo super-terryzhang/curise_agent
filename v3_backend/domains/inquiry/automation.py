@@ -10,6 +10,7 @@ from domains.inquiry.models import SupplierTemplate
 from domains.inquiry.template_contract import normalized_contract
 from domains.inquiry.template_selector import template_has_zone_config
 from domains.masterdata import Product, Supplier
+from shared.numbers import decimal_to_json_value
 
 
 def positive(value):
@@ -159,9 +160,9 @@ def prepare_inquiry(db, order, source, *, unit_approvals=None, template_override
         item.pop("inquiry_exclusion_code", None)
         item.pop("inquiry_exclusion_reason", None)
         item.update(
-            rfq_quantity=float(quantity),
+            rfq_quantity=decimal_to_json_value(quantity),
             rfq_unit=target_unit,
-            source_quantity=original["quantity"],
+            source_quantity=decimal_to_json_value(positive(original["quantity"])),
             source_unit=raw_unit,
             conversion_evidence=approved or {"evidence": "相同订购单位，数量保持原值"},
         )

@@ -32,6 +32,7 @@ from domains.orders.schemas import (
     OrderUpdateRequest,
 )
 from infrastructure.capabilities import CAP_FINANCIALS_VIEW
+from shared.numbers import decimal_to_json_value
 
 logger = logging.getLogger(__name__)
 
@@ -474,7 +475,11 @@ def resolve_order_product_row(
         source_quantity = body.source_quantity
         if source_quantity is None:
             source_quantity = row.get("quantity")
-        if source_quantity is None or float(source_quantity) <= 0:
+        try:
+            source_amount = Decimal(str(source_quantity))
+        except (InvalidOperation, TypeError, ValueError):
+            raise BadRequest("原订购数量必须是有效数字") from None
+        if not source_amount.is_finite() or source_amount <= 0:
             raise BadRequest("原订购数量必须大于 0")
         source_unit = (body.source_unit or row.get("unit") or "").strip()
         rfq_unit = (body.rfq_unit or "").strip()
@@ -484,7 +489,6 @@ def resolve_order_product_row(
         if not evidence:
             raise BadRequest("请填写人工确认依据")
         try:
-            source_amount = Decimal(str(source_quantity))
             rfq_amount = Decimal(str(body.rfq_quantity))
         except (InvalidOperation, TypeError, ValueError):
             raise BadRequest("换算数量必须是有效数字") from None
@@ -530,9 +534,9 @@ def resolve_order_product_row(
             }
         row.update(
             {
-                "source_quantity": float(source_quantity),
+                "source_quantity": decimal_to_json_value(source_amount),
                 "source_unit": source_unit,
-                "rfq_quantity": body.rfq_quantity,
+                "rfq_quantity": decimal_to_json_value(rfq_amount),
                 "rfq_unit": rfq_unit,
                 "conversion_evidence": conversion_evidence,
             }

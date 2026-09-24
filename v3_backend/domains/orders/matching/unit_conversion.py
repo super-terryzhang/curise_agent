@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -12,6 +11,7 @@ from sqlalchemy.orm import Session
 from domains.masterdata import service as masterdata_service
 from domains.orders.models import Order
 from infrastructure.config import settings
+from shared.numbers import decimal_to_json_value
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +23,6 @@ def _manual_decision(result: dict[str, Any]) -> bool:
     if "rfq_quantity" not in result or not result.get("rfq_unit"):
         return False
     return evidence.get("scope_type") == "order_row" or evidence.get("rule_id") is None
-
-
-def _json_quantity(value: Decimal) -> int | float:
-    integral = value.to_integral_value()
-    return int(integral) if value == integral else float(value)
 
 
 def apply_verified_unit_conversions(
@@ -98,7 +93,7 @@ def apply_verified_unit_conversions(
             result.update(
                 source_quantity=source_quantity,
                 source_unit=source_unit,
-                rfq_quantity=_json_quantity(evaluated["target_quantity"]),
+                rfq_quantity=decimal_to_json_value(evaluated["target_quantity"]),
                 rfq_unit=target_unit,
                 conversion_evidence=evidence,
             )

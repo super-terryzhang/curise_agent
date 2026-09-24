@@ -97,6 +97,30 @@ def test_verified_order_snapshot_needs_no_legacy_source_file_approval(db):
     assert order.match_results[0]["conversion_evidence"]["rule_id"] == 20
 
 
+def test_verified_fractional_snapshot_stays_decimal_safe_during_preflight(db):
+    """Inquiry preparation must not turn an exact JSON decimal into a float."""
+
+    order, template = setup_inquiry_row(db, verified=True)
+    result = dict(order.match_results[0])
+    result.update(
+        quantity=1,
+        source_quantity=1,
+        rfq_quantity="0.3333333333333333333333333333",
+    )
+    source = dict(order.products[0])
+    source["quantity"] = 1
+    order.products = [source]
+    order.match_results = [result]
+    source_file = SimpleNamespace(source_key="new", version_key="v2", pdf_sha256="sha")
+
+    issues, bindings = prepare_inquiry(db, order, source_file, unit_approvals=[])
+
+    assert issues == []
+    assert bindings == {result["matched_product"]["supplier_id"]: template.id}
+    assert order.match_results[0]["rfq_quantity"] == "0.3333333333333333333333333333"
+    assert not isinstance(order.match_results[0]["rfq_quantity"], float)
+
+
 def test_unverified_order_snapshot_still_requires_legacy_approval(db):
     """Trusting a draft snapshot would bypass the explicit verification gate."""
 
@@ -107,4 +131,3 @@ def test_unverified_order_snapshot_still_requires_legacy_approval(db):
 
     assert issues == [{"code": "UNIT_CONVERSION_EVIDENCE_REQUIRED", "line_id": "L1"}]
     assert order.match_results[0]["inquiry_exclusion_code"] == "UNIT_CONVERSION_EVIDENCE_REQUIRED"
-

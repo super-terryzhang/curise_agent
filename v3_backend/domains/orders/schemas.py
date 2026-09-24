@@ -126,9 +126,9 @@ class OrderRowResolveRequest(BaseModel):
     quantity: float | None = None
     unit: str | None = None
     unit_price: float | None = None
-    source_quantity: float | None = None
+    source_quantity: Decimal | None = None
     source_unit: str | None = None
-    rfq_quantity: float | None = None
+    rfq_quantity: Decimal | None = None
     rfq_unit: str | None = None
     evidence: str | None = None
     conversion_scope: Literal["order_row", "product", "source_unit"] = "order_row"

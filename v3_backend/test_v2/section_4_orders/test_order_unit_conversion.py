@@ -50,14 +50,21 @@ def add_product(db, *, code: str, unit: str, unit_size=None) -> Product:
     return product
 
 
-def add_source_rule(db, *, source_unit: str, target_unit: str) -> UnitConversionRule:
+def add_source_rule(
+    db,
+    *,
+    source_unit: str,
+    target_unit: str,
+    source_quantity: Decimal = Decimal("1"),
+    target_quantity: Decimal = Decimal("1"),
+) -> UnitConversionRule:
     rule = UnitConversionRule(
         scope_type="source_unit",
         source_system="oracle",
         source_unit=source_unit,
         target_unit=target_unit,
-        source_quantity=Decimal("1"),
-        target_quantity=Decimal("1"),
+        source_quantity=source_quantity,
+        target_quantity=target_quantity,
         status="verified",
         evidence="confirmed",
         verified_by=1,
@@ -111,6 +118,29 @@ def test_verified_source_rule_adds_json_safe_rfq_snapshot(db, monkeypatch):
     assert "UNIT_CONVERSION_REQUIRED" not in {
         item["code"] for item in findings_for_order_row(result)
     }
+
+
+def test_fractional_conversion_snapshot_never_uses_binary_float(db, monkeypatch):
+    """Decimal conversion output must cross JSON boundaries without float coercion."""
+
+    product = add_product(db, code="P1", unit="CT")
+    add_source_rule(
+        db,
+        source_unit="EA",
+        target_unit="CT",
+        source_quantity=Decimal("3"),
+        target_quantity=Decimal("1"),
+    )
+    row = {"line_id": "L1", "product_code": "P1", "quantity": 1, "unit": "EA"}
+    result = make_result(row, product)
+    monkeypatch.setattr(unit_conversion.settings, "UNIT_CONVERSION_RULES_ENABLED", True)
+
+    unit_conversion.apply_verified_unit_conversions(
+        make_order([row]), db, [result], date(2026, 9, 23)
+    )
+
+    assert result["rfq_quantity"] == "0.3333333333333333333333333333"
+    assert not isinstance(result["rfq_quantity"], float)
 
 
 def test_existing_manual_row_decision_wins_over_reusable_rule(db, monkeypatch):
@@ -230,4 +260,3 @@ def test_one_evaluator_exception_does_not_stop_safe_sibling(db, monkeypatch):
 
     assert results[0]["unit_conversion_issue"]["code"] == "UNIT_CONVERSION_EVALUATION_FAILED"
     assert results[1]["rfq_quantity"] == 2
-
