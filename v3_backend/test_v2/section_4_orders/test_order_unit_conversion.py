@@ -143,6 +143,28 @@ def test_fractional_conversion_snapshot_never_uses_binary_float(db, monkeypatch)
     assert not isinstance(result["rfq_quantity"], float)
 
 
+def test_decimal_source_quantity_is_also_snapshotted_without_float(db, monkeypatch):
+    """The source side of conversion evidence must remain exact as well."""
+
+    product = add_product(db, code="P1", unit="CT")
+    add_source_rule(db, source_unit="EA", target_unit="CT")
+    row = {
+        "line_id": "L1",
+        "product_code": "P1",
+        "quantity": Decimal("0.10000000000000000001"),
+        "unit": "EA",
+    }
+    result = make_result(row, product)
+    monkeypatch.setattr(unit_conversion.settings, "UNIT_CONVERSION_RULES_ENABLED", True)
+
+    unit_conversion.apply_verified_unit_conversions(
+        make_order([row]), db, [result], date(2026, 9, 23)
+    )
+
+    assert result["source_quantity"] == "0.10000000000000000001"
+    assert result["rfq_quantity"] == "0.10000000000000000001"
+
+
 def test_existing_manual_row_decision_wins_over_reusable_rule(db, monkeypatch):
     """Re-running matching must not overwrite an explicit one-row decision."""
 

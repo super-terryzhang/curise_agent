@@ -91,7 +91,7 @@ def apply_verified_unit_conversions(
                 target_unit=target_unit,
             )
             result.update(
-                source_quantity=source_quantity,
+                source_quantity=decimal_to_json_value(evaluated["source_quantity"]),
                 source_unit=source_unit,
                 rfq_quantity=decimal_to_json_value(evaluated["target_quantity"]),
                 rfq_unit=target_unit,
