@@ -981,9 +981,26 @@ def background_selftest():
             click_ref=build_click_reference(i)
             ev=evaluate(ref["wav"],i,ref)
             char_test=character_audio(i,0)
-            print(f"[selftest] line{i+1} target={line['text']} asr={ev['recognized']} coverage={ev['coverage']} stable={ev['stable_count']} attention={ev['attention_count']} unrated={ev['unrated_count']} score={ev['overall_score']} char_segments={len(click_ref['segments'])} char_bytes={len(char_test)}",flush=True)
+            print(f"[selftest] fixed line{i+1} target={line['text']} coverage={ev['coverage']} score={ev['overall_score']} char_segments={len(click_ref['segments'])} char_bytes={len(char_test)}",flush=True)
         except Exception as e:
-            print(f"[selftest] line{i+1} deferred: {type(e).__name__}: {e}",flush=True)
+            print(f"[selftest] fixed line{i+1} deferred: {type(e).__name__}: {e}",flush=True)
+
+    # Full dynamic-song acceptance test: text that is not part of the hard-coded demo.
+    try:
+        parsed,warnings=parse_lyrics_text("今天我想學粵語\n你好，世界！")
+        line=parsed[0]
+        ref=get_reference_dynamic(line)
+        click_ref=get_click_reference_dynamic(line)
+        ev=evaluate_dynamic(ref["wav"],line,ref)
+        char_test=character_audio_dynamic(line,0)
+        print(
+            f"[selftest-dynamic] parsed={len(parsed)} chars={len(line['chars'])} jp={' '.join(line['jyutping'])} "
+            f"coverage={ev['coverage']} score={ev['overall_score']} segments={len(click_ref['segments'])} "
+            f"char_bytes={len(char_test)} warnings={len(warnings)}",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"[selftest-dynamic] FAILED {type(e).__name__}: {e}",flush=True)
 
 print("[boot] song lesson ASR ready",flush=True)
 threading.Thread(target=background_selftest,daemon=True).start()
