@@ -73,45 +73,64 @@ def prepare_inquiry(db, order, source, *, unit_approvals=None, template_override
             reject("UNIT_REQUIRED")
             continue
         if raw_unit.upper() != target_unit.upper():
-            candidates = [
-                a
-                for a in approvals
-                if all(
-                    a.get(k) == v
-                    for k, v in {
-                        "source_key": source.source_key,
-                        "version_key": source.version_key,
-                        "pdf_sha256": source.pdf_sha256,
-                        "line_id": line_id,
-                        "product_id": product.id,
-                        "supplier_id": product.supplier_id,
-                        "port_id": order.port_id,
-                        "delivery_date": order.delivery_date,
-                        "source_unit": raw_unit,
-                        "supplier_unit": target_unit,
-                        "pack_size": product.pack_size,
-                    }.items()
-                )
-                and a.get("verified") is True
-                and a.get("evidence")
-            ]
-            if len(candidates) != 1:
-                reject("UNIT_CONVERSION_EVIDENCE_REQUIRED")
-                continue
-            approved = candidates[0]
-            try:
-                if positive(approved.get("source_quantity")) != quantity:
-                    raise ValueError()
-                encoded = re.fullmatch(r"([A-Z]+)([0-9]+(?:\.[0-9]+)?)", raw_unit.upper())
-                if not encoded or not approved.get("base_unit"):
-                    raise ValueError()
-                base = quantity * positive(encoded[2])
-                quantity = positive(approved.get("supplier_quantity"))
-                if base != quantity * positive(approved.get("base_per_supplier_unit")):
-                    raise ValueError()
-            except ValueError:
-                reject("UNIT_CONVERSION_INCONSISTENT")
-                continue
+            stored_evidence = result.get("conversion_evidence")
+            if isinstance(stored_evidence, dict) and stored_evidence.get("verified") is True:
+                try:
+                    if positive(result.get("source_quantity")) != quantity:
+                        raise ValueError()
+                    if str(result.get("source_unit") or "").strip().upper() != raw_unit.upper():
+                        raise ValueError()
+                    if str(result.get("rfq_unit") or "").strip().upper() != target_unit.upper():
+                        raise ValueError()
+                    quantity = positive(result.get("rfq_quantity"))
+                    approved = deepcopy(stored_evidence)
+                except ValueError:
+                    reject("UNIT_CONVERSION_INCONSISTENT")
+                    continue
+            else:
+                candidates = [
+                    a
+                    for a in approvals
+                    if all(
+                        a.get(k) == v
+                        for k, v in {
+                            "source_key": source.source_key,
+                            "version_key": source.version_key,
+                            "pdf_sha256": source.pdf_sha256,
+                            "line_id": line_id,
+                            "product_id": product.id,
+                            "supplier_id": product.supplier_id,
+                            "port_id": order.port_id,
+                            "delivery_date": order.delivery_date,
+                            "source_unit": raw_unit,
+                            "supplier_unit": target_unit,
+                            "pack_size": product.pack_size,
+                        }.items()
+                    )
+                    and a.get("verified") is True
+                    and a.get("evidence")
+                ]
+                if len(candidates) != 1:
+                    reject("UNIT_CONVERSION_EVIDENCE_REQUIRED")
+                    continue
+                approved = candidates[0]
+                try:
+                    if positive(approved.get("source_quantity")) != quantity:
+                        raise ValueError()
+                    encoded = re.fullmatch(
+                        r"([A-Z]+)([0-9]+(?:\.[0-9]+)?)", raw_unit.upper()
+                    )
+                    if not encoded or not approved.get("base_unit"):
+                        raise ValueError()
+                    base = quantity * positive(encoded[2])
+                    quantity = positive(approved.get("supplier_quantity"))
+                    if base != quantity * positive(
+                        approved.get("base_per_supplier_unit")
+                    ):
+                        raise ValueError()
+                except ValueError:
+                    reject("UNIT_CONVERSION_INCONSISTENT")
+                    continue
         sid = product.supplier_id
         if sid not in bindings:
             templates = db.query(SupplierTemplate).all()

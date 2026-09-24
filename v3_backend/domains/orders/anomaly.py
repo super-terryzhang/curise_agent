@@ -348,17 +348,41 @@ def findings_for_order_row(row: dict[str, Any]) -> list[Finding]:
     if source_unit and supplier_unit and source_unit.upper() != supplier_unit.upper():
         evidence = row.get("conversion_evidence")
         if not isinstance(evidence, dict) or not evidence.get("verified"):
+            conversion_issue = row.get("unit_conversion_issue")
+            if isinstance(conversion_issue, dict):
+                code = str(
+                    conversion_issue.get("code") or "UNIT_CONVERSION_REQUIRED"
+                )
+                message = str(
+                    conversion_issue.get("message")
+                    or f"订购单位 {source_unit} 与供应商单位 {supplier_unit} 不一致"
+                )
+                suggestions = {
+                    "UNIT_CONVERSION_RULE_STALE": "核对当前商品包装并重新登记换算规则",
+                    "UNIT_CONVERSION_RULE_CONFLICT": "停用冲突规则后重新运行匹配",
+                    "NON_INTEGER_PACKAGE_QUANTITY": "确认订购步长或拆包处理方式",
+                    "UNIT_CONVERSION_EVALUATION_FAILED": "重新运行检查；仍失败时登记当前行换算依据",
+                }
+                issue_evidence = conversion_issue.get("evidence") or {}
+            else:
+                code = "UNIT_CONVERSION_REQUIRED"
+                message = f"订购单位 {source_unit} 与供应商单位 {supplier_unit} 不一致"
+                suggestions = {}
+                issue_evidence = {
+                    "source_unit": source_unit,
+                    "supplier_unit": supplier_unit,
+                }
             items.append(
                 finding(
-                    code="UNIT_CONVERSION_REQUIRED",
+                    code=code,
                     step=7,
                     severity="error",
                     scope="row",
                     category="quantity",
                     row=row,
-                    message=f"订购单位 {source_unit} 与供应商单位 {supplier_unit} 不一致",
-                    suggestion="确认换算关系后重新生成询价版本",
-                    evidence={"source_unit": source_unit, "supplier_unit": supplier_unit},
+                    message=message,
+                    suggestion=suggestions.get(code, "确认换算关系后重新生成询价版本"),
+                    evidence=issue_evidence,
                 )
             )
     return items
