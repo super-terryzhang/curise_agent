@@ -12,6 +12,7 @@ from collections import Counter
 from collections.abc import Iterable
 from typing import Any
 
+from domains.orders.anomaly import is_historical_inquiry_finding
 from domains.orders.models import Order
 
 Finding = dict[str, Any]
@@ -117,6 +118,8 @@ def _collect_findings(order: Order, related_orders: Iterable[Order]) -> list[Fin
     for owner in related_orders:
         for item in (owner.anomaly_data or {}).get("findings") or []:
             if not isinstance(item, dict):
+                continue
+            if is_historical_inquiry_finding(item):
                 continue
             source_order_id = item.get("source_order_id")
             belongs_to_target = _same_order_id(source_order_id, order.id)

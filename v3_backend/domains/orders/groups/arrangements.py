@@ -18,7 +18,7 @@ from domains.inquiry import (
     resolve_supplier_template,
 )
 from domains.masterdata import Port, Supplier
-from domains.orders.anomaly import actionable_row_counts
+from domains.orders.anomaly import actionable_row_counts, is_current_actionable_finding
 from domains.orders.groups.automation import MARKER, lock_grouping, mark_manual, regroup
 from domains.orders.groups.rules import grouping_identity, identity_key, normalized_date
 from domains.orders.groups.schemas import SupplyArrangementUpdate
@@ -83,7 +83,13 @@ def list_arrangements(db, *, user_id):
         metadata = order.order_metadata or {}
         anomaly_data = order.anomaly_data or {}
         anomaly_count = actionable_counts.get(order.id, 0)
-        if 'requires_human_review' in anomaly_data:
+        findings = anomaly_data.get('findings')
+        if isinstance(findings, list):
+            requires_human_review = anomaly_count > 0 or any(
+                isinstance(item, dict) and is_current_actionable_finding(item)
+                for item in findings
+            )
+        elif 'requires_human_review' in anomaly_data:
             requires_human_review = bool(anomaly_data['requires_human_review']) or anomaly_count > 0
         else:
             requires_human_review = anomaly_count > 0
