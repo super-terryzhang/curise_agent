@@ -1,5 +1,5 @@
 from __future__ import annotations
-import io,json,math,os,pathlib,re,threading,time,urllib.error,urllib.request,wave
+import ctypes,gc,io,json,math,os,pathlib,re,threading,time,urllib.error,urllib.request,wave
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from urllib.parse import urlparse,parse_qs
 import numpy as np
@@ -9,6 +9,7 @@ from opencc import OpenCC
 ROOT=pathlib.Path(__file__).resolve().parent
 PORT=int(os.environ.get("PORT","10000"))
 ASR_DIR=ROOT/"model"/"asr"
+LOCAL_TTS_DIR=ROOT/"model"/"_tts_build"
 TTS_URLS=[
     x.strip() for x in os.environ.get(
         "TTS_URLS",
@@ -34,12 +35,40 @@ for line in SONG:
     line["chars"]=list(line["text"])
     line["tones"]=[int(x[-1]) for x in line["jyutping"]]
 
-asr=sherpa_onnx.OfflineRecognizer.from_wenet_ctc(
- model=str(ASR_DIR/"model.int8.onnx"),
- tokens=str(ASR_DIR/"tokens.txt"),
- num_threads=2,sample_rate=16000,feature_dim=80,
- decoding_method="greedy_search",provider="cpu")
+engine_lock=threading.RLock()
 asr_lock=threading.Lock()
+asr=None
+
+def release_native_memory():
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+def create_asr():
+    print("[engine] loading Cantonese ASR",flush=True)
+    obj=sherpa_onnx.OfflineRecognizer.from_wenet_ctc(
+        model=str(ASR_DIR/"model.int8.onnx"),
+        tokens=str(ASR_DIR/"tokens.txt"),
+        num_threads=2,sample_rate=16000,feature_dim=80,
+        decoding_method="greedy_search",provider="cpu")
+    print("[engine] ASR ready",flush=True)
+    return obj
+
+def ensure_asr():
+    global asr
+    if asr is None:asr=create_asr()
+    return asr
+
+def unload_asr():
+    global asr
+    if asr is not None:
+        print("[engine] unloading ASR for local TTS",flush=True)
+        asr=None
+        release_native_memory()
+
+asr=create_asr()
 REFERENCE={}
 reference_lock=threading.Lock()
 CLICK_REFERENCE={}
@@ -54,6 +83,57 @@ def fixed_audio(text:str,speed:float):
                 return path.read_bytes()
     return None
 
+def create_local_tts():
+    required=[
+        LOCAL_TTS_DIR/"vits-cantonese-hf-xiaomaiiwn.onnx",
+        LOCAL_TTS_DIR/"lexicon.txt",
+        LOCAL_TTS_DIR/"tokens.txt",
+        LOCAL_TTS_DIR/"rule.fst",
+    ]
+    if not all(p.is_file() for p in required):
+        raise RuntimeError("本地 VITS 模型檔案不存在")
+    cfg=sherpa_onnx.OfflineTtsConfig(
+        model=sherpa_onnx.OfflineTtsModelConfig(
+            vits=sherpa_onnx.OfflineTtsVitsModelConfig(
+                model=str(required[0]),lexicon=str(required[1]),tokens=str(required[2]),length_scale=1.0),
+            provider="cpu",debug=False,num_threads=1),
+        rule_fsts=str(required[3]),rule_fars="",max_num_sentences=1)
+    if not cfg.validate():raise RuntimeError("本地 VITS 設定無效")
+    return sherpa_onnx.OfflineTts(cfg)
+
+def generate_local_variants(text):
+    # ASR and VITS each fit the free instance independently, but not together.
+    # Serialize all engine work, unload ASR, generate all learning speeds once,
+    # release VITS, then restore ASR.
+    speeds=(.60,.75,.88)
+    with engine_lock:
+        missing=[]
+        with tts_cache_lock:
+            for sp in speeds:
+                if (text,round(sp,2)) not in TTS_CACHE:missing.append(sp)
+        if not missing:return
+
+        unload_asr()
+        tts=None
+        started=time.time()
+        try:
+            print(f"[local-tts] loading VITS chars={len(text)} variants={missing}",flush=True)
+            tts=create_local_tts()
+            for sp in missing:
+                audio=tts.generate(text=t2s.convert(text),sid=0,speed=sp)
+                samples=np.asarray(audio.samples,dtype=np.float32)
+                if samples.size<100:raise RuntimeError("本地 VITS 生成空音訊")
+                raw=wav_bytes(samples,int(audio.sample_rate))
+                with tts_cache_lock:
+                    if len(TTS_CACHE)>=96:TTS_CACHE.pop(next(iter(TTS_CACHE)))
+                    TTS_CACHE[(text,round(sp,2))]=raw
+                print(f"[local-tts] cached speed={sp:.2f} bytes={len(raw)}",flush=True)
+        finally:
+            if tts is not None:del tts
+            release_native_memory()
+            ensure_asr()
+            print(f"[local-tts] engine restored elapsed={time.time()-started:.2f}s",flush=True)
+
 def proxy_tts(text:str,speed:float=.9)->bytes:
     text=text.strip()
     if not text:raise ValueError("文字為空")
@@ -62,6 +142,15 @@ def proxy_tts(text:str,speed:float=.9)->bytes:
     cache_key=(text,round(float(speed),2))
     with tts_cache_lock:cached=TTS_CACHE.get(cache_key)
     if cached is not None:return cached
+
+    # Dynamic lyrics use the same local VITS model as the fixed demo. This
+    # avoids dependence on sleeping external Render services.
+    try:
+        generate_local_variants(text)
+        with tts_cache_lock:cached=TTS_CACHE.get(cache_key)
+        if cached is not None:return cached
+    except Exception as local_error:
+        print(f"[local-tts] failed, falling back to remote: {type(local_error).__name__}: {local_error}",flush=True)
 
     payload=json.dumps({"text":text,"speed":max(.60,min(1.35,float(speed)))},ensure_ascii=False).encode("utf-8")
     waits=[0,3,7,12,20,30]
@@ -117,10 +206,12 @@ def padded_clip(samples,sr,start,end):
     return wav_bytes(np.concatenate([lead,seg,tail]),sr)
 
 def recognize(samples,sr):
-    st=asr.create_stream();st.accept_waveform(sr,samples)
-    with asr_lock: asr.decode_stream(st)
-    r=st.result
-    return {
+    with engine_lock:
+        recognizer=ensure_asr()
+        st=recognizer.create_stream();st.accept_waveform(sr,samples)
+        with asr_lock:recognizer.decode_stream(st)
+        r=st.result
+        return {
         "text":str(r.text),
         "tokens":list(r.tokens),
         "timestamps":[float(x) for x in r.timestamps],
