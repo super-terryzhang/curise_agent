@@ -73,44 +73,50 @@ export interface ConversionFormValues {
   breakPack: boolean | null;
 }
 
-function positiveNumber(value: string, label: string): number {
-  const parsed = Number(value);
+type RecordConversionRequest = Extract<
+  OrderRowResolveRequest,
+  { action: "record_conversion" }
+>;
+
+function positiveDecimalText(value: string, label: string): string {
+  const exact = value.trim();
+  const parsed = Number(exact);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`${label}必须是大于 0 的数字`);
   }
-  return parsed;
+  return exact;
 }
 
 export function buildConversionRequest(
   values: ConversionFormValues,
-): OrderRowResolveRequest {
+): RecordConversionRequest {
   const evidence = values.evidence.trim();
   if (!evidence) throw new Error("请填写人工确认依据");
   const sourceUnit = values.sourceUnit.trim();
   const rfqUnit = values.rfqUnit.trim();
   if (!sourceUnit || !rfqUnit) throw new Error("原订购单位和询价单位不能为空");
 
-  const request: OrderRowResolveRequest = {
+  const request: RecordConversionRequest = {
     action: "record_conversion",
     conversion_scope: values.scope,
-    source_quantity: positiveNumber(values.sourceQuantity, "原订购数量"),
+    source_quantity: positiveDecimalText(values.sourceQuantity, "原订购数量"),
     source_unit: sourceUnit,
-    rfq_quantity: positiveNumber(values.rfqQuantity, "询价数量"),
+    rfq_quantity: positiveDecimalText(values.rfqQuantity, "询价数量"),
     rfq_unit: rfqUnit,
     evidence,
   };
   if (values.scope === "order_row") return request;
 
-  request.rule_source_quantity = positiveNumber(
+  request.rule_source_quantity = positiveDecimalText(
     values.ruleSourceQuantity,
     "换算关系左侧数量",
   );
-  request.rule_target_quantity = positiveNumber(
+  request.rule_target_quantity = positiveDecimalText(
     values.ruleTargetQuantity,
     "换算关系右侧数量",
   );
   if (values.targetStep.trim()) {
-    request.target_step = positiveNumber(values.targetStep, "供应商订购步长");
+    request.target_step = positiveDecimalText(values.targetStep, "供应商订购步长");
   }
   request.break_pack = values.breakPack;
   return request;

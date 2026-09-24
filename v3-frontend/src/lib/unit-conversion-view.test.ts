@@ -70,9 +70,9 @@ describe("buildConversionRequest", () => {
     ).toEqual({
       action: "record_conversion",
       conversion_scope: "order_row",
-      source_quantity: 9,
+      source_quantity: "9",
       source_unit: "CA24.0",
-      rfq_quantity: 10,
+      rfq_quantity: "10",
       rfq_unit: "CA",
       evidence: "供应商邮件确认",
     });
@@ -127,15 +127,38 @@ describe("buildConversionRequest", () => {
     ).toEqual({
       action: "record_conversion",
       conversion_scope: "source_unit",
-      source_quantity: 12,
+      source_quantity: "12",
       source_unit: "CA2.27",
-      rfq_quantity: 12,
+      rfq_quantity: "12",
       rfq_unit: "CT",
       evidence: "供应商确认同一包装",
-      rule_source_quantity: 1,
-      rule_target_quantity: 1,
-      target_step: 1,
+      rule_source_quantity: "1",
+      rule_target_quantity: "1",
+      target_step: "1",
       break_pack: false,
     });
+  });
+
+  it("submits exact decimal text without JavaScript Number rounding", () => {
+    const exact = "0.10000000000000000001";
+
+    const request = buildConversionRequest({
+      scope: "product",
+      sourceQuantity: exact,
+      sourceUnit: "EA",
+      rfqQuantity: exact,
+      rfqUnit: "CT",
+      evidence: "精确数量已人工确认",
+      ruleSourceQuantity: exact,
+      ruleTargetQuantity: exact,
+      targetStep: exact,
+      breakPack: null,
+    });
+
+    expect(request.source_quantity).toBe(exact);
+    expect(request.rfq_quantity).toBe(exact);
+    expect(request.rule_source_quantity).toBe(exact);
+    expect(request.rule_target_quantity).toBe(exact);
+    expect(request.target_step).toBe(exact);
   });
 });

@@ -622,15 +622,15 @@ export type OrderRowResolveRequest =
   | { action: "bind_product"; product_id: number }
   | {
       action: "record_conversion";
-      source_quantity?: number;
+      source_quantity?: string | number;
       source_unit?: string;
-      rfq_quantity: number;
+      rfq_quantity: string | number;
       rfq_unit: string;
       evidence: string;
       conversion_scope?: "order_row" | "product" | "source_unit";
-      rule_source_quantity?: number;
-      rule_target_quantity?: number;
-      target_step?: number;
+      rule_source_quantity?: string | number;
+      rule_target_quantity?: string | number;
+      target_step?: string | number;
       break_pack?: boolean | null;
     };
 
