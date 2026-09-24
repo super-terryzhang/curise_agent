@@ -9,7 +9,7 @@ from opencc import OpenCC
 ROOT=pathlib.Path(__file__).resolve().parent
 PORT=int(os.environ.get("PORT","10000"))
 ASR_DIR=ROOT/"model"/"asr"
-TTS_URL=os.environ.get("TTS_URL","https://terry-cantonese-vits.onrender.com/api/tts")
+TTS_URL=os.environ.get("TTS_URL","https://terry-cantonese-tts-stable.onrender.com/api/tts")
 t2s=OpenCC("t2s")
 s2t=OpenCC("s2t")
 jp_js=(ROOT.parent/"cantonese-coach-mvp"/"vendor"/"cantojpmin_data.js").read_text(encoding="utf-8")
