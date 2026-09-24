@@ -10,6 +10,7 @@ ROOT=pathlib.Path(__file__).resolve().parent
 PORT=int(os.environ.get("PORT","10000"))
 ASR_DIR=ROOT/"model"/"asr"
 TTS_URL=os.environ.get("TTS_URL","https://terry-cantonese-tts-stable.onrender.com/api/tts")
+FIXED_AUDIO=[ROOT/"reference"/"line0.wav",ROOT/"reference"/"line1.wav"]
 t2s=OpenCC("t2s")
 s2t=OpenCC("s2t")
 jp_js=(ROOT.parent/"cantonese-coach-mvp"/"vendor"/"cantojpmin_data.js").read_text(encoding="utf-8")
@@ -32,9 +33,19 @@ asr_lock=threading.Lock()
 REFERENCE={}
 reference_lock=threading.Lock()
 
+def fixed_audio(text:str,speed:float):
+    cleaned=text.strip()
+    for i,line in enumerate(SONG):
+        if cleaned==line["text"] and abs(float(speed)-.88)<.025:
+            p=FIXED_AUDIO[i]
+            if p.is_file() and p.stat().st_size>3000:return p.read_bytes()
+    return None
+
 def proxy_tts(text:str,speed:float=.9)->bytes:
     text=text.strip()
     if not text:raise ValueError("文字為空")
+    local=fixed_audio(text,speed)
+    if local is not None:return local
     payload=json.dumps({"text":text,"speed":max(.65,min(1.35,float(speed)))},ensure_ascii=False).encode("utf-8")
     waits=[0,2,4,8,12,20]
     last=None
@@ -42,18 +53,13 @@ def proxy_tts(text:str,speed:float=.9)->bytes:
         if wait:time.sleep(wait)
         req=urllib.request.Request(TTS_URL,data=payload,headers={"Content-Type":"application/json","User-Agent":"cantonese-song-coach/1.0"},method="POST")
         try:
-            with urllib.request.urlopen(req,timeout=120) as r:
-                raw=r.read()
+            with urllib.request.urlopen(req,timeout=120) as r:raw=r.read()
             if len(raw)<1000:raise RuntimeError("VITS 標準音回傳異常")
-            if attempt:print(f"[tts-proxy] recovered after retry {attempt}",flush=True)
             return raw
         except urllib.error.HTTPError as e:
             last=e
-            print(f"[tts-proxy] attempt {attempt+1} HTTP {e.code}",flush=True)
             if e.code not in (502,503,504):raise
-        except Exception as e:
-            last=e
-            print(f"[tts-proxy] attempt {attempt+1} {type(e).__name__}: {e}",flush=True)
+        except Exception as e:last=e
     raise RuntimeError(f"VITS 服務暫時不可用：{last}")
 
 
@@ -474,7 +480,7 @@ def evaluate(raw,line_id,reference=None):
     stable=sum(1 for x in items if x["status"]=="ok")
     attention=sum(1 for x in items if x["status"] in ("wrong","tone","segmental"))
     return {
-        "ok":True,"version":"phoneme-eval-1","line_id":line_id,"target":line["text"],
+        "ok":True,"version":"phoneme-eval-2","line_id":line_id,"target":line["text"],
         "recognized":"".join(tokens),"recognized_jyutping":" ".join(x or "?" for x in rec_jp),
         "syllable_accuracy":accepted_accuracy,"overall_score":overall,
         "stable_count":stable,"attention_count":attention,"uncertain_count":uncertain_count,
