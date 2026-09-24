@@ -15,12 +15,18 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { getUser } from "@/lib/auth";
 import { listProducts, type ProductItem } from "@/lib/data-api";
 import {
   resolveOrderProductRow,
   type OrderIssueRow,
   type OrderRowResolveRequest,
 } from "@/lib/orders-api";
+import {
+  buildConversionRequest,
+  conversionScopeOptions,
+  type ConversionScope,
+} from "@/lib/unit-conversion-view";
 
 export type RowResolutionMode = "edit_source" | "bind_product" | "record_conversion";
 
@@ -57,6 +63,11 @@ export function OrderRowResolutionDialog({
     rfq_quantity: row.quantity == null ? "" : String(row.quantity),
     rfq_unit: row.matched_product?.unit || "",
     evidence: "",
+    conversion_scope: "order_row" as ConversionScope,
+    rule_source_quantity: "1",
+    rule_target_quantity: "1",
+    target_step: "",
+    break_pack: "" as "" | "true" | "false",
   });
 
   useEffect(() => {
@@ -72,6 +83,11 @@ export function OrderRowResolutionDialog({
       rfq_quantity: row.quantity == null ? "" : String(row.quantity),
       rfq_unit: row.matched_product?.unit || "",
       evidence: "",
+      conversion_scope: "order_row",
+      rule_source_quantity: "1",
+      rule_target_quantity: "1",
+      target_step: "",
+      break_pack: "",
     });
   }, [open, row]);
 
@@ -96,14 +112,24 @@ export function OrderRowResolutionDialog({
       if (!selectedProductId) { toast.error("请选择一个数据库商品"); return; }
       payload = { action: "bind_product", product_id: selectedProductId };
     } else if (mode === "record_conversion") {
-      payload = {
-        action: "record_conversion",
-        source_quantity: row.quantity ?? undefined,
-        source_unit: row.unit || undefined,
-        rfq_quantity: Number(form.rfq_quantity),
-        rfq_unit: form.rfq_unit.trim(),
-        evidence: form.evidence.trim(),
-      };
+      try {
+        payload = buildConversionRequest({
+          scope: form.conversion_scope,
+          sourceQuantity: row.quantity == null ? "" : String(row.quantity),
+          sourceUnit: row.unit || "",
+          rfqQuantity: form.rfq_quantity,
+          rfqUnit: form.rfq_unit,
+          evidence: form.evidence,
+          ruleSourceQuantity: form.rule_source_quantity,
+          ruleTargetQuantity: form.rule_target_quantity,
+          targetStep: form.target_step,
+          breakPack:
+            form.break_pack === "" ? null : form.break_pack === "true",
+        });
+      } catch (cause) {
+        toast.error(cause instanceof Error ? cause.message : "换算信息不完整");
+        return;
+      }
     } else {
       payload = {
         action: "edit_source",
@@ -126,6 +152,19 @@ export function OrderRowResolutionDialog({
       setSaving(false);
     }
   };
+
+  const scopeOptions = conversionScopeOptions(getUser()?.role, {
+    productCode: row.matched_product?.code || row.product_code,
+    productName:
+      row.matched_product?.product_name_en ||
+      row.matched_product?.product_name_jp ||
+      row.product_name,
+    sourceUnit: row.unit,
+    targetUnit: form.rfq_unit || row.matched_product?.unit,
+    productUnit: row.matched_product?.unit,
+    unitSize: row.matched_product?.unit_size,
+    packSize: row.matched_product?.pack_size,
+  });
 
   return (
     <Dialog open={open} onOpenChange={(value) => { if (!saving) onOpenChange(value); }}>
@@ -167,6 +206,47 @@ export function OrderRowResolutionDialog({
           <div className="space-y-3">
             <div className="rounded-[3px] border bg-slate-50 px-3 py-2 text-xs dark:bg-slate-900/40">PO 原始：{row.quantity ?? "—"} {row.unit || "—"}　→　供应商报价单位：{row.matched_product?.unit || "待填写"}</div>
             <div className="grid grid-cols-2 gap-3"><label className="space-y-1"><span className="text-xs text-muted-foreground">询价数量</span><Input type="number" min="0" value={form.rfq_quantity} onChange={(event) => setForm((current) => ({ ...current, rfq_quantity: event.target.value }))} /></label><label className="space-y-1"><span className="text-xs text-muted-foreground">询价单位</span><Input value={form.rfq_unit} onChange={(event) => setForm((current) => ({ ...current, rfq_unit: event.target.value }))} /></label></div>
+            <div className="space-y-1.5">
+              <div className="text-xs text-muted-foreground">保存范围</div>
+              <div className="divide-y rounded-[3px] border">
+                {scopeOptions.map((option) => (
+                  <label key={option.value} className="flex cursor-pointer gap-2.5 px-3 py-2.5 text-xs">
+                    <input
+                      type="radio"
+                      name="conversion-scope"
+                      className="mt-0.5"
+                      checked={form.conversion_scope === option.value}
+                      onChange={() => setForm((current) => ({ ...current, conversion_scope: option.value }))}
+                    />
+                    <span>
+                      <span className="block font-medium text-foreground">{option.label}</span>
+                      <span className="mt-0.5 block text-muted-foreground">{option.description}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            {form.conversion_scope !== "order_row" ? (
+              <div className="space-y-3 rounded-[3px] border bg-blue-50/50 p-3 dark:bg-blue-950/10">
+                <div className="text-xs font-medium">可复用换算关系</div>
+                <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
+                  <label className="space-y-1">
+                    <span className="text-xs text-muted-foreground">来源数量</span>
+                    <div className="flex items-center gap-2"><Input type="number" min="0" value={form.rule_source_quantity} onChange={(event) => setForm((current) => ({ ...current, rule_source_quantity: event.target.value }))} /><span className="text-xs">{row.unit || "—"}</span></div>
+                  </label>
+                  <span className="pb-2 text-sm">＝</span>
+                  <label className="space-y-1">
+                    <span className="text-xs text-muted-foreground">供应商数量</span>
+                    <div className="flex items-center gap-2"><Input type="number" min="0" value={form.rule_target_quantity} onChange={(event) => setForm((current) => ({ ...current, rule_target_quantity: event.target.value }))} /><span className="text-xs">{form.rfq_unit || "—"}</span></div>
+                  </label>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="space-y-1"><span className="text-xs text-muted-foreground">供应商订购步长（未知可留空）</span><Input type="number" min="0" value={form.target_step} onChange={(event) => setForm((current) => ({ ...current, target_step: event.target.value }))} /></label>
+                  <label className="space-y-1"><span className="text-xs text-muted-foreground">是否允许拆包</span><select className="flex h-9 w-full rounded-[3px] border border-input bg-transparent px-3 text-xs" value={form.break_pack} onChange={(event) => setForm((current) => ({ ...current, break_pack: event.target.value as "" | "true" | "false" }))}><option value="">尚未确认</option><option value="true">允许</option><option value="false">不允许</option></select></label>
+                </div>
+                <p className="text-xs text-blue-900 dark:text-blue-200">系统只会按上面的精确关系复用；不会根据单位数字后缀自行乘除，也不会自动取整。</p>
+              </div>
+            ) : null}
             <label className="space-y-1"><span className="text-xs text-muted-foreground">人工确认依据（必填）</span><Textarea placeholder="例如：供应商 2026-09-24 邮件确认按 10 箱报价" value={form.evidence} onChange={(event) => setForm((current) => ({ ...current, evidence: event.target.value }))} /></label>
             <p className="text-xs text-muted-foreground">系统只记录您确认的换算结果，不推断是否可以拆箱。</p>
           </div>

@@ -56,6 +56,7 @@ export interface MatchResult {
     supplier_id: number | null;
     category_id: number | null;
     pack_size: string | null;
+    unit_size?: string | null;
     unit: string | null;
   };
 }
@@ -626,6 +627,11 @@ export type OrderRowResolveRequest =
       rfq_quantity: number;
       rfq_unit: string;
       evidence: string;
+      conversion_scope?: "order_row" | "product" | "source_unit";
+      rule_source_quantity?: number;
+      rule_target_quantity?: number;
+      target_step?: number;
+      break_pack?: boolean | null;
     };
 
 export async function resolveOrderProductRow(
