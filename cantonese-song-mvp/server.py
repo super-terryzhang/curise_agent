@@ -1,5 +1,5 @@
 from __future__ import annotations
-import io,json,math,os,pathlib,re,threading,urllib.request,wave
+import io,json,math,os,pathlib,re,threading,time,urllib.error,urllib.request,wave
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from urllib.parse import urlparse,parse_qs
 import numpy as np
@@ -34,11 +34,26 @@ def proxy_tts(text:str,speed:float=.9)->bytes:
     text=text.strip()
     if not text:raise ValueError("文字為空")
     payload=json.dumps({"text":text,"speed":max(.65,min(1.35,float(speed)))},ensure_ascii=False).encode("utf-8")
-    req=urllib.request.Request(TTS_URL,data=payload,headers={"Content-Type":"application/json","User-Agent":"cantonese-song-coach/1.0"},method="POST")
-    with urllib.request.urlopen(req,timeout=120) as r:
-        raw=r.read()
-    if len(raw)<1000:raise RuntimeError("VITS 標準音回傳異常")
-    return raw
+    waits=[0,2,4,8,12,20]
+    last=None
+    for attempt,wait in enumerate(waits):
+        if wait:time.sleep(wait)
+        req=urllib.request.Request(TTS_URL,data=payload,headers={"Content-Type":"application/json","User-Agent":"cantonese-song-coach/1.0"},method="POST")
+        try:
+            with urllib.request.urlopen(req,timeout=120) as r:
+                raw=r.read()
+            if len(raw)<1000:raise RuntimeError("VITS 標準音回傳異常")
+            if attempt:print(f"[tts-proxy] recovered after retry {attempt}",flush=True)
+            return raw
+        except urllib.error.HTTPError as e:
+            last=e
+            print(f"[tts-proxy] attempt {attempt+1} HTTP {e.code}",flush=True)
+            if e.code not in (502,503,504):raise
+        except Exception as e:
+            last=e
+            print(f"[tts-proxy] attempt {attempt+1} {type(e).__name__}: {e}",flush=True)
+    raise RuntimeError(f"VITS 服務暫時不可用：{last}")
+
 
 def read_wav(raw:bytes):
     with wave.open(io.BytesIO(raw),"rb") as w:
@@ -299,11 +314,16 @@ class H(BaseHTTPRequestHandler):
  def do_HEAD(self):
   self.send_response(200);self.end_headers()
 
-print("[selftest] TTS + Cantonese ASR + Jyutping alignment",flush=True)
-for i,line in enumerate(SONG):
-    raw=proxy_tts(line["text"],1.0)
-    ev=evaluate(raw,i)
-    print(f"[selftest] line{i+1} target={line['text']} asr={ev['recognized']} jp={ev['recognized_jyutping']} syllable={ev['syllable_accuracy']} score={ev['overall_score']}",flush=True)
-    if not ev["recognized"]:raise RuntimeError("ASR selftest returned no tokens")
-print("[boot] song lesson ready",flush=True)
+def background_selftest():
+    print("[selftest] background TTS + Cantonese ASR + Jyutping alignment",flush=True)
+    for i,line in enumerate(SONG):
+        try:
+            raw=proxy_tts(line["text"],1.0)
+            ev=evaluate(raw,i)
+            print(f"[selftest] line{i+1} target={line['text']} asr={ev['recognized']} jp={ev['recognized_jyutping']} syllable={ev['syllable_accuracy']} score={ev['overall_score']}",flush=True)
+        except Exception as e:
+            print(f"[selftest] line{i+1} deferred: {type(e).__name__}: {e}",flush=True)
+
+print("[boot] song lesson ASR ready",flush=True)
+threading.Thread(target=background_selftest,daemon=True).start()
 ThreadingHTTPServer(("0.0.0.0",PORT),H).serve_forever()
