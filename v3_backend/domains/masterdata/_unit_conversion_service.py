@@ -307,7 +307,35 @@ def create_unit_conversion_rule(
     body: UnitConversionRuleCreate,
     *,
     actor_id: int,
+    commit: bool = True,
 ) -> dict[str, Any]:
+    if body.scope_type not in {"source_unit", "product"}:
+        raise BadRequest("单位换算规则作用域必须是来源单位或商品包装")
+    if not body.source_system.strip() or not body.source_unit.strip() or not body.target_unit.strip():
+        raise BadRequest("来源系统、订购单位和供应商单位不能为空")
+    if (
+        not body.source_quantity.is_finite()
+        or not body.target_quantity.is_finite()
+        or body.source_quantity <= 0
+        or body.target_quantity <= 0
+    ):
+        raise BadRequest("换算数量必须是大于 0 的数字")
+    if body.target_step is not None and (
+        not body.target_step.is_finite() or body.target_step <= 0
+    ):
+        raise BadRequest("供应商订购步长必须大于 0")
+    if not body.evidence.strip():
+        raise BadRequest("审核依据不能为空")
+    if body.valid_from and body.valid_to and body.valid_from > body.valid_to:
+        raise BadRequest("有效开始日期不能晚于结束日期")
+    if body.scope_type == "source_unit" and (
+        body.product_id is not None or body.pack_signature is not None
+    ):
+        raise BadRequest("来源单位规则不能指定产品或包装指纹")
+    if body.scope_type == "product" and (
+        body.product_id is None or not (body.pack_signature or "").strip()
+    ):
+        raise BadRequest("商品包装规则必须指定产品和包装指纹")
     if body.scope_type == "product" and db.get(Product, body.product_id) is None:
         raise BadRequest("商品不存在，不能创建换算规则")
     values = body.model_dump()
@@ -324,7 +352,10 @@ def create_unit_conversion_rule(
     rule = UnitConversionRule(**values)
     db.add(rule)
     try:
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except IntegrityError as exc:
         db.rollback()
         raise Conflict("相同作用域的换算规则发生冲突") from exc
@@ -347,6 +378,7 @@ def verify_unit_conversion_rule(
     body: UnitConversionRuleVerify,
     *,
     actor_id: int,
+    commit: bool = True,
 ) -> dict[str, Any]:
     rule = _rule_for_update(db, rule_id, body.expected_revision)
     if rule.status != "draft":
@@ -366,7 +398,10 @@ def verify_unit_conversion_rule(
     rule.verified_at = datetime.now(UTC).replace(tzinfo=None)
     rule.updated_by = actor_id
     try:
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except IntegrityError as exc:
         db.rollback()
         raise Conflict("相同作用域已有已验证规则，请先停用旧规则") from exc
@@ -380,6 +415,7 @@ def retire_unit_conversion_rule(
     body: UnitConversionRuleRetire,
     *,
     actor_id: int,
+    commit: bool = True,
 ) -> dict[str, Any]:
     rule = _rule_for_update(db, rule_id, body.expected_revision)
     if rule.status == "retired":
@@ -388,7 +424,10 @@ def retire_unit_conversion_rule(
     if body.evidence is not None:
         rule.evidence = body.evidence
     rule.updated_by = actor_id
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(rule)
     return _serialize(rule)
 

@@ -163,6 +163,11 @@ def resolve_order_product_row(
     db: DbDep,
     user: Writer,
 ) -> OrderDetail:
+    if body.conversion_scope != "order_row" and not _is_admin(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="只有管理员可以保存可复用的单位换算规则",
+        )
     try:
         return service.resolve_order_product_row(
             db,
