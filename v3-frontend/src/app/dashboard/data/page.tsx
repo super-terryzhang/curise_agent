@@ -11,6 +11,7 @@ import PortsTab from "./PortsTab";
 import CategoriesTab from "./CategoriesTab";
 import AIQueryTab from "./AIQueryTab";
 import ExchangeRatesTab from "./ExchangeRatesTab";
+import UnitConversionRulesTab from "./UnitConversionRulesTab";
 
 export default function DataPage() {
   const searchParams = useSearchParams();
@@ -35,6 +36,7 @@ export default function DataPage() {
           <TabsTrigger value="ports">港口</TabsTrigger>
           <TabsTrigger value="categories">类别</TabsTrigger>
           <TabsTrigger value="exchange-rates">汇率</TabsTrigger>
+          <TabsTrigger value="unit-conversion-rules">单位换算规则</TabsTrigger>
           <TabsTrigger value="ai-query">
             <Sparkles className="h-3.5 w-3.5 mr-1" />
             AI 查询
@@ -58,6 +60,9 @@ export default function DataPage() {
         </TabsContent>
         <TabsContent value="exchange-rates" className="flex-1 overflow-hidden py-4">
           <ExchangeRatesTab />
+        </TabsContent>
+        <TabsContent value="unit-conversion-rules" className="flex-1 overflow-hidden py-4">
+          <UnitConversionRulesTab />
         </TabsContent>
         <TabsContent value="ai-query" className="flex-1 overflow-hidden py-4">
           <AIQueryTab />

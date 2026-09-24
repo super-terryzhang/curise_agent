@@ -155,6 +155,34 @@ export interface CategoryItem {
   status: boolean | null;
 }
 
+export type UnitConversionRuleStatus = "draft" | "verified" | "retired";
+export type UnitConversionRuleScope = "source_unit" | "product";
+
+export interface UnitConversionRuleItem {
+  id: number;
+  scope_type: UnitConversionRuleScope;
+  product_id: number | null;
+  source_system: string;
+  source_unit: string;
+  target_unit: string;
+  source_quantity: string | number;
+  target_quantity: string | number;
+  target_step: string | number | null;
+  break_pack: boolean | null;
+  pack_signature: string | null;
+  status: UnitConversionRuleStatus;
+  evidence: string;
+  valid_from: string | null;
+  valid_to: string | null;
+  verified_by: number | null;
+  verified_at: string | null;
+  created_by: number;
+  updated_by: number;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
 // ─── Helpers ───────────────────────────────────────────────────
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
@@ -265,6 +293,41 @@ export function listPorts() {
 
 export function listCategories() {
   return api<CategoryItem[]>("/api/data/categories");
+}
+
+// ─── Unit conversion rules ───────────────────────────────────
+
+export function listUnitConversionRules(params?: {
+  status?: UnitConversionRuleStatus;
+  product_id?: number;
+}): Promise<UnitConversionRuleItem[]> {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  if (params?.product_id) qs.set("product_id", String(params.product_id));
+  const query = qs.toString();
+  return api<UnitConversionRuleItem[]>(
+    `/api/data/unit-conversion-rules${query ? `?${query}` : ""}`,
+  );
+}
+
+export function verifyUnitConversionRule(
+  id: number,
+  data: { expected_revision: number; evidence: string },
+) {
+  return api<UnitConversionRuleItem>(
+    `/api/data/unit-conversion-rules/${id}/verify`,
+    patchBody(data),
+  );
+}
+
+export function retireUnitConversionRule(
+  id: number,
+  data: { expected_revision: number; evidence?: string },
+) {
+  return api<UnitConversionRuleItem>(
+    `/api/data/unit-conversion-rules/${id}/retire`,
+    patchBody(data),
+  );
 }
 
 // ─── Country CRUD ─────────────────────────────────────────────
