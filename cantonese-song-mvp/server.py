@@ -30,13 +30,11 @@ tts_cfg=sherpa_onnx.OfflineTtsConfig(
 if not tts_cfg.validate(): raise RuntimeError("TTS config invalid")
 tts=sherpa_onnx.OfflineTts(tts_cfg); tts_lock=threading.Lock()
 
-asr=sherpa_onnx.OfflineRecognizer.from_transducer(
- encoder=str(ASR_DIR/"encoder-epoch-45-avg-35.int8.onnx"),
- decoder=str(ASR_DIR/"decoder-epoch-45-avg-35.onnx"),
- joiner=str(ASR_DIR/"joiner-epoch-45-avg-35.int8.onnx"),
+asr=sherpa_onnx.OfflineRecognizer.from_wenet_ctc(
+ model=str(ASR_DIR/"model.int8.onnx"),
  tokens=str(ASR_DIR/"tokens.txt"),
  num_threads=2,sample_rate=16000,feature_dim=80,
- decoding_method="greedy_search",blank_penalty=1.2,provider="cpu")
+ decoding_method="greedy_search",provider="cpu")
 asr_lock=threading.Lock()
 
 def wav_bytes(samples:np.ndarray,sr:int)->bytes:
@@ -234,7 +232,7 @@ class H(BaseHTTPRequestHandler):
  def js(self,status,obj):self.sendb(status,json.dumps(obj,ensure_ascii=False).encode(),"application/json; charset=utf-8")
  def do_GET(self):
   p=urlparse(self.path).path
-  if p=="/api/health":return self.js(200,{"ok":True,"version":"song-lesson-1","tts":True,"asr":True,"external_api":False})
+  if p=="/api/health":return self.js(200,{"ok":True,"version":"song-lesson-2","tts":True,"asr":True,"external_api":False})
   item=STATIC.get(p)
   if not item:return self.sendb(404,b"Not found","text/plain")
   return self.sendb(200,item[0].read_bytes(),item[1])
