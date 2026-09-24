@@ -119,6 +119,7 @@ if need_audio:
 else:
     print("[reference] reuse pre-generated teaching/reference WAVs",flush=True)
 
-# Do not ship the 114MB TTS model in the Song Lesson runtime.
-shutil.rmtree(TMP_TTS,ignore_errors=True)
-print("[models] Cantonese ASR + fixed reference audio ready",flush=True)
+# Keep the VITS assets on disk for dynamic lyrics. Runtime code never keeps
+# VITS and ASR loaded at the same time, so this costs disk but not steady RAM.
+print(f"[models] runtime VITS retained at {TMP_TTS}",flush=True)
+print("[models] Cantonese ASR + VITS + fixed reference audio ready",flush=True)
