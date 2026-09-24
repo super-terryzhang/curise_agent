@@ -35,6 +35,9 @@ from domains.masterdata.schemas import (
     ProductUpdate,
     SupplierCreate,
     SupplierUpdate,
+    UnitConversionRuleCreate,
+    UnitConversionRuleRetire,
+    UnitConversionRuleVerify,
 )
 
 router = APIRouter(prefix="/data", tags=["data"])
@@ -182,6 +185,61 @@ def update_supplier(
 def delete_supplier(supplier_id: int, db: DbDep, _admin: Admin):
     try:
         service.delete_supplier(db, supplier_id)
+    except service.MasterdataError as exc:
+        raise _translate(exc) from exc
+
+
+# ═════════ Unit conversion rules ═════════════════════════════
+
+
+@router.get("/unit-conversion-rules")
+def list_unit_conversion_rules(
+    db: DbDep,
+    _reader: Writer,
+    rule_status: str | None = Query(None, alias="status"),
+    product_id: int | None = Query(None, ge=1),
+) -> list[dict[str, Any]]:
+    return service.list_unit_conversion_rules(
+        db, status=rule_status, product_id=product_id
+    )
+
+
+@router.post("/unit-conversion-rules", status_code=201)
+def create_unit_conversion_rule(
+    body: UnitConversionRuleCreate, db: DbDep, admin: Admin
+) -> dict[str, Any]:
+    try:
+        return service.create_unit_conversion_rule(db, body, actor_id=admin.id)
+    except service.MasterdataError as exc:
+        raise _translate(exc) from exc
+
+
+@router.patch("/unit-conversion-rules/{rule_id}/verify")
+def verify_unit_conversion_rule(
+    rule_id: int,
+    body: UnitConversionRuleVerify,
+    db: DbDep,
+    admin: Admin,
+) -> dict[str, Any]:
+    try:
+        return service.verify_unit_conversion_rule(
+            db, rule_id, body, actor_id=admin.id
+        )
+    except service.MasterdataError as exc:
+        raise _translate(exc) from exc
+
+
+@router.patch("/unit-conversion-rules/{rule_id}/retire")
+def retire_unit_conversion_rule(
+    rule_id: int,
+    body: UnitConversionRuleRetire,
+    db: DbDep,
+    admin: Admin,
+) -> dict[str, Any]:
+    try:
+        return service.retire_unit_conversion_rule(
+            db, rule_id, body, actor_id=admin.id
+        )
     except service.MasterdataError as exc:
         raise _translate(exc) from exc
 

@@ -15,6 +15,7 @@ from domains.masterdata.models import (
     Product,
     Supplier,
     SupplierCategory,
+    UnitConversionRule,
 )
 
 __all__ = [
@@ -26,5 +27,6 @@ __all__ = [
     "Supplier",
     "SupplierCategory",
     "Product",
+    "UnitConversionRule",
     "ExchangeRate",
 ]

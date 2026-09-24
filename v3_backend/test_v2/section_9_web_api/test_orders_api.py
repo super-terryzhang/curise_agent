@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 from domains.document.models import Document
-from domains.masterdata.models import Country, Port
+from domains.masterdata.models import Country, Port, UnitConversionRule
 from domains.orders.models import Order
 from test_v2.fixtures.helpers import login, make_minimal_pdf, seed_product, seed_user
 
@@ -467,6 +467,149 @@ def test_resolve_row_records_explicit_unit_conversion(client, db):
     }
     codes = {item["code"] for item in response.json()["anomaly_data"]["findings"]}
     assert "UNIT_CONVERSION_REQUIRED" not in codes
+
+
+def test_admin_can_save_verified_product_pack_conversion(client, db):
+    """Dropping the product fingerprint would reuse a decision after pack changes."""
+
+    user, product, order = _seed_resolvable_order(
+        db, email="resolver-product-admin@example.com"
+    )
+    user.role = "admin"
+    product.unit_size = "10kg"
+    order.products = [{**order.products[0], "manual_product_id": product.id}]
+    db.commit()
+    headers = login(client, user.email)
+
+    response = client.patch(
+        f"/api/orders/{order.id}/products/1/resolve",
+        json={
+            "action": "record_conversion",
+            "conversion_scope": "product",
+            "source_quantity": 9,
+            "source_unit": "CA24.0",
+            "rfq_quantity": 10,
+            "rfq_unit": "CA",
+            "rule_source_quantity": 9,
+            "rule_target_quantity": 10,
+            "target_step": 1,
+            "break_pack": None,
+            "evidence": "供应商确认相同商品包装按 10 箱报价",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    rule = db.query(UnitConversionRule).one()
+    assert rule.status == "verified"
+    assert rule.scope_type == "product"
+    assert rule.product_id == product.id
+    assert rule.pack_signature == '["CA","10KG",""]'
+    row = response.json()["products"][0]
+    assert row["conversion_evidence"]["rule_id"] == rule.id
+    assert row["conversion_evidence"]["scope_type"] == "product"
+
+
+def test_admin_can_save_exact_source_unit_conversion(client, db):
+    """A source rule must retain the complete unit pair and no product scope."""
+
+    user, product, order = _seed_resolvable_order(
+        db, email="resolver-source-admin@example.com"
+    )
+    user.role = "admin"
+    order.products = [{**order.products[0], "manual_product_id": product.id}]
+    db.commit()
+    headers = login(client, user.email)
+
+    response = client.patch(
+        f"/api/orders/{order.id}/products/1/resolve",
+        json={
+            "action": "record_conversion",
+            "conversion_scope": "source_unit",
+            "source_quantity": 9,
+            "source_unit": " ca24.0 ",
+            "rfq_quantity": 10,
+            "rfq_unit": "ca",
+            "rule_source_quantity": 9,
+            "rule_target_quantity": 10,
+            "evidence": "该 Oracle 单位组合全局确认",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    rule = db.query(UnitConversionRule).one()
+    assert rule.scope_type == "source_unit"
+    assert rule.product_id is None
+    assert rule.pack_signature is None
+    assert rule.source_unit == "CA24.0"
+    assert rule.target_unit == "CA"
+
+
+def test_employee_reusable_scope_is_forbidden_without_partial_writes(client, db):
+    """Rejecting after a flush would leave a global rule or row evidence behind."""
+
+    _user, product, order = _seed_resolvable_order(
+        db, email="resolver-reuse-employee@example.com"
+    )
+    order.products = [{**order.products[0], "manual_product_id": product.id}]
+    db.commit()
+    headers = login(client, "resolver-reuse-employee@example.com")
+
+    response = client.patch(
+        f"/api/orders/{order.id}/products/1/resolve",
+        json={
+            "action": "record_conversion",
+            "conversion_scope": "product",
+            "source_quantity": 9,
+            "source_unit": "CA24.0",
+            "rfq_quantity": 10,
+            "rfq_unit": "CA",
+            "rule_source_quantity": 9,
+            "rule_target_quantity": 10,
+            "evidence": "不应保存",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 403
+    db.expire_all()
+    assert db.query(UnitConversionRule).count() == 0
+    assert "conversion_evidence" not in db.get(Order, order.id).products[0]
+
+
+def test_reusable_relation_must_reproduce_entered_rfq_quantity(client, db):
+    """Saving a basis unrelated to the current row would poison later orders."""
+
+    user, product, order = _seed_resolvable_order(
+        db, email="resolver-invalid-basis@example.com"
+    )
+    user.role = "admin"
+    order.products = [{**order.products[0], "manual_product_id": product.id}]
+    db.commit()
+    headers = login(client, user.email)
+
+    response = client.patch(
+        f"/api/orders/{order.id}/products/1/resolve",
+        json={
+            "action": "record_conversion",
+            "conversion_scope": "product",
+            "source_quantity": 9,
+            "source_unit": "CA24.0",
+            "rfq_quantity": 10,
+            "rfq_unit": "CA",
+            "rule_source_quantity": 1,
+            "rule_target_quantity": 2,
+            "evidence": "错误关系",
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert "不能得到当前询价数量" in response.json()["detail"]
+    db.expire_all()
+    assert db.query(UnitConversionRule).count() == 0
+    assert "conversion_evidence" not in db.get(Order, order.id).products[0]
 
 
 def test_resolve_row_rejects_invalid_payload_and_other_users_order(client, db):

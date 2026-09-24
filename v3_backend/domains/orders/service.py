@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy.orm import Session, load_only
@@ -17,6 +18,8 @@ from sqlalchemy.orm.attributes import flag_modified
 from domains.document import repository as doc_repo
 from domains.identity import service as identity_service
 from domains.masterdata import repository as md_repo
+from domains.masterdata import schemas as masterdata_schemas
+from domains.masterdata import service as masterdata_service
 from domains.orders import anomaly, issues, repository
 from domains.orders.errors import BadRequest, NotFound, StatusConflict
 from domains.orders.matching import run_matching
@@ -29,6 +32,7 @@ from domains.orders.schemas import (
     OrderUpdateRequest,
 )
 from infrastructure.capabilities import CAP_FINANCIALS_VIEW
+from shared.numbers import decimal_to_json_value
 
 logger = logging.getLogger(__name__)
 
@@ -429,6 +433,7 @@ def resolve_order_product_row(
         raise BadRequest("商品行不存在")
 
     row = products[row_index - 1]
+    reusable_conversion: dict[str, Any] | None = None
     if body.action == "edit_source":
         editable = {"product_code", "product_name", "quantity", "unit", "unit_price"}
         supplied = editable.intersection(body.model_fields_set)
@@ -470,7 +475,11 @@ def resolve_order_product_row(
         source_quantity = body.source_quantity
         if source_quantity is None:
             source_quantity = row.get("quantity")
-        if source_quantity is None or float(source_quantity) <= 0:
+        try:
+            source_amount = Decimal(str(source_quantity))
+        except (InvalidOperation, TypeError, ValueError):
+            raise BadRequest("原订购数量必须是有效数字") from None
+        if not source_amount.is_finite() or source_amount <= 0:
             raise BadRequest("原订购数量必须大于 0")
         source_unit = (body.source_unit or row.get("unit") or "").strip()
         rfq_unit = (body.rfq_unit or "").strip()
@@ -479,13 +488,57 @@ def resolve_order_product_row(
             raise BadRequest("原订购单位和询价单位不能为空")
         if not evidence:
             raise BadRequest("请填写人工确认依据")
+        try:
+            rfq_amount = Decimal(str(body.rfq_quantity))
+        except (InvalidOperation, TypeError, ValueError):
+            raise BadRequest("换算数量必须是有效数字") from None
+        if not source_amount.is_finite() or source_amount <= 0:
+            raise BadRequest("原订购数量必须大于 0")
+
+        conversion_evidence: dict[str, Any] = {
+            "verified": True,
+            "evidence": evidence,
+        }
+        if body.conversion_scope != "order_row":
+            if not is_admin:
+                raise BadRequest("只有管理员可以保存可复用的单位换算规则")
+            if body.rule_source_quantity is None or body.rule_target_quantity is None:
+                raise BadRequest("请填写可复用规则两侧的换算数量")
+            rule_source = body.rule_source_quantity
+            rule_target = body.rule_target_quantity
+            if (
+                not rule_source.is_finite()
+                or not rule_target.is_finite()
+                or rule_source <= 0
+                or rule_target <= 0
+            ):
+                raise BadRequest("换算规则数量必须大于 0")
+            calculated = source_amount * rule_target / rule_source
+            if calculated != rfq_amount:
+                raise BadRequest("当前换算规则不能得到当前询价数量，请核对两侧关系")
+            if body.target_step is not None:
+                if not body.target_step.is_finite() or body.target_step <= 0:
+                    raise BadRequest("供应商订购步长必须大于 0")
+                if rfq_amount % body.target_step != 0:
+                    raise BadRequest("当前询价数量不符合供应商订购步长")
+            conversion_evidence["scope_type"] = body.conversion_scope
+            reusable_conversion = {
+                "scope_type": body.conversion_scope,
+                "source_quantity": rule_source,
+                "target_quantity": rule_target,
+                "target_step": body.target_step,
+                "break_pack": body.break_pack,
+                "source_unit": source_unit,
+                "target_unit": rfq_unit,
+                "evidence": evidence,
+            }
         row.update(
             {
-                "source_quantity": float(source_quantity),
+                "source_quantity": decimal_to_json_value(source_amount),
                 "source_unit": source_unit,
-                "rfq_quantity": body.rfq_quantity,
+                "rfq_quantity": decimal_to_json_value(rfq_amount),
                 "rfq_unit": rfq_unit,
-                "conversion_evidence": {"verified": True, "evidence": evidence},
+                "conversion_evidence": conversion_evidence,
             }
         )
 
@@ -505,6 +558,80 @@ def resolve_order_product_row(
         if body.action == "record_conversion" and result.get("match_status") != "matched":
             db.rollback()
             raise BadRequest("商品尚未匹配，不能登记单位换算")
+        if reusable_conversion is not None:
+            matched = result.get("matched_product") or {}
+            product_id = matched.get("id")
+            if not product_id:
+                db.rollback()
+                raise BadRequest("商品尚未匹配，不能保存可复用换算规则")
+            pack_signature = None
+            if reusable_conversion["scope_type"] == "product":
+                pack_signature = masterdata_service.product_pack_signature(
+                    matched.get("unit"),
+                    matched.get("unit_size"),
+                    matched.get("pack_size"),
+                )
+            try:
+                created = masterdata_service.create_unit_conversion_rule(
+                    db,
+                    masterdata_schemas.UnitConversionRuleCreate(
+                        scope_type=reusable_conversion["scope_type"],
+                        product_id=(
+                            int(product_id)
+                            if reusable_conversion["scope_type"] == "product"
+                            else None
+                        ),
+                        source_system="oracle",
+                        source_unit=reusable_conversion["source_unit"],
+                        target_unit=reusable_conversion["target_unit"],
+                        source_quantity=reusable_conversion["source_quantity"],
+                        target_quantity=reusable_conversion["target_quantity"],
+                        target_step=reusable_conversion["target_step"],
+                        break_pack=reusable_conversion["break_pack"],
+                        pack_signature=pack_signature,
+                        evidence=reusable_conversion["evidence"],
+                    ),
+                    actor_id=user_id,
+                    commit=False,
+                )
+                verified = masterdata_service.verify_unit_conversion_rule(
+                    db,
+                    created["id"],
+                    masterdata_schemas.UnitConversionRuleVerify(
+                        expected_revision=created["revision"],
+                        evidence=reusable_conversion["evidence"],
+                    ),
+                    actor_id=user_id,
+                    commit=False,
+                )
+            except masterdata_service.MasterdataError as exc:
+                db.rollback()
+                raise BadRequest(str(exc)) from exc
+
+            row = dict((order.products or [])[row_index - 1])
+            row["conversion_evidence"] = {
+                "verified": True,
+                "rule_id": verified["id"],
+                "rule_revision": verified["revision"],
+                "scope_type": verified["scope_type"],
+                "source_quantity": format(verified["source_quantity"], ".10f"),
+                "target_quantity": format(verified["target_quantity"], ".10f"),
+                "source_unit": verified["source_unit"],
+                "target_unit": verified["target_unit"],
+                "pack_signature": verified["pack_signature"],
+                "evidence": verified["evidence"],
+                "verified_by": verified["verified_by"],
+                "verified_at": (
+                    verified["verified_at"].isoformat()
+                    if verified["verified_at"] is not None
+                    else None
+                ),
+            }
+            products = [dict(item) for item in (order.products or [])]
+            products[row_index - 1] = row
+            order.products = products
+            flag_modified(order, "products")
+            run_matching(order, db)
         pipeline = (order.anomaly_data or {}).get("pipeline") or []
         order.anomaly_data = anomaly.run_anomaly_check(order, pipeline=pipeline)
         flag_modified(order, "anomaly_data")
@@ -512,6 +639,7 @@ def resolve_order_product_row(
         order.processing_error = None
         repository.save(db, order)
     except BadRequest:
+        db.rollback()
         raise
     except Exception:
         db.rollback()

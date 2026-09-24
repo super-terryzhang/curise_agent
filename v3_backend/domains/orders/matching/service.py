@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from domains.orders.matching import code_first, geo, llm_refine
+from domains.orders.matching.unit_conversion import apply_verified_unit_conversions
 from domains.orders.models import Order
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,15 @@ def run_matching(order: Order, db: Session) -> dict[str, Any]:
 
     # Stage 3: LLM fuzzy refinement (Fake / Gemini)
     llm_refine.apply_refinement(all_results, unmatched, pool)
+
+    # Stage 4: Apply only verified, exact-scope unit conversion rules. The
+    # coordinator isolates failures to a row and is reversible by feature flag.
+    apply_verified_unit_conversions(
+        order,
+        db,
+        all_results,
+        delivery_dt.date() if delivery_dt is not None else None,
+    )
 
     stats = _summarize(all_results)
     order.match_results = all_results

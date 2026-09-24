@@ -26,6 +26,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -182,6 +183,106 @@ class Product(Base):
 
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     price_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    __mapper_args__ = {"version_id_col": revision}
+
+
+class UnitConversionRule(Base):
+    """Audited, reusable conversion from a PO unit into a supplier unit."""
+
+    __tablename__ = "v3_unit_conversion_rules"
+    __table_args__ = (
+        CheckConstraint(
+            "scope_type IN ('source_unit', 'product')",
+            name="ck_unit_conversion_scope_type",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'verified', 'retired')",
+            name="ck_unit_conversion_status",
+        ),
+        CheckConstraint(
+            "source_quantity > 0 AND target_quantity > 0",
+            name="ck_unit_conversion_positive_quantities",
+        ),
+        CheckConstraint(
+            "target_step IS NULL OR target_step > 0",
+            name="ck_unit_conversion_positive_target_step",
+        ),
+        CheckConstraint(
+            "revision > 0",
+            name="ck_unit_conversion_positive_revision",
+        ),
+        CheckConstraint(
+            "valid_from IS NULL OR valid_to IS NULL OR valid_from <= valid_to",
+            name="ck_unit_conversion_valid_period",
+        ),
+        CheckConstraint(
+            "(scope_type = 'source_unit' AND product_id IS NULL "
+            "AND pack_signature IS NULL) OR "
+            "(scope_type = 'product' AND product_id IS NOT NULL "
+            "AND pack_signature IS NOT NULL)",
+            name="ck_unit_conversion_scope_product",
+        ),
+        CheckConstraint(
+            "status != 'verified' OR (verified_by IS NOT NULL AND verified_at IS NOT NULL)",
+            name="ck_unit_conversion_verified_metadata",
+        ),
+        CheckConstraint(
+            "length(trim(evidence)) > 0",
+            name="ck_unit_conversion_evidence",
+        ),
+        Index(
+            "uq_unit_conversion_verified_source",
+            "source_system",
+            "source_unit",
+            "target_unit",
+            unique=True,
+            postgresql_where=text("status = 'verified' AND product_id IS NULL"),
+            sqlite_where=text("status = 'verified' AND product_id IS NULL"),
+        ),
+        Index(
+            "uq_unit_conversion_verified_product",
+            "product_id",
+            "source_system",
+            "source_unit",
+            "target_unit",
+            "pack_signature",
+            unique=True,
+            postgresql_where=text("status = 'verified' AND product_id IS NOT NULL"),
+            sqlite_where=text("status = 'verified' AND product_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scope_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    product_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=True
+    )
+    source_system: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_unit: Mapped[str] = mapped_column(String(50), nullable=False)
+    target_unit: Mapped[str] = mapped_column(String(50), nullable=False)
+    source_quantity: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
+    target_quantity: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
+    target_step: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    break_pack: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    pack_signature: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    evidence: Mapped[str] = mapped_column(Text, nullable=False)
+    valid_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    valid_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    verified_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_by: Mapped[int] = mapped_column(Integer, nullable=False)
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
     __mapper_args__ = {"version_id_col": revision}
 
 

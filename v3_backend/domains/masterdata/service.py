@@ -43,6 +43,15 @@ from domains.masterdata._products_service import (
     list_products,
     update_product,
 )
+from domains.masterdata._unit_conversion_service import (
+    create_unit_conversion_rule,
+    evaluate_unit_conversion,
+    list_unit_conversion_rules,
+    normalize_unit,
+    product_pack_signature,
+    retire_unit_conversion_rule,
+    verify_unit_conversion_rule,
+)
 from domains.masterdata._validation import (
     assert_no_references,
     check_unique_code,
@@ -142,6 +151,14 @@ __all__ = [
     "update_exchange_rate",
     "delete_exchange_rate",
     "fetch_exchange_rates",
+    # Reusable unit conversion rules
+    "normalize_unit",
+    "product_pack_signature",
+    "evaluate_unit_conversion",
+    "list_unit_conversion_rules",
+    "create_unit_conversion_rule",
+    "verify_unit_conversion_rule",
+    "retire_unit_conversion_rule",
 ]
 
 

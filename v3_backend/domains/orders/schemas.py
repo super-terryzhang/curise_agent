@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -125,11 +126,16 @@ class OrderRowResolveRequest(BaseModel):
     quantity: float | None = None
     unit: str | None = None
     unit_price: float | None = None
-    source_quantity: float | None = None
+    source_quantity: Decimal | None = None
     source_unit: str | None = None
-    rfq_quantity: float | None = None
+    rfq_quantity: Decimal | None = None
     rfq_unit: str | None = None
     evidence: str | None = None
+    conversion_scope: Literal["order_row", "product", "source_unit"] = "order_row"
+    rule_source_quantity: Decimal | None = None
+    rule_target_quantity: Decimal | None = None
+    target_step: Decimal | None = None
+    break_pack: bool | None = None
 
 
 class OrderReviewRequest(BaseModel):

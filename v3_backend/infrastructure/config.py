@@ -135,6 +135,11 @@ class Settings(BaseSettings):
     # background. Set false to fall back to the synchronous path.
     ASYNC_DOC_TYPE_ENRICH: bool = True
 
+    # Apply verified masterdata unit-conversion rules during order matching.
+    # Expand-first rollout keeps this disabled until migration and shadow audit
+    # are complete; false preserves the existing one-row manual workflow.
+    UNIT_CONVERSION_RULES_ENABLED: bool = False
+
     @model_validator(mode="after")
     def _validate_production(self) -> Settings:
         if self.K_SERVICE and self.ENV not in ("production", "staging"):
