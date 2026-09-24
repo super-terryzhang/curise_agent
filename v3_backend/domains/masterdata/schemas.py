@@ -7,9 +7,10 @@ and what the v2 frontend expects.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from decimal import Decimal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from domains.masterdata._money import parse_product_price
 
@@ -312,6 +313,102 @@ class ProductPricePeriodResponse(BaseModel):
 class ProductListResponse(BaseModel):
     total: int
     items: list[ProductResponse]
+
+
+# ─── Unit conversion rules ───────────────────────────────────
+
+
+class UnitConversionRuleCreate(BaseModel):
+    scope_type: Literal["source_unit", "product"]
+    product_id: int | None = Field(None, ge=1)
+    source_system: str = Field(min_length=1, max_length=30)
+    source_unit: str = Field(min_length=1, max_length=50)
+    target_unit: str = Field(min_length=1, max_length=50)
+    source_quantity: Decimal = Field(gt=0)
+    target_quantity: Decimal = Field(gt=0)
+    target_step: Decimal | None = Field(None, gt=0)
+    break_pack: bool | None = None
+    pack_signature: str | None = Field(None, max_length=255)
+    evidence: str = Field(min_length=1)
+    valid_from: date | None = None
+    valid_to: date | None = None
+
+    @field_validator("source_system", "source_unit", "target_unit", "evidence")
+    @classmethod
+    def non_blank_text(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("不能为空")
+        return stripped
+
+    @model_validator(mode="after")
+    def validate_scope_and_dates(self):
+        if self.scope_type == "source_unit" and (
+            self.product_id is not None or self.pack_signature is not None
+        ):
+            raise ValueError("来源单位规则不能指定产品或包装指纹")
+        if self.scope_type == "product" and (
+            self.product_id is None or not (self.pack_signature or "").strip()
+        ):
+            raise ValueError("商品规则必须指定产品和包装指纹")
+        if self.valid_from and self.valid_to and self.valid_from > self.valid_to:
+            raise ValueError("有效开始日期不能晚于结束日期")
+        return self
+
+
+class UnitConversionRuleVerify(BaseModel):
+    expected_revision: int = Field(ge=1)
+    evidence: str = Field(min_length=1)
+
+    @field_validator("evidence")
+    @classmethod
+    def evidence_not_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("审核依据不能为空")
+        return stripped
+
+
+class UnitConversionRuleRetire(BaseModel):
+    expected_revision: int = Field(ge=1)
+    evidence: str | None = None
+
+    @field_validator("evidence")
+    @classmethod
+    def evidence_not_blank(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("停用依据不能为空")
+        return stripped
+
+
+class UnitConversionRuleResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scope_type: str
+    product_id: int | None = None
+    source_system: str
+    source_unit: str
+    target_unit: str
+    source_quantity: Decimal
+    target_quantity: Decimal
+    target_step: Decimal | None = None
+    break_pack: bool | None = None
+    pack_signature: str | None = None
+    status: str
+    evidence: str
+    valid_from: date | None = None
+    valid_to: date | None = None
+    verified_by: int | None = None
+    verified_at: datetime | None = None
+    created_by: int
+    updated_by: int
+    revision: int
+    created_at: datetime
+    updated_at: datetime
 
 
 # ─── Product Images (R5 2026-06-22) ───────────────────────────
