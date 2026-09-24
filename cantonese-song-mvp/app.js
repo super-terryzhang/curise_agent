@@ -48,13 +48,22 @@ async function evaluate(i,blob){
 function showResult(i,d){
  const c=card(i),box=c.querySelector(".result");box.classList.remove("hidden");
  const wrong=d.items.filter(x=>x.status==="wrong").length,tone=d.items.filter(x=>x.status==="tone").length;
- box.innerHTML='<div class="summary"><div class="metric"><span>整句分數</span><strong>'+d.overall_score+'</strong></div><div class="metric"><span>內容辨識</span><strong>'+d.content_accuracy+'%</strong></div><div class="metric"><span>需注意</span><strong>'+(wrong+tone)+' 字</strong></div></div><div class="status">ASR 聽到：'+esc(d.recognized||"（沒有辨識結果）")+'</div><div class="legend"><span><i class="dot g"></i>字 + 聲調穩定</span><span><i class="dot a"></i>字正確，但聲調需調整</span><span><i class="dot r"></i>疑似讀錯 / 漏讀</span></div><div class="chars">'+d.items.map(x=>'<div class="charResult '+x.status+'" data-index="'+x.index+'"><b>'+esc(x.char)+'</b><code>'+esc(x.jyutping)+'</code><small>'+x.score+' 分</small></div>').join("")+'</div><div class="detail">點一個字查看細節。</div>';
+ box.innerHTML='<div class="summary"><div class="metric"><span>整句分數</span><strong>'+d.overall_score+'</strong></div><div class="metric"><span>音節匹配</span><strong>'+d.syllable_accuracy+'%</strong></div><div class="metric"><span>需注意</span><strong>'+(wrong+tone)+' 字</strong></div></div><div class="status">ASR 聽到：'+esc(d.recognized||"（沒有辨識結果）")+'<br>粵拼候選：'+esc(d.recognized_jyutping||"—")+'<br><small>同音異字不算錯，真正判分以粵拼音節 + F0 聲調為準。</small></div><div class="legend"><span><i class="dot g"></i>字 + 聲調穩定</span><span><i class="dot a"></i>字正確，但聲調需調整</span><span><i class="dot r"></i>疑似讀錯 / 漏讀</span></div><div class="chars">'+d.items.map(x=>'<div class="charResult '+x.status+'" data-index="'+x.index+'"><b>'+esc(x.char)+'</b><code>'+esc(x.jyutping)+'</code><small>'+x.score+' 分</small></div>').join("")+'</div><div class="detail">點一個字查看細節。</div>';
  box.querySelectorAll(".charResult").forEach(el=>el.onclick=()=>detail(box,d.items[+el.dataset.index]));
 }
 function detail(box,x){
  let s='<b>'+esc(x.char)+' · '+esc(x.jyutping)+'</b><br>';
- if(x.op==="same")s+='ASR：聽成同一個字 ✓';else if(x.op==="sub")s+='ASR：聽成「'+esc(x.heard)+'」';else s+='ASR：這個字可能漏讀 / 沒有可靠辨識';
- if(x.tone){s+='<br>聲調：目標 T'+x.expected_tone+'；最接近 T'+x.tone.predicted_tone+'；聲調品質 '+x.tone.tone_score+'/100';if(x.tone.notes?.length)s+='<br>細節：'+x.tone.notes.map(esc).join("、");}
+ if(!x.segmental_match){
+   s+='ASR：聽成「'+esc(x.heard||"∅")+(x.heard_jyutping?' '+esc(x.heard_jyutping):'')+'」；聲母/韻母與目標不一致';
+ }else if(x.homophone){
+   s+='ASR：聽成同音字「'+esc(x.heard)+' '+esc(x.heard_jyutping||"")+'」；音節與目標一致 ✓';
+ }else if(!x.same_char){
+   s+='ASR：聽成「'+esc(x.heard)+(x.heard_jyutping?' '+esc(x.heard_jyutping):'')+'」；聲母/韻母一致 ✓';
+ }else{
+   s+='ASR：字與音節均匹配 ✓';
+ }
+ if(x.segmental_match&&x.heard_jyutping&&!x.asr_tone_match)s+='<br>ASR 的聲調候選不同；以下以連續 F0 曲線為主要判據。';
+ if(x.tone){s+='<br>聲調：目標 T'+x.expected_tone+'；F0 最接近 T'+x.tone.predicted_tone+'；聲調品質 '+x.tone.tone_score+'/100';if(x.tone.notes?.length)s+='<br>細節：'+x.tone.notes.map(esc).join("、");}
  else s+='<br>聲調：沒有足夠穩定的 F0 可評估';
  box.querySelector(".detail").innerHTML=s;
 }
