@@ -93,11 +93,10 @@ const server=http.createServer(async(req,res)=>{
     if(u.pathname==="/api/tts"){
       const k=apiKey(req);
       if(!k)return json(res,401,{error:"請先輸入 API Key。"});
-      const payload={
+
+      const basePayload={
         api_key:k,
         text:String(d.text||""),
-        jyutping:String(d.jyutping||""),
-        model_id:"v6",
         frame_rate:"24000",
         speed:0.92,
         pitch:0,
@@ -105,18 +104,58 @@ const server=http.createServer(async(req,res)=>{
         output_extension:"wav",
         should_return_timestamp:false
       };
-      console.log("[tts] upstream start",{textLength:payload.text.length,jyutpingLength:payload.jyutping.length});
-      const t0=Date.now();
-      const r=await fetch(CAI+"/tts",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload),signal:AbortSignal.timeout(20000)});
-      console.log("[tts] upstream response",{status:r.status,contentType:r.headers.get("content-type"),ms:Date.now()-t0});
-      if(!r.ok){
+      const candidates=[
+        {label:"v6",payload:{...basePayload,model_id:"v6",jyutping:String(d.jyutping||"")}},
+        {label:"v5",payload:{...basePayload,model_id:"v5",jyutping:String(d.jyutping||"")}},
+        {label:"default",payload:{...basePayload}}
+      ];
+
+      let lastError=null;
+      for(const candidate of candidates){
+        console.log("[tts] try",candidate.label,{textLength:basePayload.text.length,jyutpingLength:String(d.jyutping||"").length});
+        const t0=Date.now();
+        const r=await fetch(CAI+"/tts",{
+          method:"POST",
+          headers:{"content-type":"application/json"},
+          body:JSON.stringify(candidate.payload),
+          signal:AbortSignal.timeout(20000)
+        });
+        const ct=r.headers.get("content-type")||"";
+        console.log("[tts] response",candidate.label,{status:r.status,contentType:ct,ms:Date.now()-t0});
+
+        if(r.ok){
+          const buf=Buffer.from(await r.arrayBuffer());
+          console.log("[tts] success",candidate.label,{bytes:buf.length});
+          res.writeHead(200,{
+            "content-type":ct||"audio/wav",
+            "cache-control":"no-store",
+            "x-content-type-options":"nosniff",
+            "x-tts-model-used":candidate.label
+          });
+          return res.end(buf);
+        }
+
         const x=await parseUpstream(r);
-        console.error("[tts] upstream error",JSON.stringify(x).slice(0,800));
-        return json(res,r.status,{error:upstreamError(x,"TTS 失敗")});
+        const message=String(upstreamError(x,"TTS 失敗"));
+        console.error("[tts] error",candidate.label,r.status,message.slice(0,500));
+        lastError={status:r.status,message};
+
+        // Auth/quota errors will not be fixed by trying another model.
+        if([401,403,429].includes(r.status)){
+          return json(res,r.status,{error:message});
+        }
+
+        // Only fall through to the next model when the upstream rejects model selection.
+        const modelRejected=/model/i.test(message)&&/(invalid|unsupported|not found|unknown|unavailable)/i.test(message);
+        if(candidate.label!=="default"&&modelRejected)continue;
+
+        // Some deployments return a bare "Invalid model id" as a generic 400/422.
+        if(candidate.label!=="default"&&[400,422].includes(r.status)&&/model/i.test(message))continue;
+
+        return json(res,r.status||502,{error:message});
       }
-      const buf=Buffer.from(await r.arrayBuffer());
-      console.log("[tts] bytes",buf.length);
-      return send(res,200,buf,r.headers.get("content-type")||"audio/wav");
+
+      return json(res,lastError?.status||502,{error:lastError?.message||"TTS 失敗"});
     }
 
     if(u.pathname==="/api/score"){
