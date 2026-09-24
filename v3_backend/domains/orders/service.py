@@ -17,7 +17,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from domains.document import repository as doc_repo
 from domains.identity import service as identity_service
 from domains.masterdata import repository as md_repo
-from domains.orders import anomaly, repository
+from domains.orders import anomaly, issues, repository
 from domains.orders.errors import BadRequest, NotFound, StatusConflict
 from domains.orders.matching import run_matching
 from domains.orders.models import Order
@@ -662,7 +662,8 @@ def _to_detail(order: Order, db: Session, user_id: int) -> OrderDetail:
         if requesting_user.role != "superadmin":
             related_query = related_query.filter(Order.user_id == user_id)
         related_orders = related_query.all()
-    detail.actionable_count = anomaly.actionable_row_counts(related_orders).get(order.id, 0)
+    detail.issue_overview = issues.build_issue_overview(order, related_orders)
+    detail.actionable_count = detail.issue_overview["actionable_row_count"]
     if not identity_service.has_capability(db, user_id, CAP_FINANCIALS_VIEW):
         detail.financial_data = None
     flat = _flat_metadata(order, db)

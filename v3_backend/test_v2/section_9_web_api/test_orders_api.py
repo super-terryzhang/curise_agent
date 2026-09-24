@@ -28,7 +28,6 @@ from domains.masterdata.models import Country, Port
 from domains.orders.models import Order
 from test_v2.fixtures.helpers import login, make_minimal_pdf, seed_user
 
-
 # ─── Helpers ──────────────────────────────────────────────────
 
 
@@ -135,6 +134,13 @@ def test_get_order_returns_detail(client, db):
     assert body["file_type"] == "pdf"
     assert "products" in body
     assert "match_results" in body
+    assert body["issue_overview"] == {
+        "schema_version": 1,
+        "actionable_row_count": 0,
+        "warning_row_count": 0,
+        "rows": [],
+        "non_row_findings": [],
+    }
 
 
 def test_get_other_users_order_returns_404(client, db):

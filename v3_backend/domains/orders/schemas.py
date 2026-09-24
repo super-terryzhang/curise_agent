@@ -65,6 +65,7 @@ class OrderDetail(BaseModel):
     match_statistics: dict[str, Any] | None = None
     anomaly_data: dict[str, Any] | None = None
     actionable_count: int = 0
+    issue_overview: dict[str, Any] | None = None
     financial_data: dict[str, Any] | None = None
     inquiry_data: dict[str, Any] | None = None
     is_reviewed: bool = False
