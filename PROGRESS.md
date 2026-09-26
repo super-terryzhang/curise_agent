@@ -1,6 +1,13 @@
 # 项目进度
 
-更新时间：2026-09-24（Asia/Tokyo）
+更新时间：2026-09-26（Asia/Tokyo）
+
+## 2026-09-26 最新上线
+
+- PO 商品明细的供应商列已改为读取当前匹配对应的供应商主数据名称，不再依赖旧询价快照或显示“供应商 #ID”；真实主数据缺失时会明确提示资料缺失。
+- 生产源码为 `main@531db856de74bb6b5c01e6b266aaccee208ba695`，PR #10、PR CI `36228224683` 和 main CI `36228653584` 均通过；正式后端 `cruise-v3-backend-supplier-names-20260926` 接收 100% 流量，镜像 digest 为 `sha256:ed36b3e8cd1fcdff1ec6da9728553864b11114db985e8a52ab27ff4e8833daff`。
+- 正式前端为 `dpl_BVFDhf8WnSJ9TfbrpVnG3ioA1Eq1`；Oracle Job generation 18 使用同一镜像，三个 Scheduler 仍为 ENABLED。数据库没有迁移并保持 `0031_unit_conversion_rules`。
+- 生产只读核验确认 PO165047CCI 仍为 56 行、53 行当前匹配、3 项需处理，并返回三个真实供应商名称；本轮没有重新匹配、修改订单或生成询价。完整证据见 [生产核验](DEPLOYMENT_VERIFIED_2026-09-26_ORDER_SUPPLIER_NAMES.md)。
 
 ## 2026-09-24 最新上线
 
