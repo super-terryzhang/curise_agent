@@ -54,6 +54,7 @@ export interface MatchResult {
     contract_price: number | null;
     currency: string | null;
     supplier_id: number | null;
+    supplier_name?: string | null;
     category_id: number | null;
     pack_size: string | null;
     unit_size?: string | null;

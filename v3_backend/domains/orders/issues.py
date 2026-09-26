@@ -44,12 +44,19 @@ _RESOLUTIONS: dict[str, tuple[str, str]] = {
 }
 
 
-def build_issue_overview(order: Order, related_orders: Iterable[Order]) -> dict[str, Any]:
+def build_issue_overview(
+    order: Order,
+    related_orders: Iterable[Order],
+    supplier_names: dict[int, str] | None = None,
+) -> dict[str, Any]:
     """Return deterministic issues for *order*, grouped by its product rows."""
     products = list(order.products or [])
     results = list(order.match_results or [])
     row_count = max(len(products), len(results))
-    rows = [_build_row(index, products, results) for index in range(row_count)]
+    rows = [
+        _build_row(index, products, results, supplier_names or {})
+        for index in range(row_count)
+    ]
 
     findings = _collect_findings(order, related_orders)
     findings.extend(_unmatched_fallback_findings(rows, findings))
@@ -101,6 +108,7 @@ def _build_row(
     index: int,
     products: list[dict[str, Any]],
     results: list[dict[str, Any]],
+    supplier_names: dict[int, str],
 ) -> dict[str, Any]:
     source = products[index] if index < len(products) else {}
     result = results[index] if index < len(results) else {}
@@ -109,6 +117,13 @@ def _build_row(
     combined["match_status"] = (
         "matched" if result.get("match_status") == "matched" else "not_matched"
     )
+    matched_product = combined.get("matched_product")
+    if isinstance(matched_product, dict):
+        matched_product = dict(matched_product)
+        supplier_id = matched_product.get("supplier_id")
+        if isinstance(supplier_id, int) and not isinstance(supplier_id, bool):
+            matched_product["supplier_name"] = supplier_names.get(supplier_id)
+        combined["matched_product"] = matched_product
     return combined
 
 

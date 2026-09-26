@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 from domains.document.models import Document
-from domains.masterdata.models import Country, Port, UnitConversionRule
+from domains.masterdata.models import Country, Port, Supplier, UnitConversionRule
 from domains.orders.models import Order
 from test_v2.fixtures.helpers import login, make_minimal_pdf, seed_product, seed_user
 
@@ -172,6 +172,53 @@ def test_get_order_returns_detail(client, db):
         "rows": [],
         "non_row_findings": [],
     }
+
+
+def test_get_order_enriches_current_match_with_supplier_name(client, db):
+    """The PO detail must not depend on an old inquiry snapshot for names."""
+    user = seed_user(db, email="supplier-name@example.com", role="employee")
+    supplier = Supplier(name="株式会社 松武")
+    db.add(supplier)
+    db.flush()
+    order = Order(
+        user_id=user.id,
+        filename="supplier-name.pdf",
+        file_type="pdf",
+        status="ready",
+        products=[{
+            "product_code": "PO-APPLE",
+            "product_name": "APPLE GRANNY SMITH",
+            "quantity": 150,
+            "unit": "KG2.2",
+        }],
+        product_count=1,
+        match_results=[{
+            "product_code": "PO-APPLE",
+            "product_name": "APPLE GRANNY SMITH",
+            "quantity": 150,
+            "unit": "KG2.2",
+            "match_status": "matched",
+            "matched_product": {
+                "id": 100,
+                "code": "99PRD010588",
+                "product_name_en": "APPLE GRANNY SMITH US EXTRA FANCY 125CT/40LB",
+                "supplier_id": supplier.id,
+            },
+        }],
+        anomaly_data={},
+    )
+    db.add(order)
+    db.commit()
+
+    response = client.get(
+        f"/api/orders/{order.id}",
+        headers=login(client, user.email),
+    )
+
+    assert response.status_code == 200, response.text
+    matched_product = response.json()["issue_overview"]["rows"][0]["matched_product"]
+    assert matched_product["supplier_id"] == supplier.id
+    assert matched_product["supplier_name"] == "株式会社 松武"
 
 
 def test_get_other_users_order_returns_404(client, db):

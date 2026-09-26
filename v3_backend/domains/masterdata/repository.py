@@ -90,6 +90,15 @@ def get_supplier(db: Session, supplier_id: int) -> Supplier | None:
     return db.get(Supplier, supplier_id)
 
 
+def get_supplier_names(db: Session, supplier_ids: set[int]) -> dict[int, str]:
+    if not supplier_ids:
+        return {}
+    rows = db.execute(
+        select(Supplier.id, Supplier.name).where(Supplier.id.in_(supplier_ids))
+    ).all()
+    return dict(rows)
+
+
 def supplier_exists(db: Session, supplier_id: int) -> bool:
     return db.get(Supplier, supplier_id) is not None
 

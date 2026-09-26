@@ -901,7 +901,20 @@ def _to_detail(order: Order, db: Session, user_id: int) -> OrderDetail:
         if requesting_user.role != "superadmin":
             related_query = related_query.filter(Order.user_id == user_id)
         related_orders = related_query.all()
-    detail.issue_overview = issues.build_issue_overview(order, related_orders)
+    supplier_ids = {
+        supplier_id
+        for result in (order.match_results or [])
+        if isinstance(result, dict)
+        and isinstance((matched := result.get("matched_product")), dict)
+        and isinstance((supplier_id := matched.get("supplier_id")), int)
+        and not isinstance(supplier_id, bool)
+    }
+    supplier_names = md_repo.get_supplier_names(db, supplier_ids)
+    detail.issue_overview = issues.build_issue_overview(
+        order,
+        related_orders,
+        supplier_names=supplier_names,
+    )
     detail.actionable_count = detail.issue_overview["actionable_row_count"]
     if not identity_service.has_capability(db, user_id, CAP_FINANCIALS_VIEW):
         detail.financial_data = None
