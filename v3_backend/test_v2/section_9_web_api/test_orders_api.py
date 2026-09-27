@@ -148,6 +148,61 @@ def test_list_orders_returns_only_my_orders(client, db):
     assert a_order["id"] not in ids
 
 
+def test_order_list_exposes_pending_llm_port_resolution(client, db):
+    user = seed_user(db, email="port-list@example.com", role="employee")
+    pending = Order(
+        user_id=user.id,
+        filename="ai-port.pdf",
+        file_type="pdf",
+        status="ready",
+        port_id=21,
+        country_id=9,
+        port_resolution_method="llm",
+        port_resolution_status="pending_review",
+        port_resolution_data={
+            "source_destination": "OSAKA",
+            "source_port_code": "OSA",
+            "suggested_port_id": 21,
+            "final_port_id": 21,
+            "model": "gemini-3.5-flash",
+            "prompt_version": "oracle-port-resolution-v1",
+            "decision_id": "decision-list-1",
+            "reason": "OSAKA corresponds to the listed Osaka port.",
+            "decided_at": "2026-09-27T08:00:00Z",
+        },
+    )
+    legacy = Order(
+        user_id=user.id,
+        filename="legacy-port.pdf",
+        file_type="pdf",
+        status="ready",
+    )
+    db.add_all([pending, legacy])
+    db.commit()
+
+    response = client.get("/api/orders", headers=login(client, user.email))
+
+    assert response.status_code == 200, response.text
+    items = {item["filename"]: item for item in response.json()["items"]}
+    assert items["ai-port.pdf"]["port_resolution"] == {
+        "method": "llm",
+        "status": "pending_review",
+        "source_destination": "OSAKA",
+        "source_port_code": "OSA",
+        "suggested_port_id": 21,
+        "final_port_id": 21,
+        "model": "gemini-3.5-flash",
+        "prompt_version": "oracle-port-resolution-v1",
+        "decision_id": "decision-list-1",
+        "reason": "OSAKA corresponds to the listed Osaka port.",
+        "decided_at": "2026-09-27T08:00:00Z",
+        "failure_code": None,
+        "reviewed_by": None,
+        "reviewed_at": None,
+    }
+    assert items["legacy-port.pdf"]["port_resolution"] is None
+
+
 # ─── GET /api/orders/{id} ────────────────────────────────────
 
 
@@ -171,6 +226,56 @@ def test_get_order_returns_detail(client, db):
         "warning_row_count": 0,
         "rows": [],
         "non_row_findings": [],
+    }
+
+
+def test_order_detail_exposes_pending_llm_port_resolution(client, db):
+    user = seed_user(db, email="port-detail@example.com", role="employee")
+    order = Order(
+        user_id=user.id,
+        filename="ai-port-detail.pdf",
+        file_type="pdf",
+        status="ready",
+        port_id=21,
+        country_id=9,
+        port_resolution_method="llm",
+        port_resolution_status="pending_review",
+        port_resolution_data={
+            "source_destination": "OSAKA",
+            "source_port_code": "OSA",
+            "suggested_port_id": 21,
+            "final_port_id": 21,
+            "model": "gemini-3.5-flash",
+            "prompt_version": "oracle-port-resolution-v1",
+            "decision_id": "decision-detail-1",
+            "reason": "OSAKA corresponds to the listed Osaka port.",
+            "decided_at": "2026-09-27T08:01:00Z",
+        },
+    )
+    db.add(order)
+    db.commit()
+
+    response = client.get(
+        f"/api/orders/{order.id}",
+        headers=login(client, user.email),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["port_resolution"] == {
+        "method": "llm",
+        "status": "pending_review",
+        "source_destination": "OSAKA",
+        "source_port_code": "OSA",
+        "suggested_port_id": 21,
+        "final_port_id": 21,
+        "model": "gemini-3.5-flash",
+        "prompt_version": "oracle-port-resolution-v1",
+        "decision_id": "decision-detail-1",
+        "reason": "OSAKA corresponds to the listed Osaka port.",
+        "decided_at": "2026-09-27T08:01:00Z",
+        "failure_code": None,
+        "reviewed_by": None,
+        "reviewed_at": None,
     }
 
 

@@ -30,6 +30,7 @@ from domains.orders.schemas import (
     OrderListItem,
     OrderRowResolveRequest,
     OrderUpdateRequest,
+    PortResolutionState,
 )
 from infrastructure.capabilities import CAP_FINANCIALS_VIEW
 from shared.numbers import decimal_to_json_value
@@ -888,6 +889,7 @@ def _to_detail(order: Order, db: Session, user_id: int) -> OrderDetail:
     the v2 frontend (which reads `order_metadata.po_number` etc.) keeps working.
     """
     detail = OrderDetail.model_validate(order)
+    detail.port_resolution = _to_port_resolution(order)
     related_orders = [order]
     if order.group_id is not None:
         related_query = db.query(Order).options(load_only(
@@ -956,6 +958,29 @@ def _to_list_item(db: Session, order: Order) -> OrderListItem:
         created_at=order.created_at,
         updated_at=order.updated_at,
         processed_at=order.processed_at,
+        port_resolution=_to_port_resolution(order),
+    )
+
+
+def _to_port_resolution(order: Order) -> PortResolutionState | None:
+    data = order.port_resolution_data if isinstance(order.port_resolution_data, dict) else {}
+    if not order.port_resolution_method or not order.port_resolution_status:
+        return None
+    return PortResolutionState(
+        method=order.port_resolution_method,
+        status=order.port_resolution_status,
+        source_destination=data.get("source_destination"),
+        source_port_code=data.get("source_port_code"),
+        suggested_port_id=data.get("suggested_port_id"),
+        final_port_id=data.get("final_port_id"),
+        model=data.get("model"),
+        prompt_version=data.get("prompt_version"),
+        decision_id=data.get("decision_id"),
+        reason=data.get("reason"),
+        decided_at=data.get("decided_at"),
+        failure_code=data.get("failure_code"),
+        reviewed_by=order.port_resolution_reviewed_by,
+        reviewed_at=order.port_resolution_reviewed_at,
     )
 
 

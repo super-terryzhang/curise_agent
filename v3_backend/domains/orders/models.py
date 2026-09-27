@@ -18,7 +18,17 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructure.db.base import Base
@@ -26,7 +36,20 @@ from infrastructure.db.base import Base
 
 class Order(Base):
     __tablename__ = "v2_orders"
-    __table_args__ = {"extend_existing": True}
+    __table_args__ = (
+        CheckConstraint(
+            "port_resolution_method IS NULL OR "
+            "port_resolution_method IN ('llm', 'manual')",
+            name="ck_v2_orders_port_resolution_method",
+        ),
+        CheckConstraint(
+            "port_resolution_status IS NULL OR "
+            "port_resolution_status IN "
+            "('pending_review', 'confirmed', 'overridden', 'unresolved')",
+            name="ck_v2_orders_port_resolution_status",
+        ),
+        {"extend_existing": True},
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
@@ -46,6 +69,21 @@ class Order(Base):
     # FK to masterdata (resolved by matching pipeline)
     country_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     port_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Auditable origin and review state for automatic port selection.
+    # Legacy orders keep all five fields NULL until resolved or edited.
+    port_resolution_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    port_resolution_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    port_resolution_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    port_resolution_reviewed_by: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    port_resolution_reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     # Legacy JSON blobs (kept for backward compatibility with v2)
     extraction_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
