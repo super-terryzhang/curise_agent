@@ -24,7 +24,10 @@
 from __future__ import annotations
 
 from domains.document.models import Document
+from domains.inquiry.models import Inquiry
+from domains.inquiry.orchestrator import run_inquiry_for_group
 from domains.masterdata.models import Country, Port, Supplier, UnitConversionRule
+from domains.orders.groups.automation import auto_group_order
 from domains.orders.models import Order
 from test_v2.fixtures.helpers import login, make_minimal_pdf, seed_product, seed_user
 
@@ -85,6 +88,53 @@ def _seed_resolvable_order(db, *, email: str = "resolver@example.com"):
     db.commit()
     db.refresh(order)
     return user, product, order
+
+
+def _seed_pending_port_resolution_order(
+    db,
+    *,
+    email: str = "port-review@example.com",
+    role: str = "employee",
+    resolution_status: str = "pending_review",
+):
+    user = seed_user(db, email=email, role=role)
+    country_id, port_id = _seed_geo(db)
+    order = Order(
+        user_id=user.id,
+        filename="port-review.pdf",
+        file_type="pdf",
+        status="ready",
+        po_number="PO-PORT-REVIEW",
+        ship_name="Test Ship",
+        loading_date="2026-10-05",
+        delivery_date="2026-10-05",
+        country_id=country_id,
+        port_id=port_id if resolution_status != "unresolved" else None,
+        products=[],
+        product_count=0,
+        match_results=[],
+        anomaly_data={
+            "pipeline": [],
+            "findings": [{"code": "LLM_PORT_REVIEW_REQUIRED"}],
+        },
+        port_resolution_method="llm",
+        port_resolution_status=resolution_status,
+        port_resolution_data={
+            "source_destination": "TOKYO",
+            "source_port_code": "TYO",
+            "suggested_port_id": port_id,
+            "final_port_id": port_id if resolution_status != "unresolved" else None,
+            "model": "gemini-3.5-flash",
+            "prompt_version": "oracle-port-resolution-v1",
+            "decision_id": "decision-review-1",
+            "reason": "Matched the listed Tokyo port",
+            "decided_at": "2026-09-27T08:01:00Z",
+        },
+    )
+    db.add(order)
+    db.commit()
+    db.refresh(order)
+    return user, order, country_id, port_id
 
 
 # ─── POST /api/orders/upload ─────────────────────────────────
@@ -148,6 +198,61 @@ def test_list_orders_returns_only_my_orders(client, db):
     assert a_order["id"] not in ids
 
 
+def test_order_list_exposes_pending_llm_port_resolution(client, db):
+    user = seed_user(db, email="port-list@example.com", role="employee")
+    pending = Order(
+        user_id=user.id,
+        filename="ai-port.pdf",
+        file_type="pdf",
+        status="ready",
+        port_id=21,
+        country_id=9,
+        port_resolution_method="llm",
+        port_resolution_status="pending_review",
+        port_resolution_data={
+            "source_destination": "OSAKA",
+            "source_port_code": "OSA",
+            "suggested_port_id": 21,
+            "final_port_id": 21,
+            "model": "gemini-3.5-flash",
+            "prompt_version": "oracle-port-resolution-v1",
+            "decision_id": "decision-list-1",
+            "reason": "OSAKA corresponds to the listed Osaka port.",
+            "decided_at": "2026-09-27T08:00:00Z",
+        },
+    )
+    legacy = Order(
+        user_id=user.id,
+        filename="legacy-port.pdf",
+        file_type="pdf",
+        status="ready",
+    )
+    db.add_all([pending, legacy])
+    db.commit()
+
+    response = client.get("/api/orders", headers=login(client, user.email))
+
+    assert response.status_code == 200, response.text
+    items = {item["filename"]: item for item in response.json()["items"]}
+    assert items["ai-port.pdf"]["port_resolution"] == {
+        "method": "llm",
+        "status": "pending_review",
+        "source_destination": "OSAKA",
+        "source_port_code": "OSA",
+        "suggested_port_id": 21,
+        "final_port_id": 21,
+        "model": "gemini-3.5-flash",
+        "prompt_version": "oracle-port-resolution-v1",
+        "decision_id": "decision-list-1",
+        "reason": "OSAKA corresponds to the listed Osaka port.",
+        "decided_at": "2026-09-27T08:00:00Z",
+        "failure_code": None,
+        "reviewed_by": None,
+        "reviewed_at": None,
+    }
+    assert items["legacy-port.pdf"]["port_resolution"] is None
+
+
 # ─── GET /api/orders/{id} ────────────────────────────────────
 
 
@@ -172,6 +277,316 @@ def test_get_order_returns_detail(client, db):
         "rows": [],
         "non_row_findings": [],
     }
+
+
+def test_order_detail_exposes_pending_llm_port_resolution(client, db):
+    user = seed_user(db, email="port-detail@example.com", role="employee")
+    order = Order(
+        user_id=user.id,
+        filename="ai-port-detail.pdf",
+        file_type="pdf",
+        status="ready",
+        port_id=21,
+        country_id=9,
+        port_resolution_method="llm",
+        port_resolution_status="pending_review",
+        port_resolution_data={
+            "source_destination": "OSAKA",
+            "source_port_code": "OSA",
+            "suggested_port_id": 21,
+            "final_port_id": 21,
+            "model": "gemini-3.5-flash",
+            "prompt_version": "oracle-port-resolution-v1",
+            "decision_id": "decision-detail-1",
+            "reason": "OSAKA corresponds to the listed Osaka port.",
+            "decided_at": "2026-09-27T08:01:00Z",
+        },
+    )
+    db.add(order)
+    db.commit()
+
+    response = client.get(
+        f"/api/orders/{order.id}",
+        headers=login(client, user.email),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["port_resolution"] == {
+        "method": "llm",
+        "status": "pending_review",
+        "source_destination": "OSAKA",
+        "source_port_code": "OSA",
+        "suggested_port_id": 21,
+        "final_port_id": 21,
+        "model": "gemini-3.5-flash",
+        "prompt_version": "oracle-port-resolution-v1",
+        "decision_id": "decision-detail-1",
+        "reason": "OSAKA corresponds to the listed Osaka port.",
+        "decided_at": "2026-09-27T08:01:00Z",
+        "failure_code": None,
+        "reviewed_by": None,
+        "reviewed_at": None,
+    }
+
+
+def test_port_resolution_confirm_is_owner_scoped_and_idempotent(client, db):
+    owner, order, _country_id, _port_id = _seed_pending_port_resolution_order(db)
+    stranger = seed_user(db, email="port-stranger@example.com", role="employee")
+    before_inquiries = db.query(Inquiry).count()
+
+    hidden = client.post(
+        f"/api/orders/{order.id}/port-resolution/confirm",
+        json={"decision_id": "decision-review-1"},
+        headers=login(client, stranger.email),
+    )
+    assert hidden.status_code == 404
+
+    first = client.post(
+        f"/api/orders/{order.id}/port-resolution/confirm",
+        json={"decision_id": "decision-review-1"},
+        headers=login(client, owner.email),
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["port_resolution"]["status"] == "confirmed"
+    assert first.json()["port_resolution"]["reviewed_by"] == owner.id
+    assert "LLM_PORT_REVIEW_REQUIRED" not in {
+        item["code"] for item in first.json()["anomaly_data"]["findings"]
+    }
+    reviewed_at = first.json()["port_resolution"]["reviewed_at"]
+
+    repeated = client.post(
+        f"/api/orders/{order.id}/port-resolution/confirm",
+        json={"decision_id": "decision-review-1"},
+        headers=login(client, owner.email),
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["port_resolution"]["reviewed_at"] == reviewed_at
+    assert db.query(Inquiry).count() == before_inquiries
+
+
+def test_port_resolution_confirm_rejects_stale_decision_and_allows_admin(client, db):
+    _owner, order, _country_id, _port_id = _seed_pending_port_resolution_order(db)
+    admin = seed_user(db, email="port-admin@example.com", role="admin")
+
+    stale = client.post(
+        f"/api/orders/{order.id}/port-resolution/confirm",
+        json={"decision_id": "older-decision"},
+        headers=login(client, admin.email),
+    )
+    assert stale.status_code == 409
+    db.refresh(order)
+    assert order.port_resolution_status == "pending_review"
+
+    accepted = client.post(
+        f"/api/orders/{order.id}/port-resolution/confirm",
+        json={"decision_id": "decision-review-1"},
+        headers=login(client, admin.email),
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["port_resolution"]["reviewed_by"] == admin.id
+
+
+def test_port_resolution_override_validates_port_and_is_idempotent(
+    client, db, monkeypatch
+):
+    owner, order, country_id, _port_id = _seed_pending_port_resolution_order(db)
+    replacement = Port(name="Osaka", code="OSA", country_id=country_id, status=True)
+    disabled = Port(name="Disabled", code="OFF", country_id=country_id, status=False)
+    no_country = Port(name="No country", code="NONE", country_id=None, status=True)
+    db.add_all([replacement, disabled, no_country])
+    db.commit()
+    calls = []
+    monkeypatch.setattr(
+        "domains.orders.automation.automatic_order_pipeline",
+        lambda order_id: calls.append(order_id) or {},
+    )
+    headers = login(client, owner.email)
+
+    for invalid_port in (disabled, no_country):
+        rejected = client.post(
+            f"/api/orders/{order.id}/port-resolution/override",
+            json={
+                "decision_id": "decision-review-1",
+                "port_id": invalid_port.id,
+            },
+            headers=headers,
+        )
+        assert rejected.status_code == 400, rejected.text
+
+    first = client.post(
+        f"/api/orders/{order.id}/port-resolution/override",
+        json={"decision_id": "decision-review-1", "port_id": replacement.id},
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["port_id"] == replacement.id
+    assert first.json()["country_id"] == country_id
+    assert first.json()["port_resolution"]["status"] == "overridden"
+    assert first.json()["port_resolution"]["suggested_port_id"] != replacement.id
+    assert first.json()["port_resolution"]["final_port_id"] == replacement.id
+    assert calls == [order.id]
+
+    repeated = client.post(
+        f"/api/orders/{order.id}/port-resolution/override",
+        json={"decision_id": "decision-review-1", "port_id": replacement.id},
+        headers=headers,
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert calls == [order.id]
+
+
+def test_patch_pending_ai_port_routes_through_override_service(
+    client, db, monkeypatch
+):
+    owner, order, country_id, _port_id = _seed_pending_port_resolution_order(db)
+    replacement = Port(name="Yokohama", code="YOK", country_id=country_id, status=True)
+    db.add(replacement)
+    db.commit()
+    calls = []
+    monkeypatch.setattr(
+        "domains.orders.automation.automatic_order_pipeline",
+        lambda order_id: calls.append(order_id) or {},
+    )
+    headers = login(client, owner.email)
+
+    missing_decision = client.patch(
+        f"/api/orders/{order.id}",
+        json={"port_id": replacement.id},
+        headers=headers,
+    )
+    assert missing_decision.status_code == 400
+    clearing_ai_port = client.patch(
+        f"/api/orders/{order.id}",
+        json={"port_id": None},
+        headers=headers,
+    )
+    assert clearing_ai_port.status_code == 400
+    changing_country_only = client.patch(
+        f"/api/orders/{order.id}",
+        json={"country_id": country_id},
+        headers=headers,
+    )
+    assert changing_country_only.status_code == 400
+
+    updated = client.patch(
+        f"/api/orders/{order.id}",
+        json={
+            "port_id": replacement.id,
+            "port_resolution_decision_id": "decision-review-1",
+        },
+        headers=headers,
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["port_resolution"]["status"] == "overridden"
+    assert updated.json()["port_id"] == replacement.id
+    assert calls == [order.id]
+
+
+def test_override_ai_port_preserves_old_inquiry_and_creates_one_new_version(
+    client, db
+):
+    owner = seed_user(db, email="port-version@example.com", role="employee")
+    country = Country(name="Japan port version", code="JPV", status=True)
+    db.add(country)
+    db.flush()
+    first_port = Port(name="Tokyo version", code="TV1", country_id=country.id, status=True)
+    second_port = Port(name="Osaka version", code="OV1", country_id=country.id, status=True)
+    db.add_all([first_port, second_port])
+    db.flush()
+    seed_product(
+        db,
+        code="PORT-SKU",
+        name="Port product Tokyo",
+        country_id=country.id,
+        port_id=first_port.id,
+        unit="CA",
+    )
+    seed_product(
+        db,
+        code="PORT-SKU",
+        name="Port product Osaka",
+        country_id=country.id,
+        port_id=second_port.id,
+        unit="CA",
+    )
+
+    def make_order(po_number, port, *, pending=False):
+        order = Order(
+            user_id=owner.id,
+            filename=f"{po_number}.pdf",
+            file_type="pdf",
+            status="ready",
+            po_number=po_number,
+            ship_name="Version Ship",
+            loading_date="2026-10-05",
+            delivery_date="2026-10-05",
+            destination_port=port.name,
+            country_id=country.id,
+            port_id=port.id,
+            products=[{
+                "line_id": "line-00001",
+                "product_code": "PORT-SKU",
+                "product_name": "Port product",
+                "quantity": "1",
+                "unit": "CA",
+            }],
+            product_count=1,
+            port_resolution_method="llm" if pending else None,
+            port_resolution_status="pending_review" if pending else None,
+            port_resolution_data={
+                "source_destination": "TOKYO",
+                "suggested_port_id": first_port.id,
+                "final_port_id": first_port.id,
+                "decision_id": "decision-version-1",
+                "reason": "Initial AI decision",
+                "decided_at": "2026-09-27T08:01:00Z",
+            } if pending else None,
+        )
+        db.add(order)
+        db.commit()
+        auto_group_order(db, order.id)
+        db.refresh(order)
+        return order
+
+    moving = make_order("PO-MOVE", first_port, pending=True)
+    destination_member = make_order("PO-DESTINATION", second_port)
+    old_group_id = moving.group_id
+    destination_group_id = destination_member.group_id
+    assert old_group_id and destination_group_id and old_group_id != destination_group_id
+    run_inquiry_for_group(old_group_id, max_workers=1)
+    run_inquiry_for_group(destination_group_id, max_workers=1)
+
+    response = client.post(
+        f"/api/orders/{moving.id}/port-resolution/override",
+        json={"decision_id": "decision-version-1", "port_id": second_port.id},
+        headers=login(client, owner.email),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["group_id"] == destination_group_id
+    db.expire_all()
+    old_versions = (
+        db.query(Inquiry)
+        .filter(Inquiry.group_id == old_group_id)
+        .order_by(Inquiry.version.desc())
+        .all()
+    )
+    destination_versions = (
+        db.query(Inquiry)
+        .filter(Inquiry.group_id == destination_group_id)
+        .order_by(Inquiry.version.desc())
+        .all()
+    )
+    assert [item.version for item in old_versions] == [1]
+    assert [item.version for item in destination_versions] == [2, 1]
+
+    repeated = client.post(
+        f"/api/orders/{moving.id}/port-resolution/override",
+        json={"decision_id": "decision-version-1", "port_id": second_port.id},
+        headers=login(client, owner.email),
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert db.query(Inquiry).filter(Inquiry.group_id == destination_group_id).count() == 2
 
 
 def test_get_order_enriches_current_match_with_supplier_name(client, db):

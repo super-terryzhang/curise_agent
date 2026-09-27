@@ -271,11 +271,14 @@ def _pipeline_stage_findings(context: RuleContext) -> list[Finding]:
 
 @rule("ORDER_REQUIRED_FIELDS")
 def _required_fields(context: RuleContext) -> list[Finding]:
-    checks = (
+    checks = [
         ("po_number", context.order.po_number, 4, "订单号缺失", "核对 PO 原文件并补充订单号"),
         ("loading_date", context.order.loading_date, 6, "装船日缺失", "补充装船日后重新自动归组"),
-        ("port_id", context.order.port_id, 6, "目标港口未确定", "选择唯一目标港口后重新自动归组"),
-    )
+    ]
+    if context.order.port_resolution_status != "unresolved":
+        checks.append(
+            ("port_id", context.order.port_id, 6, "目标港口未确定", "选择唯一目标港口后重新自动归组")
+        )
     return [
         finding(
             code=f"{field.upper()}_REQUIRED",
@@ -288,6 +291,50 @@ def _required_fields(context: RuleContext) -> list[Finding]:
         )
         for field, value, step, message, suggestion in checks
         if value in (None, "")
+    ]
+
+
+@rule("PORT_RESOLUTION")
+def _port_resolution_findings(context: RuleContext) -> list[Finding]:
+    order = context.order
+    data = order.port_resolution_data if isinstance(order.port_resolution_data, dict) else {}
+    evidence = {
+        "source_destination": data.get("source_destination"),
+        "source_port_code": data.get("source_port_code"),
+        "suggested_port_id": data.get("suggested_port_id"),
+        "final_port_id": data.get("final_port_id"),
+        "decision_id": data.get("decision_id"),
+        "model": data.get("model"),
+        "prompt_version": data.get("prompt_version"),
+        "failure_code": data.get("failure_code"),
+    }
+    if order.port_resolution_method == "llm" and order.port_resolution_status == "pending_review":
+        return [
+            finding(
+                code="LLM_PORT_REVIEW_REQUIRED",
+                step=5,
+                severity="warning",
+                scope="order",
+                field="port_id",
+                message="目标港口由 AI 匹配，待人工确认",
+                suggestion="确认当前港口，或选择其他港口",
+                evidence=evidence,
+            )
+        ]
+    if order.port_resolution_method != "llm" or order.port_resolution_status != "unresolved":
+        return []
+    failed = bool(data.get("failure_code"))
+    return [
+        finding(
+            code="LLM_PORT_RESOLUTION_FAILED" if failed else "LLM_PORT_UNRESOLVED",
+            step=5,
+            severity="error",
+            scope="order",
+            field="port_id",
+            message=str(data.get("reason") or "AI 无法确定唯一目标港口"),
+            suggestion="人工选择目标港口后继续处理",
+            evidence=evidence,
+        )
     ]
 
 
@@ -321,6 +368,8 @@ def _row_quantities(context: RuleContext) -> list[Finding]:
 
 @rule("ROW_MATCH_AND_PRICE")
 def _row_matching(context: RuleContext) -> list[Finding]:
+    if context.order.match_results is None:
+        return []
     items: list[Finding] = []
     products = context.order.products or []
     results = context.order.match_results or []

@@ -140,6 +140,14 @@ class Settings(BaseSettings):
     # are complete; false preserves the existing one-row manual workflow.
     UNIT_CONVERSION_RULES_ENABLED: bool = False
 
+    # Oracle PO destination resolution is expand-first and off by default.
+    # The bounded timeout/retry budget prevents one provider issue from
+    # stopping the rest of an Oracle scan batch.
+    LLM_PORT_RESOLUTION_ENABLED: bool = False
+    LLM_PORT_RESOLUTION_MODEL: str = "gemini-3.5-flash"
+    LLM_PORT_RESOLUTION_TIMEOUT_MS: int = Field(default=15_000, ge=1_000, le=60_000)
+    LLM_PORT_RESOLUTION_ATTEMPTS: int = Field(default=2, ge=1, le=3)
+
     @model_validator(mode="after")
     def _validate_production(self) -> Settings:
         if self.K_SERVICE and self.ENV not in ("production", "staging"):

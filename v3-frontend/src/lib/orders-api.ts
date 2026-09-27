@@ -26,6 +26,30 @@ export interface OrderMetadata {
   [key: string]: unknown;
 }
 
+export type PortResolutionMethod = "llm" | "manual";
+export type PortResolutionStatus =
+  | "pending_review"
+  | "confirmed"
+  | "overridden"
+  | "unresolved";
+
+export interface PortResolutionState {
+  method: PortResolutionMethod;
+  status: PortResolutionStatus;
+  source_destination: string | null;
+  source_port_code: string | null;
+  suggested_port_id: number | null;
+  final_port_id: number | null;
+  model: string | null;
+  prompt_version: string | null;
+  decision_id: string | null;
+  reason: string | null;
+  decided_at: string | null;
+  failure_code: string | null;
+  reviewed_by: number | null;
+  reviewed_at: string | null;
+}
+
 export interface MatchStatistics {
   total: number;
   matched: number;
@@ -428,6 +452,7 @@ export interface Order {
   country_id: number | null;
   country_name: string | null;
   port_id: number | null;
+  port_resolution?: PortResolutionState | null;
   delivery_date: string | null;
   // loading_date — when supplies are loaded onto the cruise ship. Distinct
   // from delivery_date (when supplier ships to port). Added 2026-06-16
@@ -596,6 +621,7 @@ export async function updateOrder(
     currency?: string | null;
     port_id?: number | null;
     country_id?: number | null;
+    port_resolution_decision_id?: string | null;
     // R6 — top-level date columns. The backend's OrderUpdateRequest
     // accepts them at the top level; mirror lands on the real columns
     // instead of getting buried in the order_metadata JSON.
@@ -608,6 +634,37 @@ export async function updateOrder(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+  return handleResponse<Order>(res);
+}
+
+export async function confirmPortResolution(
+  orderId: number,
+  decisionId: string,
+): Promise<Order> {
+  const res = await fetchWithAuth(
+    `${API_BASE}/api/orders/${orderId}/port-resolution/confirm`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision_id: decisionId }),
+    },
+  );
+  return handleResponse<Order>(res);
+}
+
+export async function overridePortResolution(
+  orderId: number,
+  decisionId: string,
+  portId: number,
+): Promise<Order> {
+  const res = await fetchWithAuth(
+    `${API_BASE}/api/orders/${orderId}/port-resolution/override`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision_id: decisionId, port_id: portId }),
+    },
+  );
   return handleResponse<Order>(res);
 }
 

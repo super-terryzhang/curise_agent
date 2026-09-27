@@ -52,9 +52,10 @@ def build_issue_overview(
     """Return deterministic issues for *order*, grouped by its product rows."""
     products = list(order.products or [])
     results = list(order.match_results or [])
+    matching_ran = order.match_results is not None
     row_count = max(len(products), len(results))
     rows = [
-        _build_row(index, products, results, supplier_names or {})
+        _build_row(index, products, results, supplier_names or {}, matching_ran)
         for index in range(row_count)
     ]
 
@@ -69,7 +70,7 @@ def build_issue_overview(
         row["findings"] = attached
         row["inquiry_disposition"] = _inquiry_disposition(row, attached)
         row["inquiry_disposition_reason"] = _disposition_reason(row, attached)
-        is_actionable = (
+        is_actionable = row["match_status"] != "not_run" and (
             row["match_status"] == "not_matched"
             or row["inquiry_disposition"] == "excluded"
             or any(item.get("severity") in {"error", "blocking"} for item in attached)
@@ -109,13 +110,18 @@ def _build_row(
     products: list[dict[str, Any]],
     results: list[dict[str, Any]],
     supplier_names: dict[int, str],
+    matching_ran: bool,
 ) -> dict[str, Any]:
     source = products[index] if index < len(products) else {}
     result = results[index] if index < len(results) else {}
     combined = {**source, **result}
     combined["row_index"] = index + 1
     combined["match_status"] = (
-        "matched" if result.get("match_status") == "matched" else "not_matched"
+        "matched"
+        if result.get("match_status") == "matched"
+        else "not_matched"
+        if matching_ran
+        else "not_run"
     )
     matched_product = combined.get("matched_product")
     if isinstance(matched_product, dict):
@@ -172,7 +178,7 @@ def _unmatched_fallback_findings(
     result: list[Finding] = []
     for row in rows:
         row_index = int(row["row_index"])
-        if row.get("match_status") == "matched" or row_index in existing_row_indices:
+        if row.get("match_status") in {"matched", "not_run"} or row_index in existing_row_indices:
             continue
         result.append(
             {

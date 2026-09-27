@@ -197,6 +197,12 @@ def test_startup_requires_current_migration(engine):
         connection.execute(
             text("UPDATE alembic_version SET version_num = '0031_unit_conversion_rules'")
         )
+    with pytest.raises(RuntimeError, match="migration required"):
+        verify_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text("UPDATE alembic_version SET version_num = '0032_llm_port_resolution'")
+        )
     verify_schema(engine)
 
 

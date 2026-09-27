@@ -6,7 +6,33 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class PortResolutionState(BaseModel):
+    method: Literal["llm", "manual"]
+    status: Literal["pending_review", "confirmed", "overridden", "unresolved"]
+    source_destination: str | None = None
+    source_port_code: str | None = None
+    suggested_port_id: int | None = None
+    final_port_id: int | None = None
+    model: str | None = None
+    prompt_version: str | None = None
+    decision_id: str | None = None
+    reason: str | None = None
+    decided_at: datetime | None = None
+    failure_code: str | None = None
+    reviewed_by: int | None = None
+    reviewed_at: datetime | None = None
+
+
+class PortResolutionConfirmRequest(BaseModel):
+    decision_id: str = Field(min_length=1, max_length=64)
+
+
+class PortResolutionOverrideRequest(BaseModel):
+    decision_id: str = Field(min_length=1, max_length=64)
+    port_id: int = Field(gt=0)
 
 
 class OrderListItem(BaseModel):
@@ -39,6 +65,7 @@ class OrderListItem(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     processed_at: datetime | None = None
+    port_resolution: PortResolutionState | None = None
 
 
 class OrderDetail(BaseModel):
@@ -89,6 +116,7 @@ class OrderDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     processed_at: datetime | None = None
+    port_resolution: PortResolutionState | None = None
 
 
 class OrderUpdateRequest(BaseModel):
@@ -104,6 +132,7 @@ class OrderUpdateRequest(BaseModel):
     destination_port: str | None = None
     country_id: int | None = None
     port_id: int | None = None
+    port_resolution_decision_id: str | None = Field(default=None, max_length=64)
     products: list[dict[str, Any]] | None = None
     order_metadata: dict[str, Any] | None = None
 

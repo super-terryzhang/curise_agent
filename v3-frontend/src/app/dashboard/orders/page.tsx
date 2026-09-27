@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { PortResolutionBadge } from "@/components/orders/PortResolutionReview";
 import { deleteOrder } from "@/lib/orders-api";
 import {
   assignOrdersToGroup,
@@ -24,6 +25,7 @@ import {
   arrangementPath,
   filterArrangements,
   matchesOrder,
+  pendingPortReviewSummary,
   poProcessingLabel,
   type ArrangementFilters,
 } from "@/lib/arrangements-view";
@@ -56,17 +58,18 @@ function PoRows({
   return (
     <div className="border-b bg-muted/10 px-5 py-3">
       <div className="ml-5 border-l-2 border-primary/70 pl-4">
-        <div className="grid grid-cols-[minmax(150px,1.2fr)_100px_minmax(180px,1.5fr)_150px] rounded-t-md border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
-          <span>PO 编号</span><span>商品数</span><span>处理状态</span><span>操作</span>
+        <div className="grid grid-cols-[minmax(140px,1.1fr)_80px_minmax(150px,1fr)_minmax(170px,1.2fr)_130px] rounded-t-md border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+          <span>PO 编号</span><span>商品数</span><span>目标港口</span><span>处理状态</span><span>操作</span>
         </div>
         {orders.map(order => {
           const label = unclassified && order.reason ? order.reason : poProcessingLabel(order);
           const needsAttention = unclassified || order.requires_human_review || order.status === "error" || order.inquiry_status === "error";
           const completed = !needsAttention && label === "自动处理完成";
           return (
-            <div key={order.id} data-testid="po-row" className="grid grid-cols-[minmax(150px,1.2fr)_100px_minmax(180px,1.5fr)_150px] items-center border-x border-b bg-background px-4 py-2.5 text-sm last:rounded-b-md">
+            <div key={order.id} data-testid="po-row" className="grid grid-cols-[minmax(140px,1.1fr)_80px_minmax(150px,1fr)_minmax(170px,1.2fr)_130px] items-center border-x border-b bg-background px-4 py-2.5 text-sm last:rounded-b-md">
               <Link className="truncate font-medium hover:underline" href={`/dashboard/orders/${order.id}`}>{order.po_number || `PO #${order.id}`}</Link>
               <span className="text-muted-foreground">{order.product_count} 项</span>
+              <span className="flex min-w-0 flex-wrap items-center gap-1.5"><span className="truncate">{order.port || "待确认"}</span><PortResolutionBadge state={order.port_resolution} /></span>
               <span className={`flex min-w-0 items-center gap-2 text-xs ${needsAttention ? "text-amber-700 dark:text-amber-300" : completed ? "text-emerald-700 dark:text-emerald-300" : "text-muted-foreground"}`}>
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${needsAttention ? "bg-amber-500" : completed ? "bg-emerald-600" : "bg-muted-foreground/50"}`} />
                 <span className="truncate" title={label}>{label}</span>
@@ -180,11 +183,12 @@ export default function OrdersPage() {
           {groups.map(group => {
             const key = String(group.id);
             const isOpen = expanded.has(key);
+            const portReviewSummary = pendingPortReviewSummary(group.orders);
             return <div key={group.id}>
               <div data-testid="arrangement-row" className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 border-b px-5 py-3.5 md:grid-cols-[minmax(0,2fr)_140px_minmax(140px,1fr)_90px_180px]">
                 <div className="min-w-0"><div className="flex items-center gap-2 text-sm font-medium"><Ship className="h-4 w-4 shrink-0 text-muted-foreground" /><span className="truncate">{group.ship}</span>{group.manual && <span className="shrink-0 text-xs font-normal text-muted-foreground">人工</span>}</div></div>
                 <div className="col-start-1 text-sm md:col-auto">{group.day || "日期待确认"}<span className="ml-1 text-xs text-muted-foreground md:block md:ml-0">{group.date_basis === "loading_date" ? "装船日" : group.date_basis === "delivery_date" ? "交付日" : ""}</span></div>
-                <div className="col-start-1 text-sm md:col-auto">{group.port}</div>
+                <div className="col-start-1 min-w-0 text-sm md:col-auto"><div className="truncate">{group.port}</div>{portReviewSummary ? <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">{portReviewSummary}</div> : null}</div>
                 <div className="col-start-1 text-sm text-muted-foreground md:col-auto">{group.orders.length} 张<span className="md:hidden"> PO</span></div>
                 <div className="col-start-2 row-start-1 flex items-center justify-end gap-1 md:col-auto md:row-auto">
                   <Button asChild size="sm" variant="ghost" className="text-primary"><Link href={arrangementPath(group.id)}>查看整单</Link></Button>
