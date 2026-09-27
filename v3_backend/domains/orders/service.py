@@ -757,6 +757,12 @@ def rematch_order(
     delivery_date: str | None = None,
 ) -> OrderDetail:
     order = _load_for_user(db, order_id, user_id, is_admin)
+    if (
+        order.port_resolution_method == "llm"
+        and order.port_resolution_status in {"pending_review", "unresolved"}
+        and (country_id is not None or port_id is not None)
+    ):
+        raise BadRequest("该订单正在等待 AI 港口审核，请使用港口审核操作改选港口")
     if country_id is not None:
         if not md_repo.country_exists(db, country_id):
             raise BadRequest("国家不存在")
