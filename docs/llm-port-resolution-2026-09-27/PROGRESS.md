@@ -10,7 +10,7 @@
 
 ## 验证证据
 
-- 后端发布前全量：`1854 passed, 101 skipped, 4 warnings`（最终审查修复后需再跑一次）。
+- 后端最终全量：`1856 passed, 101 skipped, 4 warnings`。
 - 前端：22 个测试文件、134 项测试通过；TypeScript 检查与生产构建通过。
 - 真实 Gemini 静态评测：7/7，通过项包括 OSAKA=21、OKINAWA=25、TOKYO=28、SYDNEY=29、YOKOHAMA OSANBASHI=19，以及 PORTLAND/YOKOHAMA 明确不匹配。
 - 架构检查 0 违规；wheel 构建成功，SHA-256 为 `148f148046a7bade23056b0bbbd254b24e5ee48412383de55d719313d97e126f`。
@@ -23,6 +23,10 @@
 - `0001_baseline` 是已有 v2 数据库的无操作基线，不能从空数据库构造完整历史结构；因此迁移往返使用当前 ORM 生成的生产形状结构并从 0031 实际执行。
 - passlib/bcrypt 与 `crypt` 告警属于既有技术债务，与本功能无关。
 
-## 发布状态
+## 生产发布
 
-当前仅完成本地候选版本；生产数据库、后端、Oracle Job 与前端尚未在本文档这个节点变更。生产发布完成后，以工作区根目录的带日期核验文档为准。
+- 功能 PR #13 已合并为 `f3f0718a6dc12f9e007b47bf690b4f46185dc14d`，CI `36317923046` 通过。
+- 数据库已备份并迁移至 0032；后端 `cruise-v3-backend-llm-port-20260927` 接收 100% 流量，镜像 digest 为 `sha256:c16f98990446bedebe7f5c12a77681833761fe5fb62b035a483941498eea1994`。
+- 前端 `dpl_FozJ2JshqUEE583KPSunGhKUtPyR` 为 Production / Ready；Oracle Job generation 19 使用相同镜像，手动等价执行成功。
+- 6 张符合条件的历史 Oracle PO 已逐张 dry-run 后应用，全部保留 `llm / pending_review`；最终只读数据为 1463 产品、78 订单、38 询价、623 张图片。
+- 完整发布、异常、回退与用户验收证据见工作区根目录 `DEPLOYMENT_VERIFIED_2026-09-27_LLM_PORT_RESOLUTION.md`。
