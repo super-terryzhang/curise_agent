@@ -82,7 +82,7 @@ Add required `product_names: string[]` to `ArrangementOrder` and update existing
 
 Expected: all arrangement API tests PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add v3_backend/domains/orders/groups/arrangements.py v3_backend/test_v2/section_9_web_api/test_arrangements.py v3-frontend/src/lib/order-groups-api.ts v3-frontend/src/lib/arrangements-view.test.ts
@@ -128,7 +128,7 @@ Run: `cd v3-frontend && pnpm test -- src/lib/order-management-view.test.ts`
 
 Expected: all new tests PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add v3-frontend/src/lib/order-management-view.ts v3-frontend/src/lib/order-management-view.test.ts
@@ -175,7 +175,7 @@ Run:
 
 Expected: tests PASS and TypeScript exits 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add v3-frontend/src/app/dashboard/orders/page.tsx v3-frontend/src/components/orders/OrderManagementTables.tsx v3-frontend/src/components/orders/OrderManagementTables.test.tsx
@@ -192,7 +192,7 @@ git commit -m "feat: add PO and voyage order management views"
 - Consumes all earlier tasks.
 - Produces a review-ready branch and Pull Request; does not merge or deploy.
 
-- [ ] **Step 1: Run focused backend quality checks**
+- [x] **Step 1: Run focused backend quality checks**
 
 Run:
 
@@ -201,13 +201,13 @@ Run:
 
 Expected: both exit 0.
 
-- [ ] **Step 2: Run complete backend tests**
+- [x] **Step 2: Run complete backend tests**
 
 Run: `cd v3_backend && pytest -q`
 
 Expected: no failures; report passes, skips and warnings exactly.
 
-- [ ] **Step 3: Run complete frontend verification**
+- [x] **Step 3: Run complete frontend verification**
 
 Run:
 
@@ -217,11 +217,11 @@ Run:
 
 Expected: all tests PASS, TypeScript exits 0 and production build succeeds.
 
-- [ ] **Step 4: Review complete diff and requirements**
+- [x] **Step 4: Review complete diff and requirements**
 
 Inspect `git diff --check`, `git diff --stat origin/main...HEAD`, the full diff, the spec checklist and all review-focus cases. Confirm no database, matching, grouping, inquiry or deployment files changed.
 
-- [ ] **Step 5: Request whole-branch code review**
+- [x] **Step 5: Request whole-branch code review**
 
 Review `origin/main...HEAD` against the spec and plan. Because this task does not authorize sub-agent delegation, perform and record a full self-review instead of claiming independent review. Fix Critical/Important findings with a RED→GREEN test and repeat the affected full suite; record any deferred Minor findings.
 
