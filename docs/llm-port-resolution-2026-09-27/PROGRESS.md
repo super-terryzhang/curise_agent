@@ -30,3 +30,11 @@
 - 前端 `dpl_FozJ2JshqUEE583KPSunGhKUtPyR` 为 Production / Ready；Oracle Job generation 19 使用相同镜像，手动等价执行成功。
 - 6 张符合条件的历史 Oracle PO 已逐张 dry-run 后应用，全部保留 `llm / pending_review`；最终只读数据为 1463 产品、78 订单、38 询价、623 张图片。
 - 完整发布、异常、回退与用户验收证据见工作区根目录 `DEPLOYMENT_VERIFIED_2026-09-27_LLM_PORT_RESOLUTION.md`。
+
+## 生产旧订单人工处理（2026-09-27）
+
+- 严格只读核查确认：78 个订单中原有 25 个 `port_id` 为空；这不是 LLM 失败，而是历史非 Oracle 订单没有进入本功能的逐张修复入口。
+- 其中 23 个可由原订单保存的目的地、港口代码或生产中同一 PO 的既有标准映射明确确认；已写入标准港口，并记录为 `manual / overridden`，审计来源为 `production_manual_backfill_2026-09-27`。
+- 23 个订单均已重新执行商品匹配、供船归组与异常检查；本次没有自动创建询价。两个含明确旧版 `extra_fields.loading_date` 的订单同步恢复了装船日。
+- 最终只读复核：78 个订单中只剩 2 个缺少目标港口，分别为 `PO218785RCL` 与 `PO151048CCI`；两张原始 PDF 只写 `WHSE - MILLENNIUM`，没有港口证据，因此按“不猜测”原则保留人工待选。
+- 当前仍有 23 个未分类订单：21 个仅缺少或无法识别装船日，另外 2 个同时缺少装船日和目标港口；目标港口缺失已不再是其余 21 个订单的阻塞原因。

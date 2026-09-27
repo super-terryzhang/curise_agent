@@ -20,6 +20,7 @@ const poRow: PoManagementRow = {
     document_id: null,
     product_count: 7,
     product_names: ["Rare Saffron"],
+    created_at: "2026-09-27T04:01:00Z",
     ship: "SILVER MUSE",
     day: "2026-06-05",
     port: "シンガポール",
@@ -127,6 +128,7 @@ describe("order management tables", () => {
 
     for (const heading of [
       "PO 编号",
+      "进入系统时间",
       "船名",
       "装船日期",
       "目标港口",
@@ -137,6 +139,7 @@ describe("order management tables", () => {
       expect(html).toContain(heading);
     }
     expect(html).toContain("PO-001");
+    expect(html).toContain("09/27 13:01");
     expect(html).toContain("SILVER MUSE");
     expect(html).toContain("需处理 2 项");
     expect(html).toContain('href="/dashboard/orders/1"');
