@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from domains.inquiry.models import Inquiry, InquirySupplier
 from domains.masterdata.models import Country, Port, Supplier
 from domains.orders.groups import service
@@ -13,6 +15,7 @@ def test_summary_scopes_members_and_separates_generation_from_fulfillment(client
     seed_user(db, email='admin@test', role='admin')
     x = order(db, a.id, po_number='VISIBLE')
     x.product_count = 7
+    x.created_at = datetime(2026, 9, 27, 4, 1, 2)
     hidden = order(db, b.id, po_number='SECRET')
     bad = order(db, a.id, loading_date=None)
     db.add(Inquiry(order_id=x.id, status='completed'))
@@ -30,6 +33,7 @@ def test_summary_scopes_members_and_separates_generation_from_fulfillment(client
     assert g['orders'][0]['inquiry_status'] == 'completed'
     assert g['orders'][0]['fulfillment_status'] == 'pending'
     assert g['orders'][0]['product_count'] == 7
+    assert g['orders'][0]['created_at'] == '2026-09-27T04:01:02'
     assert data['unclassified'][0]['id'] == bad.id
     assert data['unclassified'][0]['reason'] == '缺少或无法识别装船日'
     assert client.post(f'/api/order-groups/orders/{hidden.id}/classify', headers=h).status_code == 404

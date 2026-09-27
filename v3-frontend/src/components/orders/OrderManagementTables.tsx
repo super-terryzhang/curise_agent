@@ -17,6 +17,7 @@ import {
   type StatusPresentation,
   type VoyageManagementRow,
 } from "@/lib/order-management-view";
+import { formatBusinessDateTime } from "@/lib/order-workspace-view";
 
 const STATUS_STYLES: Record<ManagementStatus, string> = {
   missing_info:
@@ -77,10 +78,11 @@ export function PoManagementTable({
 }: PoManagementTableProps) {
   return (
     <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
-      <table className="w-full min-w-[980px] text-sm">
+      <table className="w-full min-w-[1100px] text-sm">
         <thead className="sticky top-0 z-10 bg-muted/70 text-left text-xs text-muted-foreground backdrop-blur">
           <tr>
             <th className="px-4 py-3 font-medium">PO 编号</th>
+            <th className="px-4 py-3 font-medium">进入系统时间</th>
             <th className="px-4 py-3 font-medium">船名</th>
             <th className="px-4 py-3 font-medium">装船日期</th>
             <th className="px-4 py-3 font-medium">目标港口</th>
@@ -103,6 +105,9 @@ export function PoManagementTable({
                 >
                   {row.poNumber}
                 </Link>
+              </td>
+              <td className="whitespace-nowrap px-4 py-3 text-xs tabular-nums text-muted-foreground">
+                {formatBusinessDateTime(row.order.created_at)}
               </td>
               <td className="max-w-44 px-4 py-3">
                 <span className="block truncate" title={row.ship || undefined}>
@@ -165,7 +170,7 @@ export function PoManagementTable({
           {!rows.length ? (
             <tr>
               <td
-                colSpan={7}
+                colSpan={8}
                 className="h-32 px-4 text-center text-sm text-muted-foreground"
               >
                 没有符合筛选的 PO

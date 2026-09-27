@@ -81,7 +81,8 @@ def list_arrangements(db, *, user_id):
         Order.po_number, Order.filename, Order.document_id, Order.ship_name,
         Order.loading_date, Order.delivery_date, Order.destination_port,
         Order.port_id, Order.status, Order.fulfillment_status, Order.anomaly_data,
-        Order.product_count, Order.products, Order.port_resolution_method,
+        Order.product_count, Order.products, Order.created_at,
+        Order.port_resolution_method,
         Order.port_resolution_status, Order.port_resolution_data,
         Order.port_resolution_reviewed_by, Order.port_resolution_reviewed_at,
     ))
@@ -160,6 +161,7 @@ def list_arrangements(db, *, user_id):
             'filename': order.filename, 'document_id': order.document_id,
             'product_count': order.product_count or 0,
             'product_names': _raw_product_names(order.products),
+            'created_at': order.created_at,
             'ship': value('ship_name'), 'day': normalized_date(value('loading_date')),
             'port': ports[order.port_id].name if order.port_id in ports else None,
             'status': order.status, 'fulfillment_status': order.fulfillment_status or 'pending',
