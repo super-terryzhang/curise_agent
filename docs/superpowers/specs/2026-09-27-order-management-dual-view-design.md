@@ -1,7 +1,7 @@
 # 订单管理双视图设计
 
-日期：2026-09-27  
-状态：用户已确认实施  
+日期：2026-09-27
+状态：用户已确认实施
 参考图：`/Users/yichuanzhang/Desktop/curise_system_2/outputs/temp/PO_page_revise.png`
 
 ## 目标

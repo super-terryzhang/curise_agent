@@ -1,9 +1,10 @@
 """Permission-scoped supply arrangement read models.
 
-The list view intentionally loads only summary columns.  The workspace detail
-view loads matching blobs for one visible arrangement so the frontend can show
-PO and supplier readiness without downloading every order in the system.
-Reading either view never mutates grouping.
+The list view intentionally avoids matching blobs and loads only summary
+fields plus the raw PO product rows needed for truthful name search.  The
+workspace detail view loads matching blobs for one visible arrangement so the
+frontend can show PO and supplier readiness without downloading every order in
+the system.  Reading either view never mutates grouping.
 """
 from collections import defaultdict
 from datetime import datetime
@@ -59,8 +60,9 @@ def list_arrangements(db, *, user_id):
     if not admin:
         query = query.filter(Order.user_id == user_id)
     orders = query.order_by(Order.id.desc()).all()
-    # Preserve the summary-only query: current records carry row provenance in
-    # their findings, while legacy records fall back to stored aggregate counts.
+    # Keep matching blobs out of the list query: current records carry row
+    # provenance in their findings, while legacy records fall back to stored
+    # aggregate counts.
     actionable_counts = actionable_row_counts(orders, include_match_results=False)
     ports = {p.id: p for p in db.query(Port).all()}
     inquiry_rows = db.query(

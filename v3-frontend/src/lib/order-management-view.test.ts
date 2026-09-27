@@ -153,6 +153,18 @@ describe("order management normalization", () => {
     });
   });
 
+  it("treats whitespace-only key information and reasons as missing", () => {
+    expect(
+      managementStatusForOrder(
+        makeOrder(6, { ship: "   ", reason: "   " }),
+      ),
+    ).toEqual({
+      code: "missing_info",
+      label: "需补充信息",
+      count: 0,
+    });
+  });
+
   it("aggregates voyage counts and keeps the unclassified bucket last", () => {
     const actionable = makeOrder(1, {
       product_count: 3,

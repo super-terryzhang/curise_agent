@@ -94,10 +94,11 @@ const STATUS_PRIORITY: Record<ManagementStatus, number> = {
 export function managementStatusForOrder(
   order: ArrangementOrder,
 ): StatusPresentation {
-  if (!order.ship || !order.day || !order.port) {
+  const hasText = (value: string | null | undefined) => Boolean(value?.trim());
+  if (!hasText(order.ship) || !hasText(order.day) || !hasText(order.port)) {
     return {
       code: "missing_info",
-      label: order.reason || "需补充信息",
+      label: order.reason?.trim() || "需补充信息",
       count: 0,
     };
   }

@@ -5,6 +5,7 @@ import type {
   VoyageManagementRow,
 } from "@/lib/order-management-view";
 import {
+  canRemovePo,
   PoManagementTable,
   VoyageManagementTable,
 } from "./OrderManagementTables";
@@ -81,6 +82,18 @@ const unclassifiedRow: VoyageManagementRow = {
 };
 
 describe("order management tables", () => {
+  it("keeps the remove action for a user's PO inside a shared arrangement", () => {
+    expect(canRemovePo({ ...poRow, arrangementCanManage: false })).toBe(true);
+    expect(
+      canRemovePo({
+        ...poRow,
+        arrangementId: null,
+        arrangementCanManage: false,
+        unclassified: true,
+      }),
+    ).toBe(false);
+  });
+
   it("renders direct PO columns, status text, detail link and actions", () => {
     const html = renderToStaticMarkup(
       <PoManagementTable

@@ -62,6 +62,10 @@ interface PoManagementTableProps {
   onDelete: (row: PoManagementRow) => void;
 }
 
+export function canRemovePo(row: PoManagementRow): boolean {
+  return !row.unclassified && row.arrangementId !== null;
+}
+
 export function PoManagementTable({
   rows,
   busy,
@@ -134,7 +138,7 @@ export function PoManagementTable({
                       <DropdownMenuItem onSelect={() => onAssign(row)}>
                         手动指定供船订单
                       </DropdownMenuItem>
-                      {!row.unclassified && row.arrangementCanManage ? (
+                      {canRemovePo(row) ? (
                         <DropdownMenuItem onSelect={() => onRemove(row)}>
                           移至未分类
                         </DropdownMenuItem>
