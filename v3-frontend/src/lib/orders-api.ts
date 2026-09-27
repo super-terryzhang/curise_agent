@@ -621,6 +621,7 @@ export async function updateOrder(
     currency?: string | null;
     port_id?: number | null;
     country_id?: number | null;
+    port_resolution_decision_id?: string | null;
     // R6 — top-level date columns. The backend's OrderUpdateRequest
     // accepts them at the top level; mirror lands on the real columns
     // instead of getting buried in the order_metadata JSON.

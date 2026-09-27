@@ -54,6 +54,21 @@ export function arrangementWorkspaceStatus(
   return { label: "待生成询价", tone: "neutral" };
 }
 
+export function canStartArrangementInquiry(
+  workspace: ArrangementWorkspace,
+  busy: boolean,
+): boolean {
+  const inquiryRunning = ["pending", "in_progress"].includes(
+    workspace.latest_inquiry?.status || "",
+  );
+  return Boolean(
+    workspace.arrangement.can_generate_inquiry
+      && workspace.arrangement.orders.length
+      && !busy
+      && !inquiryRunning,
+  );
+}
+
 export function arrangementPoStatus(order: ArrangementOrder): BusinessStatus {
   if (order.status === "error") return { label: "处理失败", tone: "danger" };
   if (["uploading", "extracting", "matching"].includes(order.status)) {

@@ -37,6 +37,17 @@ export function poProcessingLabel(order: ArrangementOrder): string {
   return PIPELINE_LABELS[order.status] || "处理状态待确认";
 }
 
+export function pendingPortReviewSummary(
+  orders: ArrangementOrder[],
+): string | null {
+  const count = orders.filter(
+    (order) => order.port_resolution?.status === "pending_review",
+  ).length;
+  return count
+    ? `${count} 个 PO 的目标港口由 AI 匹配，待人工确认`
+    : null;
+}
+
 export function arrangementPath(groupId: number): string {
   return `/dashboard/orders/arrangements/${groupId}`;
 }

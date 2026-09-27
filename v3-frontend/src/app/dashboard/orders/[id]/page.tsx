@@ -12,6 +12,11 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input";
 import { OrderProductIssues } from "@/components/orders/order-product-issues";
 import {
+  PortResolutionBadge,
+  PortResolutionReview,
+} from "@/components/orders/PortResolutionReview";
+import {
+  confirmPortResolution,
   downloadOrderFile,
   getOrder,
   getOrderFilePreview,
@@ -122,6 +127,17 @@ export default function OrderDetailPage() {
       const normalizedMeta = Object.fromEntries(
         Object.entries(editMeta).map(([key, value]) => [key, value.trim() || null]),
       );
+      const portDecision = order.port_resolution;
+      const hasPendingPortDecision = Boolean(
+        portDecision?.method === "llm"
+          && ["pending_review", "unresolved"].includes(portDecision.status),
+      );
+      const routesThroughPortOverride = Boolean(
+        hasPendingPortDecision && editPortId !== order.port_id,
+      );
+      if (routesThroughPortOverride && !portDecision?.decision_id) {
+        throw new Error("港口识别状态已过期，请刷新页面后重试");
+      }
       await updateOrder(order.id, {
         order_metadata: { ...(order.order_metadata || {}), ...normalizedMeta },
         products: editProducts,
@@ -130,11 +146,16 @@ export default function OrderDetailPage() {
         vendor_name: editMeta.vendor_name.trim() || null,
         order_date: editMeta.order_date.trim() || null,
         currency: editMeta.currency.trim() || null,
-        port_id: editPortId,
+        port_id: hasPendingPortDecision && !routesThroughPortOverride
+          ? undefined
+          : editPortId,
+        port_resolution_decision_id: routesThroughPortOverride
+          ? portDecision?.decision_id
+          : undefined,
         loading_date: editMeta.loading_date.trim() || null,
         delivery_date: editMeta.delivery_date.trim() || null,
       });
-      await rematchOrder(order.id);
+      if (!routesThroughPortOverride) await rematchOrder(order.id);
       setEditOpen(false);
       await load();
       toast.success("PO 数据已保存并重新匹配");
@@ -154,6 +175,9 @@ export default function OrderDetailPage() {
   const matched = order.match_statistics?.matched ?? matchRows.filter((item) => item.match_status === "matched").length;
   const unmatched = order.match_statistics?.not_matched ?? matchRows.length - matched;
   const findings = order.anomaly_data?.findings || [];
+  const portNeedsReview = ["pending_review", "unresolved"].includes(
+    order.port_resolution?.status || "",
+  );
 
   return (
     <div className="h-full overflow-y-auto bg-slate-50/40 p-5 text-sm dark:bg-transparent">
@@ -163,10 +187,21 @@ export default function OrderDetailPage() {
 
         {order.processing_error ? <div className="rounded-[3px] border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/20">处理失败：{order.processing_error}</div> : null}
 
+        {portNeedsReview ? <PortResolutionReview
+          state={order.port_resolution}
+          canonicalPortName={order.port_id ? portName : null}
+          busy={busy}
+          onConfirm={order.port_resolution?.decision_id ? () => runAction(
+            () => confirmPortResolution(order.id, order.port_resolution!.decision_id!),
+            "目标港口已确认",
+          ) : undefined}
+          onChange={openEdit}
+        /> : null}
+
         <Panel title="PO 基本信息"><div className="grid grid-cols-2 md:grid-cols-5">{[
           ["所属供船订单", parentName], ["装船日期", order.loading_date || String(metadata.loading_date || "待确认")], ["目标港口", portName], ["接收文件", order.filename], ["接收时间", formatBusinessDateTime(order.created_at)],
           ["商品数量", `${order.product_count || order.products?.length || 0} 项`], ["匹配成功", `${matched} 项`], ["未匹配", `${unmatched} 项`], ["数据检查", `${Math.max((order.product_count || 0) - (order.actionable_count ?? order.anomaly_data?.total_anomalies ?? 0), 0)}/${order.product_count || 0} 通过`], ["最后处理", formatBusinessDateTime(order.processed_at || order.updated_at)],
-        ].map(([label, value]) => <div key={label} className="min-h-[70px] border-b border-r px-4 py-2.5 md:[&:nth-child(5n)]:border-r-0 md:[&:nth-last-child(-n+5)]:border-b-0"><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1.5 truncate text-sm font-medium" title={value}>{value}</div></div>)}</div></Panel>
+        ].map(([label, value]) => <div key={label} className="min-h-[70px] border-b border-r px-4 py-2.5 md:[&:nth-child(5n)]:border-r-0 md:[&:nth-last-child(-n+5)]:border-b-0"><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5 text-sm font-medium"><span className="truncate" title={value}>{value}</span>{label === "目标港口" ? <PortResolutionBadge state={order.port_resolution} /> : null}</div></div>)}</div></Panel>
 
         <div className="flex border-b text-sm">{([
           ["products", "商品与匹配"], ["info", "PO 信息"], ["source", "原始文件"], ["history", "处理记录"],
@@ -183,7 +218,7 @@ export default function OrderDetailPage() {
 
         {activeTab === "info" ? <Panel title="PO 信息" aside={<Button variant="outline" size="sm" disabled={busy} onClick={openEdit}>编辑 PO 信息</Button>}><div className="grid grid-cols-2 md:grid-cols-4">{[
           ["PO 编号", String(metadata.po_number || "—")], ["邮轮", String(metadata.ship_name || "—")], ["客户/供应商", String(metadata.vendor_name || "—")], ["订单日期", String(metadata.order_date || "—")], ["装船日期", order.loading_date || "—"], ["交付日期", order.delivery_date || "—"], ["目标港口", portName], ["币种", String(metadata.currency || "—")], ["总金额", order.total_amount != null ? String(order.total_amount) : "—"], ["提取模板", order.template_id ? `#${order.template_id} · ${order.template_match_method || "自动"}` : "—"], ["审核状态", order.is_reviewed ? "已审核" : "未审核"], ["源文档", order.document_id ? `#${order.document_id}` : "—"],
-        ].map(([label, value]) => <div key={label} className="min-h-16 border-b border-r px-4 py-2.5 md:[&:nth-child(4n)]:border-r-0"><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1.5 text-sm font-medium">{value}</div></div>)}</div></Panel> : null}
+        ].map(([label, value]) => <div key={label} className="min-h-16 border-b border-r px-4 py-2.5 md:[&:nth-child(4n)]:border-r-0"><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-sm font-medium"><span>{value}</span>{label === "目标港口" ? <PortResolutionBadge state={order.port_resolution} /> : null}</div></div>)}</div></Panel> : null}
 
         {activeTab === "source" ? <Panel title="原始文件" aside={<Button variant="outline" size="sm" onClick={() => void downloadOrderFile(order.id, order.filename)}><Download />下载文件</Button>}><div className="h-[640px] bg-slate-100 dark:bg-slate-950">{sourceLoading ? <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin" /></div> : sourceUrl && order.file_type === "pdf" ? <iframe src={sourceUrl} title="原始 PO 文件" className="h-full w-full border-0" /> : <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground"><FileText className="h-10 w-10" /><span className="text-sm">此文件类型请下载后查看</span></div>}</div></Panel> : null}
 

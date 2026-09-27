@@ -17,12 +17,43 @@ interface PortResolutionReviewProps {
   className?: string;
 }
 
+interface PortResolutionBadgeProps {
+  state: PortResolutionState | null | undefined;
+  className?: string;
+}
+
 const toneClasses = {
   warning: "border-amber-300 bg-amber-50 text-amber-800",
   success: "border-emerald-300 bg-emerald-50 text-emerald-800",
   neutral: "border-slate-300 bg-slate-50 text-slate-700",
   danger: "border-red-300 bg-red-50 text-red-800",
 } as const;
+
+export function PortResolutionBadge({
+  state,
+  className,
+}: PortResolutionBadgeProps) {
+  const presentation = portResolutionPresentation(state);
+  if (!presentation) return null;
+
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "rounded-[3px]",
+        toneClasses[presentation.tone],
+        className,
+      )}
+    >
+      {presentation.tone === "danger" ? (
+        <AlertTriangle aria-hidden="true" />
+      ) : (
+        <Bot aria-hidden="true" />
+      )}
+      {presentation.label}
+    </Badge>
+  );
+}
 
 export function PortResolutionReview({
   state,
@@ -44,17 +75,7 @@ export function PortResolutionReview({
       aria-label="港口识别审核"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <Badge
-          variant="outline"
-          className={cn("rounded-[3px]", toneClasses[presentation.tone])}
-        >
-          {presentation.tone === "danger" ? (
-            <AlertTriangle aria-hidden="true" />
-          ) : (
-            <Bot aria-hidden="true" />
-          )}
-          {presentation.label}
-        </Badge>
+        <PortResolutionBadge state={state} />
         {canonicalPortName ? (
           <span className="text-sm font-medium">{canonicalPortName}</span>
         ) : null}
@@ -76,7 +97,7 @@ export function PortResolutionReview({
           {presentation.canConfirm && onConfirm ? (
             <Button size="xs" onClick={() => void onConfirm()} disabled={busy}>
               {busy ? <Loader2 className="animate-spin" /> : <Check />}
-              确认港口
+              确认此港口
             </Button>
           ) : null}
           {presentation.canChange && onChange ? (
