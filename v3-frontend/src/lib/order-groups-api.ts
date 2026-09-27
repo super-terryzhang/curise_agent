@@ -192,6 +192,7 @@ export interface ArrangementOrder {
   filename: string;
   document_id: number | null;
   product_count: number;
+  product_names: string[];
   ship: string | null;
   day: string | null;
   port: string | null;

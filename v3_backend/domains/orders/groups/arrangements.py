@@ -26,6 +26,27 @@ from domains.orders.groups.service import BadRequest, NotFound, _admin, require_
 from domains.orders.models import Order, OrderGroup
 
 
+def _raw_product_names(products: object) -> list[str]:
+    """Return stable, searchable names exactly from the stored PO rows."""
+    if not isinstance(products, list):
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for row in products:
+        if not isinstance(row, dict):
+            continue
+        value = row.get('product_name')
+        if not isinstance(value, str):
+            continue
+        name = value.strip()
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
 def list_arrangements(db, *, user_id):
     admin = _admin(db, user_id)
     query = db.query(Order).options(load_only(
@@ -33,7 +54,7 @@ def list_arrangements(db, *, user_id):
         Order.po_number, Order.filename, Order.document_id, Order.ship_name,
         Order.loading_date, Order.delivery_date, Order.destination_port,
         Order.port_id, Order.status, Order.fulfillment_status, Order.anomaly_data,
-        Order.product_count,
+        Order.product_count, Order.products,
     ))
     if not admin:
         query = query.filter(Order.user_id == user_id)
@@ -108,6 +129,7 @@ def list_arrangements(db, *, user_id):
             'id': order.id, 'po_number': value('po_number'),
             'filename': order.filename, 'document_id': order.document_id,
             'product_count': order.product_count or 0,
+            'product_names': _raw_product_names(order.products),
             'ship': value('ship_name'), 'day': normalized_date(value('loading_date')),
             'port': ports[order.port_id].name if order.port_id in ports else None,
             'status': order.status, 'fulfillment_status': order.fulfillment_status or 'pending',

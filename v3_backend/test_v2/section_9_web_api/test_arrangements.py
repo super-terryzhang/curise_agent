@@ -67,6 +67,60 @@ def test_all_members_returned_without_order_page_limit(client, db):
     assert len(r['arrangements'][0]['orders']) == 105
 
 
+def test_arrangement_summary_exposes_unique_raw_product_names(client, db):
+    visible_user = seed_user(db, email='product-search@test')
+    foreign_user = seed_user(db, email='foreign-products@test')
+    named = order(
+        db,
+        visible_user.id,
+        po_number='PO-NAMED',
+        products=[
+            {'product_name': '  Apple Granny Smith  '},
+            {'product_name': 'apple granny smith'},
+            {'product_name': 'Orange  Navel'},
+            {'product_name': '   '},
+            {'product_name': None},
+            {'product_name': 42},
+            {'other': 'ignored'},
+            'malformed-row',
+        ],
+    )
+    empty = order(
+        db,
+        visible_user.id,
+        po_number='PO-EMPTY',
+        loading_date='2026-09-12',
+        products=None,
+    )
+    order(
+        db,
+        foreign_user.id,
+        po_number='PO-FOREIGN',
+        products=[{'product_name': 'Secret Mango'}],
+    )
+    regroup(db, apply=True)
+
+    response = client.get(
+        '/api/order-groups/arrangements',
+        headers=login(client, 'product-search@test'),
+    )
+
+    assert response.status_code == 200, response.text
+    assert 'Secret Mango' not in response.text
+    data = response.json()
+    summaries = {
+        item['id']: item
+        for arrangement in data['arrangements']
+        for item in arrangement['orders']
+    }
+    summaries.update({item['id']: item for item in data['unclassified']})
+    assert summaries[named.id]['product_names'] == [
+        'Apple Granny Smith',
+        'Orange  Navel',
+    ]
+    assert summaries[empty.id]['product_names'] == []
+
+
 def test_delivery_date_does_not_fill_missing_loading_date(client, db):
     u = seed_user(db, email='a@test')
     order(db, u.id, loading_date=None, delivery_date='28-Mar-2026', port_id=None, destination_port='TOKYO (YOKOHAMA)')

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { arrangementPath, filterArrangements, poProcessingLabel } from "./arrangements-view";
 import type { SupplyArrangement, ArrangementOrder } from "./order-groups-api";
-const order = (id: number, day: string): ArrangementOrder => ({ id, day, po_number: `PO-${id}`, filename: `${id}.pdf`, document_id: null, product_count: 3, ship: "SHIP", port: "TOKYO", status: "ready", fulfillment_status: "pending", inquiry_status: "completed", reason: null });
+const order = (id: number, day: string): ArrangementOrder => ({ id, day, po_number: `PO-${id}`, filename: `${id}.pdf`, document_id: null, product_count: 3, product_names: [], ship: "SHIP", port: "TOKYO", status: "ready", fulfillment_status: "pending", inquiry_status: "completed", reason: null });
 const group = (id: number, day: string, orders = [order(id, day)]): SupplyArrangement => ({ id, day, name: "SHIP", ship: "SHIP", port_id: 1, port: "TOKYO", date_basis: "loading_date", manual: false, can_manage: true, can_generate_inquiry: true, orders });
 const filters = { search: "", from: "", to: "" };
 describe("arrangement navigation", () => {

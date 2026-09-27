@@ -60,21 +60,21 @@
 - Produces frontend field: `ArrangementOrder.product_names: string[]`.
 - Consumes only stored `Order.products` rows with a non-empty string `product_name`.
 
-- [ ] **Step 1: Add a failing API contract test**
+- [x] **Step 1: Add a failing API contract test**
 
 Add `test_arrangement_summary_exposes_unique_raw_product_names` with two visible orders. Assert ordered deduplication, whitespace normalization, empty/malformed values ignored, an empty list for no products, and no foreign-user product names in the response.
 
-- [ ] **Step 2: Run the focused backend test and verify RED**
+- [x] **Step 2: Run the focused backend test and verify RED**
 
 Run: `cd v3_backend && pytest test_v2/section_9_web_api/test_arrangements.py::test_arrangement_summary_exposes_unique_raw_product_names -v`
 
 Expected: FAIL because `product_names` is absent.
 
-- [ ] **Step 3: Implement the minimal summary field**
+- [x] **Step 3: Implement the minimal summary field**
 
 Add `Order.products` to the summary query and a private `_raw_product_names(products: object) -> list[str]` helper. Accept only list entries that are dictionaries with non-empty string `product_name`; trim, deduplicate case-insensitively while preserving the first stored spelling and order. Attach the result to every member summary.
 
-- [ ] **Step 4: Type the frontend contract and verify GREEN**
+- [x] **Step 4: Type the frontend contract and verify GREEN**
 
 Add required `product_names: string[]` to `ArrangementOrder` and update existing test fixtures. Run:
 
