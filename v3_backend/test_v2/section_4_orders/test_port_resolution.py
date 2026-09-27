@@ -11,6 +11,7 @@ from google.genai import errors
 
 from domains.masterdata.models import Country, Port
 from domains.orders.models import Order
+from domains.orders.oracle_models import OraclePOImport
 from domains.orders.port_resolution import (
     MAX_DESTINATION_CHARS,
     MAX_REASON_CHARS,
@@ -19,7 +20,6 @@ from domains.orders.port_resolution import (
     PortResolutionError,
     resolve_destination,
 )
-from domains.orders.oracle_models import OraclePOImport
 
 
 @dataclass
@@ -430,6 +430,31 @@ def test_provider_failure_is_persisted_instead_of_raised(db, monkeypatch):
     assert order.port_resolution_status == "unresolved"
     assert order.port_resolution_data["failure_code"] == "provider_unavailable"
     assert order.port_resolution_data["reason"] == "timed out"
+
+
+def test_manual_port_edit_resolves_an_unresolved_ai_decision(db):
+    from domains.orders.port_resolution import service
+
+    country, active, _, _ = _seed_port_states(db)
+    order = _order_for_resolution(db)
+    order.port_resolution_method = "llm"
+    order.port_resolution_status = "unresolved"
+    order.port_resolution_data = {
+        "decision_id": "unresolved-decision",
+        "final_port_id": None,
+    }
+
+    changed = service.apply_manual_port_override(
+        order,
+        port_id=active.id,
+        country_id=country.id,
+        reviewer_id=1,
+        source="arrangement_edit",
+    )
+
+    assert changed is True
+    assert order.port_resolution_status == "overridden"
+    assert order.port_resolution_data["final_port_id"] == active.id
 
 
 def _oracle_source_for_repair(db, order: Order, *, po_number: str = "PO168798CCI"):

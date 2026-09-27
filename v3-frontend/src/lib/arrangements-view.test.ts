@@ -25,6 +25,18 @@ describe("arrangement navigation", () => {
   it("labels completed and human-review PO rows without calling them orders", () => {
     expect(poProcessingLabel(order(1, "2026-09-11"))).toBe("自动处理完成");
     expect(poProcessingLabel({ ...order(2, "2026-09-11"), requires_human_review: true, anomaly_count: 2 })).toBe("需处理 2 项");
+    expect(poProcessingLabel({
+      ...order(3, "2026-09-11"),
+      requires_human_review: true,
+      anomaly_count: 0,
+      port_resolution: {
+        method: "llm", status: "pending_review", source_destination: "OSAKA",
+        source_port_code: null, suggested_port_id: 21, final_port_id: 21,
+        model: "gemini", prompt_version: "v1", decision_id: "d3",
+        reason: "matched", decided_at: null, failure_code: null,
+        reviewed_by: null, reviewed_at: null,
+      },
+    })).toBe("港口待确认");
   });
   it("builds the dedicated complete-order route", () => {
     expect(arrangementPath(42)).toBe("/dashboard/orders/arrangements/42");

@@ -142,7 +142,7 @@ def apply_manual_port_override(
     """Apply shared manual-review metadata without running downstream stages."""
     if not (
         order.port_resolution_method == "llm"
-        and order.port_resolution_status == "pending_review"
+        and order.port_resolution_status in {"pending_review", "unresolved"}
     ):
         return False
     data = dict(order.port_resolution_data or {})

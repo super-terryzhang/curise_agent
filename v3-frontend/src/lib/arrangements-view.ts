@@ -29,6 +29,10 @@ export function filterArrangements(groups: SupplyArrangement[], filters: Arrange
   });
 }
 export function poProcessingLabel(order: ArrangementOrder): string {
+  if (
+    order.port_resolution?.status === "pending_review"
+    && !order.anomaly_count
+  ) return "港口待确认";
   if (order.requires_human_review) return `需处理 ${order.anomaly_count || 0} 项`;
   if (order.status === "error") return PIPELINE_LABELS.error;
   if (order.inquiry_status === "error") return INQUIRY_LABELS.error;
