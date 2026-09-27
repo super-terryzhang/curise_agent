@@ -134,24 +134,16 @@ export function ProductGalleryGrid({
   const pageCount = Math.max(1, Math.ceil(totalProducts / pageSize));
   const currentPage = Math.min(pageCount, Math.max(1, pageIndex + 1));
 
-  if (!products.length) {
-    return (
-      <div className="flex min-h-64 flex-col items-center justify-center rounded-lg border text-sm text-muted-foreground">
-        <Package className="mb-3 h-8 w-8 opacity-40" />
-        暂无产品数据
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4">
-      <section
-        aria-label="产品图库"
-        className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"
-      >
-        {products.map((product) => {
-          const name = productName(product);
-          return (
+      {products.length ? (
+        <section
+          aria-label="产品图库"
+          className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"
+        >
+          {products.map((product) => {
+            const name = productName(product);
+            return (
             <article
               key={product.id}
               className="group overflow-hidden rounded-lg border bg-background shadow-xs transition-shadow hover:shadow-sm"
@@ -257,9 +249,15 @@ export function ProductGalleryGrid({
                 </div>
               </div>
             </article>
-          );
-        })}
-      </section>
+            );
+          })}
+        </section>
+      ) : (
+        <div className="flex min-h-64 flex-col items-center justify-center rounded-lg border text-sm text-muted-foreground">
+          <Package className="mb-3 h-8 w-8 opacity-40" />
+          暂无产品数据
+        </div>
+      )}
 
       <div className="flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
         <span>共 {totalProducts} 个产品</span>

@@ -125,4 +125,21 @@ describe("product gallery grid", () => {
     expect(html).toContain("图库视图");
     expect(html).toMatch(/aria-pressed="true"[^>]*>[^<]*<svg[^>]*>/);
   });
+
+  it("keeps recovery pagination visible when the current page is empty", () => {
+    const html = renderToStaticMarkup(
+      <ProductGalleryGrid
+        products={[]}
+        totalProducts={25}
+        pageIndex={1}
+        pageSize={24}
+        isWriter={false}
+        {...callbacks}
+      />,
+    );
+
+    expect(html).toContain("暂无产品数据");
+    expect(html).toContain("2 / 2");
+    expect(html).toContain('aria-label="上一页"');
+  });
 });

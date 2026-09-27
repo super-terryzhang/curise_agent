@@ -12,6 +12,10 @@ import {
   ProductViewToggle,
   type ProductView,
 } from "@/components/data/product-gallery-grid";
+import {
+  createLatestRequestRunner,
+  loadProductPage,
+} from "@/components/data/product-gallery-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -169,6 +173,8 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   const [countries, setCountries] = useState<CountryItem[]>([]);
   const [ports, setPorts] = useState<PortItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [productsRefreshing, setProductsRefreshing] = useState(false);
+  const [productsError, setProductsError] = useState<string | null>(null);
 
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterSupplier, setFilterSupplier] = useState("all");
@@ -177,12 +183,14 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   // Mirrors StatusBadge semantics so filter result agrees with each row's badge.
   const [filterStatus, setFilterStatus] = useState<"all" | "effective" | "invalid">("all");
   const [currentPage, setCurrentPage] = useState(0);
+  const [listPaginationVersion, setListPaginationVersion] = useState(0);
   const [view, setView] = useState<ProductView>("list");
   const activePageSize = view === "gallery" ? GALLERY_PAGE_SIZE : LIST_PAGE_SIZE;
 
   const [searchText, setSearchText] = useState(initialSearch);
   const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
   const deepLinkHandled = useRef(false);
+  const productRequestRunner = useRef(createLatestRequestRunner()).current;
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ProductItem | null>(null);
@@ -227,15 +235,31 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
     return params;
   }, [activePageSize, debouncedSearch, filterCategory, filterSupplier, filterCountry, filterStatus, categories, suppliers, countries]);
 
-  const fetchProducts = useCallback((page: number, pageSize = activePageSize) => {
-    const params = getFilterParams(page, pageSize);
-    listProducts(params)
-      .then(({ total, items }) => {
-        setProducts(items);
-        setTotalProducts(total);
-      })
-      .catch((err) => toast.error(err.message));
-  }, [getFilterParams]);
+  const fetchProducts = useCallback(async (page: number, pageSize = activePageSize) => {
+    setProductsRefreshing(true);
+    setProductsError(null);
+    try {
+      const result = await productRequestRunner.run(() =>
+        loadProductPage(page, pageSize, (requestedPage) =>
+          listProducts(getFilterParams(requestedPage, pageSize)),
+        ),
+      );
+      if (!result) return;
+
+      if (result.page !== page) {
+        setCurrentPage(result.page);
+        setListPaginationVersion((version) => version + 1);
+      }
+      setProducts(result.items);
+      setTotalProducts(result.total);
+      setProductsRefreshing(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "产品加载失败";
+      setProductsError(message);
+      setProductsRefreshing(false);
+      toast.error(message);
+    }
+  }, [activePageSize, getFilterParams, productRequestRunner]);
 
   const reload = useCallback(() => {
     fetchProducts(currentPage);
@@ -260,7 +284,11 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
         setCountries(cty);
         setPorts(pts);
       })
-      .catch((err) => toast.error(err.message))
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : "产品加载失败";
+        setProductsError(message);
+        toast.error(message);
+      })
       .finally(() => setLoading(false));
   }, [initialSearch]);
 
@@ -274,6 +302,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   useEffect(() => {
     if (!loading) {
       setCurrentPage(0);
+      setListPaginationVersion((version) => version + 1);
       fetchProducts(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -791,15 +820,36 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
     </div>
   );
 
+  const productEmptyState = productsRefreshing ? (
+    <div className="flex flex-col items-center justify-center py-16 text-sm text-muted-foreground">
+      <Loader2 className="mb-3 h-6 w-6 animate-spin" />
+      正在加载产品…
+    </div>
+  ) : productsError ? (
+    <EmptyState
+      icon={Package}
+      title="产品加载失败"
+      description={productsError}
+      action={(
+        <Button variant="outline" size="sm" onClick={() => void fetchProducts(currentPage)}>
+          重新加载
+        </Button>
+      )}
+    />
+  ) : (
+    <EmptyState icon={Package} title="暂无产品数据" />
+  );
+
   return (
     <>
       {view === "list" ? (
         <DataTable
+          key={`products-list-${listPaginationVersion}`}
           columns={columns}
-          data={products}
+          data={productsRefreshing || productsError ? [] : products}
           pageSize={LIST_PAGE_SIZE}
           toolbar={toolbar}
-          emptyState={<EmptyState icon={Package} title="暂无产品数据" />}
+          emptyState={productEmptyState}
           totalRows={totalProducts}
           onPageChange={(pageIndex) => {
             setCurrentPage(pageIndex);
@@ -826,23 +876,27 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
             {toolbar}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-            <ProductGalleryGrid
-              products={products}
-              totalProducts={totalProducts}
-              pageIndex={currentPage}
-              pageSize={GALLERY_PAGE_SIZE}
-              isWriter={isWriter}
-              onPageChange={(pageIndex) => {
-                setCurrentPage(pageIndex);
-                fetchProducts(pageIndex, GALLERY_PAGE_SIZE);
-              }}
-              onOpenImages={setGalleryProduct}
-              onOpenHistory={setHistoryProduct}
-              onManagePrices={setPeriodProduct}
-              onEdit={openEdit}
-              onToggleStatus={(product) => void handleToggleStatus(product)}
-              onDelete={(product) => void handleDelete(product)}
-            />
+            {productsRefreshing || productsError ? (
+              productEmptyState
+            ) : (
+              <ProductGalleryGrid
+                products={products}
+                totalProducts={totalProducts}
+                pageIndex={currentPage}
+                pageSize={GALLERY_PAGE_SIZE}
+                isWriter={isWriter}
+                onPageChange={(pageIndex) => {
+                  setCurrentPage(pageIndex);
+                  fetchProducts(pageIndex, GALLERY_PAGE_SIZE);
+                }}
+                onOpenImages={setGalleryProduct}
+                onOpenHistory={setHistoryProduct}
+                onManagePrices={setPeriodProduct}
+                onEdit={openEdit}
+                onToggleStatus={(product) => void handleToggleStatus(product)}
+                onDelete={(product) => void handleDelete(product)}
+              />
+            )}
           </div>
         </div>
       )}
