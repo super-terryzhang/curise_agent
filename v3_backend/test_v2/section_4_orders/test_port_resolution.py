@@ -3,15 +3,19 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
 from google.genai import errors
 
+from domains.masterdata.models import Country, Port
+from domains.orders.models import Order
 from domains.orders.port_resolution import (
     MAX_DESTINATION_CHARS,
     MAX_REASON_CHARS,
     PortCandidate,
+    PortResolutionDecision,
     PortResolutionError,
     resolve_destination,
 )
@@ -240,3 +244,188 @@ def test_oversized_destination_returns_unmatched_without_model_call(
     assert decision.reason == "destination_too_long"
     assert calls == []
     assert client_options == []
+
+
+def _seed_port_states(db):
+    country = Country(name="Japan", code="JP", status=True)
+    db.add(country)
+    db.flush()
+    active = Port(name="大阪", code="OSAKA", country_id=country.id, status=True)
+    disabled = Port(name="旧港", code="OLD", country_id=country.id, status=False)
+    countryless = Port(name="Unknown", code="NONE", country_id=None, status=True)
+    db.add_all([active, disabled, countryless])
+    db.commit()
+    return country, active, disabled, countryless
+
+
+def _order_for_resolution(db) -> Order:
+    order = Order(
+        user_id=1,
+        filename="oracle-po.pdf",
+        file_type="pdf",
+        status="processing",
+        destination_port="OSAKA",
+    )
+    db.add(order)
+    db.commit()
+    return order
+
+
+def test_state_service_applies_canonical_active_port_and_pending_review(
+    db,
+    monkeypatch,
+):
+    from domains.orders.port_resolution import service
+
+    country, active, disabled, countryless = _seed_port_states(db)
+    order = _order_for_resolution(db)
+
+    def fake_resolve(destination, candidates, **kwargs):
+        assert destination == "OSAKA"
+        assert [candidate.id for candidate in candidates] == [active.id]
+        assert disabled.id not in {candidate.id for candidate in candidates}
+        assert countryless.id not in {candidate.id for candidate in candidates}
+        return PortResolutionDecision(
+            status="matched",
+            port_id=active.id,
+            reason="OSAKA matches Osaka",
+            model=kwargs["model"],
+            prompt_version="oracle-port-resolution-v1",
+            candidate_snapshot_hash="a" * 64,
+        )
+
+    monkeypatch.setattr(service, "resolve_destination", fake_resolve)
+
+    outcome = service.resolve_order_port(
+        db,
+        order,
+        destination="OSAKA",
+        source_code="OSA",
+        api_key="key",
+        model="gemini-3.5-flash",
+    )
+
+    assert outcome.status == "matched"
+    assert outcome.issue_code is None
+    assert order.port_id == active.id
+    assert order.country_id == country.id
+    assert order.port_resolution_method == "llm"
+    assert order.port_resolution_status == "pending_review"
+    assert order.port_resolution_reviewed_by is None
+    assert order.port_resolution_reviewed_at is None
+    assert order.port_resolution_data["source_destination"] == "OSAKA"
+    assert order.port_resolution_data["source_port_code"] == "OSA"
+    assert order.port_resolution_data["suggested_port_id"] == active.id
+    assert order.port_resolution_data["final_port_id"] == active.id
+    assert order.port_resolution_data["failure_code"] is None
+    UUID(order.port_resolution_data["decision_id"])
+    assert order.port_resolution_data["decided_at"].endswith("Z")
+
+
+def test_state_service_rejects_port_disabled_after_model_decision(db, monkeypatch):
+    from domains.orders.port_resolution import service
+
+    _, active, _, _ = _seed_port_states(db)
+    order = _order_for_resolution(db)
+
+    def disable_before_return(_destination, _candidates, **_kwargs):
+        active.status = False
+        db.flush()
+        return PortResolutionDecision(
+            status="matched",
+            port_id=active.id,
+            reason="stale candidate",
+            model="gemini-3.5-flash",
+            prompt_version="oracle-port-resolution-v1",
+            candidate_snapshot_hash="b" * 64,
+        )
+
+    monkeypatch.setattr(service, "resolve_destination", disable_before_return)
+
+    outcome = service.resolve_order_port(
+        db,
+        order,
+        destination="OSAKA",
+        source_code="OSA",
+        api_key="key",
+        model="gemini-3.5-flash",
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.issue_code == "LLM_PORT_RESOLUTION_FAILED"
+    assert order.port_id is None
+    assert order.country_id is None
+    assert order.port_resolution_status == "unresolved"
+    assert order.port_resolution_data["suggested_port_id"] == active.id
+    assert order.port_resolution_data["failure_code"] == "selected_port_invalid"
+
+
+def test_unmatched_clears_only_pending_automatic_port(db, monkeypatch):
+    from domains.orders.port_resolution import service
+
+    country, active, _, _ = _seed_port_states(db)
+    order = _order_for_resolution(db)
+    order.port_id = active.id
+    order.country_id = country.id
+    order.port_resolution_method = "llm"
+    order.port_resolution_status = "pending_review"
+    order.port_resolution_data = {"decision_id": "old-decision"}
+    db.commit()
+    monkeypatch.setattr(
+        service,
+        "resolve_destination",
+        lambda *_args, **_kwargs: PortResolutionDecision(
+            status="unmatched",
+            port_id=None,
+            reason="ambiguous destination",
+            model="gemini-3.5-flash",
+            prompt_version="oracle-port-resolution-v1",
+            candidate_snapshot_hash="c" * 64,
+        ),
+    )
+
+    outcome = service.resolve_order_port(
+        db,
+        order,
+        destination="YOKOHAMA",
+        source_code="YOK",
+        api_key="key",
+        model="gemini-3.5-flash",
+    )
+
+    assert outcome.status == "unresolved"
+    assert outcome.issue_code == "LLM_PORT_UNRESOLVED"
+    assert order.port_id is None
+    assert order.country_id is None
+    assert order.port_resolution_status == "unresolved"
+    assert order.port_resolution_data["failure_code"] is None
+    assert order.port_resolution_data["reason"] == "ambiguous destination"
+
+
+def test_provider_failure_is_persisted_instead_of_raised(db, monkeypatch):
+    from domains.orders.port_resolution import service
+
+    _seed_port_states(db)
+    order = _order_for_resolution(db)
+    monkeypatch.setattr(
+        service,
+        "resolve_destination",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            PortResolutionError("provider_unavailable", "timed out")
+        ),
+    )
+
+    outcome = service.resolve_order_port(
+        db,
+        order,
+        destination="OSAKA",
+        source_code="OSA",
+        api_key="key",
+        model="gemini-3.5-flash",
+    )
+
+    assert outcome.status == "failed"
+    assert outcome.issue_code == "LLM_PORT_RESOLUTION_FAILED"
+    assert order.port_resolution_status == "unresolved"
+    assert order.port_resolution_data["failure_code"] == "provider_unavailable"
+    assert order.port_resolution_data["reason"] == "timed out"

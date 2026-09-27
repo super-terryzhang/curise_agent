@@ -6,6 +6,10 @@ from domains.orders.port_resolution.resolver import (
     PROMPT_VERSION,
     resolve_destination,
 )
+from domains.orders.port_resolution.service import (
+    PortResolutionOutcome,
+    resolve_order_port,
+)
 from domains.orders.port_resolution.types import (
     PortCandidate,
     PortResolutionDecision,
@@ -19,5 +23,7 @@ __all__ = [
     "PortCandidate",
     "PortResolutionDecision",
     "PortResolutionError",
+    "PortResolutionOutcome",
     "resolve_destination",
+    "resolve_order_port",
 ]
