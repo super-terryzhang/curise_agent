@@ -148,25 +148,25 @@ git commit -m "feat: add order management dual-view model"
 - `VoyageManagementTable` receives paged rows and `onShowUnclassified`; normal rows link to existing arrangement detail routes.
 - The page owns `poFilters`, `voyageFilters`, `poPage`, `voyagePage`, page sizes and selected view.
 
-- [ ] **Step 1: Add failing server-rendered table tests**
+- [x] **Step 1: Add failing server-rendered table tests**
 
 Use `react-dom/server` to assert the PO table exposes all required column headings, paged rows, status text and PO detail link; assert the voyage table exposes PO/product totals, weekday text, arrangement link and the special unclassified action.
 
-- [ ] **Step 2: Run component tests and verify RED**
+- [x] **Step 2: Run component tests and verify RED**
 
 Run: `cd v3-frontend && pnpm test -- src/components/orders/OrderManagementTables.test.tsx`
 
 Expected: FAIL because the table module does not exist.
 
-- [ ] **Step 3: Implement both focused table components**
+- [x] **Step 3: Implement both focused table components**
 
 Use semantic tables, visible text status chips, horizontal overflow on narrow screens and existing authenticated mutation callbacks. Do not duplicate filtering or status logic in JSX.
 
-- [ ] **Step 4: Replace the expandable page with dual-view controls**
+- [x] **Step 4: Replace the expandable page with dual-view controls**
 
 Add the `按 PO / 按轮次` switcher, view-specific description, search/date/select controls, reset, refresh, counts, page-size selectors and previous/next controls. Each view owns independent filters and pagination. Keep the existing assignment/create-group/delete dialog and refresh behavior. The unclassified voyage action switches to PO view with an explicit internal `unclassifiedOnly` filter, shows that scope in the result summary, and lets reset clear it.
 
-- [ ] **Step 5: Run focused tests, type checking and verify GREEN**
+- [x] **Step 5: Run focused tests, type checking and verify GREEN**
 
 Run:
 
