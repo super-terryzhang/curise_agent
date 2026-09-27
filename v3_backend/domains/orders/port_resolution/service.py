@@ -131,6 +131,34 @@ def mark_override_continuation_complete(
     return order
 
 
+def apply_manual_port_override(
+    order: Order,
+    *,
+    port_id: int,
+    country_id: int,
+    reviewer_id: int,
+    source: str,
+) -> bool:
+    """Apply shared manual-review metadata without running downstream stages."""
+    if not (
+        order.port_resolution_method == "llm"
+        and order.port_resolution_status == "pending_review"
+    ):
+        return False
+    data = dict(order.port_resolution_data or {})
+    order.port_id = port_id
+    order.country_id = country_id
+    order.port_resolution_status = "overridden"
+    order.port_resolution_reviewed_by = reviewer_id
+    order.port_resolution_reviewed_at = datetime.now(UTC)
+    order.port_resolution_data = {
+        **data,
+        "final_port_id": port_id,
+        "manual_override_source": source,
+    }
+    return True
+
+
 def _lock_order_for_user(
     db: Session, order_id: int, user_id: int, is_admin: bool
 ) -> Order:

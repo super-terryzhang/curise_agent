@@ -9,6 +9,7 @@ from domains.orders.port_resolution.resolver import (
 from domains.orders.port_resolution.service import (
     PortResolutionOutcome,
     PortResolutionReviewTransition,
+    apply_manual_port_override,
     confirm_order_port,
     mark_override_continuation_complete,
     override_order_port,
@@ -29,6 +30,7 @@ __all__ = [
     "PortResolutionError",
     "PortResolutionOutcome",
     "PortResolutionReviewTransition",
+    "apply_manual_port_override",
     "confirm_order_port",
     "mark_override_continuation_complete",
     "override_order_port",

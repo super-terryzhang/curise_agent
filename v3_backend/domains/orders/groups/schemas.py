@@ -6,6 +6,12 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from domains.orders.schemas import PortResolutionState
+
+
+class ArrangementPortResolutionState(PortResolutionState):
+    """The shared order-level review contract projected on arrangement members."""
+
 
 class OrderGroupCreate(BaseModel):
     """POST /api/order-groups body."""
