@@ -8,6 +8,10 @@ from domains.orders.port_resolution.resolver import (
 )
 from domains.orders.port_resolution.service import (
     PortResolutionOutcome,
+    PortResolutionReviewTransition,
+    confirm_order_port,
+    mark_override_continuation_complete,
+    override_order_port,
     resolve_order_port,
 )
 from domains.orders.port_resolution.types import (
@@ -24,6 +28,10 @@ __all__ = [
     "PortResolutionDecision",
     "PortResolutionError",
     "PortResolutionOutcome",
+    "PortResolutionReviewTransition",
+    "confirm_order_port",
+    "mark_override_continuation_complete",
+    "override_order_port",
     "resolve_destination",
     "resolve_order_port",
 ]

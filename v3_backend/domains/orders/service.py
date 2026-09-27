@@ -24,6 +24,7 @@ from domains.orders import anomaly, issues, repository
 from domains.orders.errors import BadRequest, NotFound, StatusConflict
 from domains.orders.matching import run_matching
 from domains.orders.models import Order
+from domains.orders.port_resolution import service as port_resolution_service
 from domains.orders.projection import project_purchase_order
 from domains.orders.schemas import (
     OrderDetail,
@@ -374,6 +375,15 @@ def update_order(
 ) -> OrderDetail:
     order = _load_for_user(db, order_id, user_id, is_admin)
     data = body.model_dump(exclude_unset=True)
+    decision_id = data.pop("port_resolution_decision_id", None)
+    edits_pending_ai_scope = (
+        order.port_resolution_method == "llm"
+        and order.port_resolution_status in {"pending_review", "unresolved"}
+        and bool({"port_id", "country_id"}.intersection(data))
+    )
+    if edits_pending_ai_scope and data.get("port_id") is None:
+        raise BadRequest("待审核的 AI 港口只能通过选择一个有效港口进行改选")
+    routes_through_port_override = edits_pending_ai_scope
 
     # FK validation — mirrors rematch_order. Without these checks a
     # malformed body could write a dangling country_id/port_id, which
@@ -392,6 +402,19 @@ def update_order(
         and not md_repo.port_exists(db, data["port_id"])
     ):
         raise BadRequest("港口不存在")
+    if routes_through_port_override:
+        if not decision_id:
+            raise BadRequest("请刷新页面后使用当前 AI 判定进行港口改选")
+        selected_port = md_repo.get_port(db, data["port_id"])
+        if (
+            data.get("country_id") is not None
+            and selected_port is not None
+            and selected_port.country_id != data["country_id"]
+        ):
+            raise BadRequest("港口与国家不一致")
+        # The validated port is the canonical source of country_id.
+        data.pop("port_id", None)
+        data.pop("country_id", None)
 
     for key, value in data.items():
         if key in _UPDATABLE_COLUMNS:
@@ -410,11 +433,86 @@ def update_order(
         order.order_metadata = existing
         flag_modified(order, "order_metadata")
 
+    if routes_through_port_override:
+        return override_port_resolution(
+            db,
+            order_id=order_id,
+            user_id=user_id,
+            is_admin=is_admin,
+            decision_id=decision_id,
+            port_id=body.port_id,
+            reviewer_id=user_id,
+        )
     repository.save(db, order)
     from domains.orders.groups.automation import auto_group_order
 
     auto_group_order(db, order.id)
     db.refresh(order)
+    return _to_detail(order, db, user_id)
+
+
+def confirm_port_resolution(
+    db: Session,
+    *,
+    order_id: int,
+    user_id: int,
+    is_admin: bool,
+    decision_id: str,
+    reviewer_id: int,
+) -> OrderDetail:
+    transition = port_resolution_service.confirm_order_port(
+        db,
+        order_id=order_id,
+        user_id=user_id,
+        is_admin=is_admin,
+        decision_id=decision_id,
+        reviewer_id=reviewer_id,
+    )
+    order = transition.order
+    if transition.changed:
+        _refresh_order_anomaly(db, order)
+        repository.save(db, order)
+    return _to_detail(order, db, user_id)
+
+
+def override_port_resolution(
+    db: Session,
+    *,
+    order_id: int,
+    user_id: int,
+    is_admin: bool,
+    decision_id: str,
+    port_id: int,
+    reviewer_id: int,
+) -> OrderDetail:
+    transition = port_resolution_service.override_order_port(
+        db,
+        order_id=order_id,
+        user_id=user_id,
+        is_admin=is_admin,
+        decision_id=decision_id,
+        port_id=port_id,
+        reviewer_id=reviewer_id,
+    )
+    if not transition.changed:
+        return _to_detail(transition.order, db, user_id)
+
+    continuation_key = transition.continuation_key
+    if continuation_key is None:
+        raise RuntimeError("PORT_OVERRIDE_CONTINUATION_KEY_REQUIRED")
+    transition.order.status = "matching"
+    transition.order.processing_error = None
+    repository.save(db, transition.order)
+
+    from domains.orders.automation import automatic_order_pipeline
+
+    automatic_order_pipeline(order_id)
+    db.expire_all()
+    order = port_resolution_service.mark_override_continuation_complete(
+        db,
+        order_id=order_id,
+        continuation_key=continuation_key,
+    )
     return _to_detail(order, db, user_id)
 
 
@@ -748,6 +846,13 @@ def mark_reviewed(
 
 def run_anomaly_check(db: Session, *, order_id: int, user_id: int, is_admin: bool) -> OrderDetail:
     order = _load_for_user(db, order_id, user_id, is_admin)
+    _refresh_order_anomaly(db, order)
+    repository.save(db, order)
+    return _to_detail(order, db, user_id)
+
+
+def _refresh_order_anomaly(db: Session, order: Order) -> None:
+    """Rebuild stage 8 in the caller's transaction."""
     from domains.orders.automation import mark_pipeline_stage
 
     pipeline = (order.anomaly_data or {}).get("pipeline") or []
@@ -783,8 +888,6 @@ def run_anomaly_check(db: Session, *, order_id: int, user_id: int, is_admin: boo
         result["pipeline"] = pipeline
     order.anomaly_data = result
     flag_modified(order, "anomaly_data")
-    repository.save(db, order)
-    return _to_detail(order, db, user_id)
 
 
 # ═════ Order payload (for Document detail page) ═════════════

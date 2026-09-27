@@ -132,6 +132,7 @@ class OrderUpdateRequest(BaseModel):
     destination_port: str | None = None
     country_id: int | None = None
     port_id: int | None = None
+    port_resolution_decision_id: str | None = Field(default=None, max_length=64)
     products: list[dict[str, Any]] | None = None
     order_metadata: dict[str, Any] | None = None
 
