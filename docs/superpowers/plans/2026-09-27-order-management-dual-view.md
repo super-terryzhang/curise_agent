@@ -100,29 +100,29 @@ git commit -m "feat: expose PO product names in arrangement summaries"
 - Produces: `ManagementView`, `ManagementStatus`, `ManagementFilters`, `PoManagementRow`, `VoyageManagementRow`, `StatusPresentation`.
 - Produces functions: `buildPoRows`, `buildVoyageRows`, `filterPoRows`, `filterVoyageRows`, `managementFilterOptions`, `paginateRows`, `weekdayLabel`.
 
-- [ ] **Step 1: Write failing normalization and status tests**
+- [x] **Step 1: Write failing normalization and status tests**
 
 Cover: flattening classified and unclassified POs exactly once; missing-info priority; failure before processing; processing before actionable; current actionable labels/counts; voyage product/PO aggregation; unclassified special row; mixed-member highest-priority status.
 
-- [ ] **Step 2: Run the new test file and verify RED**
+- [x] **Step 2: Run the new test file and verify RED**
 
 Run: `cd v3-frontend && pnpm test -- src/lib/order-management-view.test.ts`
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 3: Implement minimal normalization and status functions**
+- [x] **Step 3: Implement minimal normalization and status functions**
 
 Use explicit priority values and immutable derived rows. A PO is missing information when ship, loading day or selected port is absent. Never derive product issues from absent match results.
 
-- [ ] **Step 4: Add failing filter, sort and pagination tests**
+- [x] **Step 4: Add failing filter, sort and pagination tests**
 
 Cover PO raw product-name search isolation and case folding; voyage ship/port search; combined exact filters and inclusive date range; internal `unclassifiedOnly` scope; PO missing-first/date-desc sort; voyage date-asc/unclassified-last sort; unique options; empty results; page clamping and slice boundaries.
 
-- [ ] **Step 5: Implement filters, sorting, options and `paginateRows<T>`**
+- [x] **Step 5: Implement filters, sorting, options and `paginateRows<T>`**
 
 `paginateRows` returns `{ items, page, pageCount, total }`, with page clamped to `1..max(1, pageCount)`. All active filters are ANDed. Empty date rows fail an active date constraint.
 
-- [ ] **Step 6: Run view-model tests and verify GREEN**
+- [x] **Step 6: Run view-model tests and verify GREEN**
 
 Run: `cd v3-frontend && pnpm test -- src/lib/order-management-view.test.ts`
 
