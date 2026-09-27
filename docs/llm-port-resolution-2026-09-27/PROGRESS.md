@@ -1,0 +1,32 @@
+# LLM 港口识别发布进度（2026-09-27）
+
+## 已实现
+
+- Oracle PO 在既有规则无法唯一确定港口时，可让 Gemini 从数据库中的启用港口列表里返回一个受约束的 `port_id`，或明确返回无法匹配。
+- AI 匹配成功后继续产品匹配、供船归组、询价与异常检测，不再因港口名称语言差异阻塞；页面统一标记“AI 匹配 · 待人工确认”。
+- 人工可确认当前港口，或改选数据库中的其他港口；改选带判定 ID、审核人和时间，并只通过受审计的继续处理路径执行。
+- 模型超时、服务错误、非法输出、歧义和无匹配均被隔离到当前 PO，不会停止同批 Oracle 扫描。
+- 提供单 PO、默认 dry-run、必须核对订单 ID 才能写入的历史修复命令；禁止通配符和批量目标。
+
+## 验证证据
+
+- 后端最终全量：`1856 passed, 101 skipped, 4 warnings`。
+- 前端：22 个测试文件、134 项测试通过；TypeScript 检查与生产构建通过。
+- 真实 Gemini 静态评测：7/7，通过项包括 OSAKA=21、OKINAWA=25、TOKYO=28、SYDNEY=29、YOKOHAMA OSANBASHI=19，以及 PORTLAND/YOKOHAMA 明确不匹配。
+- 架构检查 0 违规；wheel 构建成功，SHA-256 为 `148f148046a7bade23056b0bbbd254b24e5ee48412383de55d719313d97e126f`。
+- 0032 在一次性 PostgreSQL 16 上完成 0031→0032→0031→0032；5 个字段、2 个检查约束、1 个审核人外键均已验证，非本功能字段哈希始终为 `900f52cf2ea5e26b31c3d8703de8b5f1`。
+
+## 已知边界
+
+- LLM 只读取 Oracle 已提取的 `FINAL DESTINATION` 与受控港口候选，不解释 `PORT CODE`，也不能返回候选列表以外的 ID。
+- 旧订单不会自动批量改写；只允许逐张 dry-run、核对后应用。
+- `0001_baseline` 是已有 v2 数据库的无操作基线，不能从空数据库构造完整历史结构；因此迁移往返使用当前 ORM 生成的生产形状结构并从 0031 实际执行。
+- passlib/bcrypt 与 `crypt` 告警属于既有技术债务，与本功能无关。
+
+## 生产发布
+
+- 功能 PR #13 已合并为 `f3f0718a6dc12f9e007b47bf690b4f46185dc14d`，CI `36317923046` 通过。
+- 数据库已备份并迁移至 0032；后端 `cruise-v3-backend-llm-port-20260927` 接收 100% 流量，镜像 digest 为 `sha256:c16f98990446bedebe7f5c12a77681833761fe5fb62b035a483941498eea1994`。
+- 前端 `dpl_FozJ2JshqUEE583KPSunGhKUtPyR` 为 Production / Ready；Oracle Job generation 19 使用相同镜像，手动等价执行成功。
+- 6 张符合条件的历史 Oracle PO 已逐张 dry-run 后应用，全部保留 `llm / pending_review`；最终只读数据为 1463 产品、78 订单、38 询价、623 张图片。
+- 完整发布、异常、回退与用户验收证据见工作区根目录 `DEPLOYMENT_VERIFIED_2026-09-27_LLM_PORT_RESOLUTION.md`。

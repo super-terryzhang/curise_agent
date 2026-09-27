@@ -8,6 +8,7 @@
  */
 
 import { fetchWithAuth } from "./fetch-with-auth";
+import type { PortResolutionState } from "./orders-api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
@@ -196,6 +197,7 @@ export interface ArrangementOrder {
   ship: string | null;
   day: string | null;
   port: string | null;
+  port_resolution?: PortResolutionState | null;
   status: string;
   fulfillment_status: string;
   inquiry_status: string | null;
@@ -220,6 +222,7 @@ export interface SupplyArrangement {
   manual: boolean;
   can_manage: boolean;
   can_generate_inquiry: boolean;
+  pending_port_review_count?: number;
   inquiry_version?: number | null;
   inquiry_members_changed?: boolean;
   inquiry_member_diff?: {
@@ -260,6 +263,7 @@ export interface ArrangementWorkspace {
     unmatched_count: number;
     supplier_count: number;
     anomaly_count: number;
+    pending_port_review_count?: number;
     updated_at: string | null;
   };
   latest_inquiry: {

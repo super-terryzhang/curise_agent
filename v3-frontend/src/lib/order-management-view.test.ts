@@ -81,6 +81,23 @@ const filters = (
   ...overrides,
 });
 
+const pendingPortResolution = {
+  method: "llm" as const,
+  status: "pending_review" as const,
+  source_destination: "OSAKA",
+  source_port_code: null,
+  suggested_port_id: 21,
+  final_port_id: 21,
+  model: "gemini",
+  prompt_version: "v1",
+  decision_id: "decision-1",
+  reason: "matched",
+  decided_at: null,
+  failure_code: null,
+  reviewed_by: null,
+  reviewed_at: null,
+};
+
 describe("order management normalization", () => {
   it("flattens classified and unclassified POs exactly once", () => {
     const first = makeOrder(1);
@@ -163,6 +180,26 @@ describe("order management normalization", () => {
       label: "需补充信息",
       count: 0,
     });
+  });
+
+  it("keeps pending AI port review visible in PO and voyage status", () => {
+    const pending = makeOrder(7, {
+      port_resolution: pendingPortResolution,
+      requires_human_review: true,
+      anomaly_count: 0,
+    });
+
+    expect(managementStatusForOrder(pending)).toEqual({
+      code: "attention",
+      label: "港口待确认",
+      count: 0,
+    });
+    expect(buildVoyageRows(makeData([makeGroup(70, [pending])]))[0].status)
+      .toEqual({
+        code: "attention",
+        label: "港口待确认",
+        count: 0,
+      });
   });
 
   it("aggregates voyage counts and keeps the unclassified bucket last", () => {

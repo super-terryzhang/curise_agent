@@ -166,6 +166,34 @@ def test_scan_keeps_processing_valid_po_when_another_oracle_row_is_invalid(db, c
     }]
 
 
+def test_scan_continues_after_one_po_port_resolution_timeout(db, configured):
+    records = [record(1), record(2)]
+
+    class Client:
+        def list_orders(self, *, record_issues=None):
+            return records
+
+    imported = []
+
+    def importer(item, **_kwargs):
+        imported.append(item["OrderNumber"])
+        if item["OrderNumber"] == "PO1":
+            return {
+                "status": "needs_review",
+                "issues": [{"code": "LLM_PORT_RESOLUTION_FAILED"}],
+            }
+        return {"status": "completed", "issues": []}
+
+    result = scan.execute_scan(client=Client(), importer=importer)
+
+    assert imported == ["PO1", "PO2"]
+    assert result["status"] == "completed_with_issues"
+    assert [(item["po_number"], item["status"]) for item in result["items"]] == [
+        ("PO1", "needs_review"),
+        ("PO2", "completed"),
+    ]
+
+
 def test_scan_marks_invalid_open_po_for_review_without_stopping_other_po(db, configured):
     class Client:
         def list_orders(self, *, record_issues=None):

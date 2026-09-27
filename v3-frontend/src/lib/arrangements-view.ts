@@ -29,12 +29,27 @@ export function filterArrangements(groups: SupplyArrangement[], filters: Arrange
   });
 }
 export function poProcessingLabel(order: ArrangementOrder): string {
+  if (
+    order.port_resolution?.status === "pending_review"
+    && !order.anomaly_count
+  ) return "港口待确认";
   if (order.requires_human_review) return `需处理 ${order.anomaly_count || 0} 项`;
   if (order.status === "error") return PIPELINE_LABELS.error;
   if (order.inquiry_status === "error") return INQUIRY_LABELS.error;
   if (order.status === "ready" && order.inquiry_status === "completed") return "自动处理完成";
   if (order.inquiry_status) return INQUIRY_LABELS[order.inquiry_status] || "询价状态待确认";
   return PIPELINE_LABELS[order.status] || "处理状态待确认";
+}
+
+export function pendingPortReviewSummary(
+  orders: ArrangementOrder[],
+): string | null {
+  const count = orders.filter(
+    (order) => order.port_resolution?.status === "pending_review",
+  ).length;
+  return count
+    ? `${count} 个 PO 的目标港口由 AI 匹配，待人工确认`
+    : null;
 }
 
 export function arrangementPath(groupId: number): string {

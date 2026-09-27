@@ -213,6 +213,123 @@ def test_arrangement_summary_surfaces_orders_requiring_human_review(client, db):
     assert summary['anomaly_count'] == 3
 
 
+def test_arrangement_exposes_member_port_resolution_and_pending_summary(client, db):
+    user = seed_user(db, email='port-resolution-arrangement@test')
+    pending = order(db, user.id, po_number='PO-PENDING')
+    confirmed = order(db, user.id, po_number='PO-CONFIRMED')
+    order(db, user.id, po_number='PO-LEGACY')
+    for item, status, decision in (
+        (pending, 'pending_review', 'decision-pending'),
+        (confirmed, 'confirmed', 'decision-confirmed'),
+    ):
+        item.port_resolution_method = 'llm'
+        item.port_resolution_status = status
+        item.port_resolution_data = {
+            'source_destination': 'TOKYO',
+            'suggested_port_id': item.port_id,
+            'final_port_id': item.port_id,
+            'decision_id': decision,
+            'reason': 'fixture decision',
+            'decided_at': '2026-09-27T08:01:00Z',
+        }
+    db.commit()
+    regroup(db, apply=True)
+    headers = login(client, user.email)
+
+    listing = client.get('/api/order-groups/arrangements', headers=headers)
+
+    assert listing.status_code == 200, listing.text
+    arrangement = listing.json()['arrangements'][0]
+    assert arrangement['pending_port_review_count'] == 1
+    states = {
+        item['po_number']: item['port_resolution'] for item in arrangement['orders']
+    }
+    assert states['PO-PENDING']['status'] == 'pending_review'
+    assert states['PO-PENDING']['decision_id'] == 'decision-pending'
+    assert states['PO-CONFIRMED']['status'] == 'confirmed'
+    assert states['PO-LEGACY'] is None
+
+    workspace = client.get(
+        f"/api/order-groups/arrangements/{arrangement['id']}", headers=headers
+    )
+    assert workspace.status_code == 200, workspace.text
+    assert workspace.json()['summary']['pending_port_review_count'] == 1
+
+
+def test_arrangement_port_resolution_edit_overrides_only_pending_ai_decisions_once(
+    client, db, monkeypatch
+):
+    user = seed_user(db, email='port-resolution-edit@test')
+    pending = order(db, user.id, po_number='PO-PENDING')
+    confirmed = order(db, user.id, po_number='PO-CONFIRMED')
+    manual = order(db, user.id, po_number='PO-MANUAL')
+    pending.port_resolution_method = 'llm'
+    pending.port_resolution_status = 'pending_review'
+    pending.port_resolution_data = {
+        'source_destination': 'TOKYO',
+        'suggested_port_id': pending.port_id,
+        'final_port_id': pending.port_id,
+        'decision_id': 'decision-pending',
+        'reason': 'fixture decision',
+        'decided_at': '2026-09-27T08:01:00Z',
+    }
+    confirmed.port_resolution_method = 'llm'
+    confirmed.port_resolution_status = 'confirmed'
+    confirmed.port_resolution_data = {
+        'source_destination': 'TOKYO',
+        'suggested_port_id': confirmed.port_id,
+        'final_port_id': confirmed.port_id,
+        'decision_id': 'decision-confirmed',
+        'reason': 'confirmed fixture',
+        'decided_at': '2026-09-27T08:01:00Z',
+    }
+    manual.port_resolution_method = 'manual'
+    manual.port_resolution_status = 'overridden'
+    manual.port_resolution_data = {'final_port_id': manual.port_id}
+    db.commit()
+    regroup(db, apply=True)
+    country = Country(name='Japan port resolution', code='JPR')
+    db.add(country)
+    db.flush()
+    replacement = Port(
+        name='大阪 port resolution', code='OSA-PR', country_id=country.id, status=True
+    )
+    db.add(replacement)
+    db.commit()
+    rematches = []
+    monkeypatch.setattr(
+        'domains.orders.groups.matching.match_arrangement',
+        lambda _db, group_id: rematches.append(group_id) or {},
+    )
+
+    response = client.patch(
+        f'/api/order-groups/arrangements/{pending.group_id}',
+        headers=login(client, user.email),
+        json={
+            'ship_name': 'PORT REVIEW SHIP',
+            'loading_date': '2026-10-08',
+            'port_id': replacement.id,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    pending = db.get(Order, pending.id)
+    confirmed = db.get(Order, confirmed.id)
+    manual = db.get(Order, manual.id)
+    assert pending.port_resolution_status == 'overridden'
+    assert pending.port_resolution_reviewed_by == user.id
+    assert pending.port_resolution_reviewed_at is not None
+    assert pending.port_resolution_data['suggested_port_id'] != replacement.id
+    assert pending.port_resolution_data['final_port_id'] == replacement.id
+    assert confirmed.port_resolution_status == 'confirmed'
+    assert confirmed.port_resolution_reviewed_by is None
+    assert manual.port_resolution_method == 'manual'
+    assert manual.port_resolution_status == 'overridden'
+    assert rematches == [pending.group_id]
+    assert response.json()['summary']['pending_port_review_count'] == 0
+
+
 def test_arrangement_counts_current_issues_without_historical_inquiry_exclusions(client, db):
     user = seed_user(db, email='actionable-rows@test')
     existing = order(db, user.id, po_number='PO-EXISTING', product_count=2)

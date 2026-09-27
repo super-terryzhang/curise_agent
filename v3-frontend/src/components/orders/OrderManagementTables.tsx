@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { MoreHorizontal } from "lucide-react";
+import { PortResolutionBadge } from "@/components/orders/PortResolutionReview";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -110,9 +111,12 @@ export function PoManagementTable({
               </td>
               <td className="whitespace-nowrap px-4 py-3">{row.day || "—"}</td>
               <td className="max-w-40 px-4 py-3">
-                <span className="block truncate" title={row.port || undefined}>
-                  {row.port || "—"}
-                </span>
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="truncate" title={row.port || undefined}>
+                    {row.port || "—"}
+                  </span>
+                  <PortResolutionBadge state={row.order.port_resolution} />
+                </div>
               </td>
               <td className="px-4 py-3">{row.productCount}</td>
               <td className="max-w-52 px-4 py-3">
@@ -200,6 +204,12 @@ export function VoyageManagementTable({
         <tbody>
           {rows.map((row) => {
             const unclassified = row.kind === "unclassified";
+            const pendingPortReviewCount = row.arrangement
+              ? row.arrangement.pending_port_review_count ??
+                row.arrangement.orders.filter(
+                  (order) => order.port_resolution?.status === "pending_review",
+                ).length
+              : 0;
             return (
               <tr
                 key={row.id}
@@ -231,6 +241,11 @@ export function VoyageManagementTable({
                   <span className="block truncate" title={row.port || undefined}>
                     {row.port || "—"}
                   </span>
+                  {pendingPortReviewCount > 0 ? (
+                    <span className="mt-1 block text-xs text-amber-700 dark:text-amber-300">
+                      {pendingPortReviewCount} 个 PO 港口待确认
+                    </span>
+                  ) : null}
                 </td>
                 <td className="px-4 py-3">{row.poCount}</td>
                 <td className="px-4 py-3">{row.productCount}</td>

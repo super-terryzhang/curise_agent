@@ -1,5 +1,6 @@
 """Order issue read model: many findings, one row, deterministic actions."""
 
+from domains.orders import anomaly
 from domains.orders.issues import build_issue_overview
 from domains.orders.models import Order
 
@@ -199,3 +200,88 @@ def test_overview_does_not_duplicate_stored_unmatched_finding_without_row_index(
     assert [item["code"] for item in overview["rows"][0]["findings"]] == [
         "PRODUCT_NOT_MATCHED"
     ]
+
+
+def test_matching_not_run_does_not_report_product_not_matched():
+    order = Order(
+        id=10,
+        user_id=1,
+        filename="unresolved-port.pdf",
+        status="processing",
+        po_number="PO-UNRESOLVED",
+        loading_date="2026-10-05",
+        products=[{"product_name": "TONIC WATER", "quantity": 1, "unit": "CA"}],
+        match_results=None,
+        anomaly_data={},
+    )
+
+    result = anomaly.run_anomaly_check(order)
+    overview = build_issue_overview(order, [order])
+
+    assert "PRODUCT_NOT_MATCHED" not in {
+        finding["code"] for finding in result["findings"]
+    }
+    assert overview["rows"][0]["match_status"] == "not_run"
+    assert overview["rows"][0]["findings"] == []
+    assert overview["actionable_row_count"] == 0
+
+
+def test_explicit_not_matched_result_still_reports_product_not_matched():
+    order = _order(
+        products=[{"product_name": "TONIC WATER", "quantity": 1, "unit": "CA"}],
+        match_results=[
+            {
+                "product_name": "TONIC WATER",
+                "quantity": 1,
+                "unit": "CA",
+                "match_status": "not_matched",
+                "match_reason": "商品代码未命中",
+            }
+        ],
+    )
+
+    result = anomaly.run_anomaly_check(order)
+
+    assert "PRODUCT_NOT_MATCHED" in {
+        finding["code"] for finding in result["findings"]
+    }
+
+
+def test_pending_llm_port_is_a_non_blocking_order_warning():
+    order = _order(products=[], match_results=[])
+    order.port_resolution_method = "llm"
+    order.port_resolution_status = "pending_review"
+    order.port_resolution_data = {
+        "source_destination": "OSAKA",
+        "suggested_port_id": 21,
+        "final_port_id": 21,
+        "decision_id": "decision-1",
+        "reason": "OSAKA matches Osaka",
+    }
+
+    result = anomaly.run_anomaly_check(order)
+
+    finding = next(
+        item for item in result["findings"] if item["code"] == "LLM_PORT_REVIEW_REQUIRED"
+    )
+    assert finding["severity"] == "warning"
+    assert finding["scope"] == "order"
+    assert result["requires_human_review"] is False
+
+
+def test_unresolved_port_uses_specific_llm_failure_code():
+    order = _order(products=[], match_results=[])
+    order.port_id = None
+    order.port_resolution_method = "llm"
+    order.port_resolution_status = "unresolved"
+    order.port_resolution_data = {
+        "source_destination": "UNKNOWN",
+        "failure_code": "provider_unavailable",
+        "reason": "timed out",
+    }
+
+    result = anomaly.run_anomaly_check(order)
+    codes = [item["code"] for item in result["findings"]]
+
+    assert "LLM_PORT_RESOLUTION_FAILED" in codes
+    assert "PORT_ID_REQUIRED" not in codes

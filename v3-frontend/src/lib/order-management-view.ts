@@ -112,6 +112,12 @@ export function managementStatusForOrder(
     return { code: "processing", label: "处理中", count: 0 };
   }
   const count = Math.max(0, Number(order.anomaly_count) || 0);
+  if (
+    order.port_resolution?.status === "pending_review" &&
+    count === 0
+  ) {
+    return { code: "attention", label: "港口待确认", count: 0 };
+  }
   if (order.requires_human_review || count > 0) {
     return { code: "attention", label: `需处理 ${count} 项`, count };
   }
@@ -184,6 +190,12 @@ function voyageStatus(orders: ArrangementOrder[]): StatusPresentation {
       sum + (status.code === "attention" ? status.count : 0),
     0,
   );
+  if (
+    count === 0 &&
+    statuses.some((status) => status.label === "港口待确认")
+  ) {
+    return { code: "attention", label: "港口待确认", count: 0 };
+  }
   return { code: "attention", label: `需处理 ${count} 项`, count };
 }
 

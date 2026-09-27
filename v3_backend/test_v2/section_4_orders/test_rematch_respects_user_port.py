@@ -29,6 +29,7 @@ from __future__ import annotations
 import pytest
 
 from domains.masterdata.models import Country, Port
+from domains.orders.errors import BadRequest
 from domains.orders.models import Order
 from domains.orders.service import rematch_order
 from test_v2.fixtures.helpers import seed_user as _seed_user
@@ -101,7 +102,6 @@ def test_rematch_preserves_user_port_override_with_no_args(
     """UI default: 'rematch' dialog sends `{}`. Order has stale
     destination_port string but user-corrected port_id. Rematch must
     NOT re-derive port from the string."""
-    sydney = geo_fixture["sydney"]
     tokyo = geo_fixture["tokyo"]
 
     order = _make_order(
@@ -143,6 +143,39 @@ def test_rematch_preserves_explicit_port_arg(db, user, geo_fixture):
     db.refresh(order)
 
     assert order.port_id == tokyo.id
+
+
+def test_rematch_rejects_geo_override_while_ai_decision_needs_review(
+    db, user, geo_fixture
+):
+    """The legacy rematch endpoint has no decision token, so it must not
+    bypass or stale an auditable AI port decision."""
+    sydney = geo_fixture["sydney"]
+    tokyo = geo_fixture["tokyo"]
+    order = _make_order(
+        db,
+        user_id=user.id,
+        destination_port="SYDNEY",
+        port_id=sydney.id,
+        country_id=sydney.country_id,
+    )
+    order.port_resolution_method = "llm"
+    order.port_resolution_status = "pending_review"
+    order.port_resolution_data = {"decision_id": "current-decision"}
+    db.commit()
+
+    with pytest.raises(BadRequest, match="港口审核"):
+        rematch_order(
+            db,
+            order_id=order.id,
+            user_id=user.id,
+            is_admin=True,
+            port_id=tokyo.id,
+        )
+
+    db.refresh(order)
+    assert order.port_id == sydney.id
+    assert order.port_resolution_status == "pending_review"
 
 
 # ─── Idempotence ───────────────────────────────────────────────

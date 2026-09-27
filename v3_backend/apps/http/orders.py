@@ -25,6 +25,8 @@ from domains.orders.schemas import (
     OrderReviewRequest,
     OrderRowResolveRequest,
     OrderUpdateRequest,
+    PortResolutionConfirmRequest,
+    PortResolutionOverrideRequest,
 )
 from infrastructure.db import SessionLocal
 from infrastructure.jobs.runner import get_job_runner
@@ -138,6 +140,47 @@ def delete_order(order_id: int, db: DbDep, user: Writer) -> dict[str, Any]:
 
 
 # ═════ Update / Rematch / Reprocess ═══════════════════════════
+
+
+@router.post("/{order_id}/port-resolution/confirm", response_model=OrderDetail)
+def confirm_port_resolution(
+    order_id: int,
+    body: PortResolutionConfirmRequest,
+    db: DbDep,
+    user: Writer,
+) -> OrderDetail:
+    try:
+        return service.confirm_port_resolution(
+            db,
+            order_id=order_id,
+            user_id=user.id,
+            is_admin=_is_admin(user),
+            decision_id=body.decision_id,
+            reviewer_id=user.id,
+        )
+    except OrderError as exc:
+        raise _translate(exc) from exc
+
+
+@router.post("/{order_id}/port-resolution/override", response_model=OrderDetail)
+def override_port_resolution(
+    order_id: int,
+    body: PortResolutionOverrideRequest,
+    db: DbDep,
+    user: Writer,
+) -> OrderDetail:
+    try:
+        return service.override_port_resolution(
+            db,
+            order_id=order_id,
+            user_id=user.id,
+            is_admin=_is_admin(user),
+            decision_id=body.decision_id,
+            port_id=body.port_id,
+            reviewer_id=user.id,
+        )
+    except OrderError as exc:
+        raise _translate(exc) from exc
 
 
 @router.patch("/{order_id}", response_model=OrderDetail)

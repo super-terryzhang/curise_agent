@@ -43,6 +43,23 @@ const poRow: PoManagementRow = {
   status: { code: "attention", label: "需处理 2 项", count: 2 },
 };
 
+const pendingPortResolution = {
+  method: "llm" as const,
+  status: "pending_review" as const,
+  source_destination: "OSAKA",
+  source_port_code: null,
+  suggested_port_id: 21,
+  final_port_id: 21,
+  model: "gemini",
+  prompt_version: "v1",
+  decision_id: "decision-1",
+  reason: "matched",
+  decided_at: null,
+  failure_code: null,
+  reviewed_by: null,
+  reviewed_at: null,
+};
+
 const voyageRow: VoyageManagementRow = {
   kind: "arrangement",
   id: "arrangement-10",
@@ -149,6 +166,44 @@ describe("order management tables", () => {
     expect(html).toContain("未分配");
     expect(html).toContain("需补充信息");
     expect(html).toContain("查看未分配 PO");
+  });
+
+  it("preserves pending AI port review signals in both views", () => {
+    const pendingPo = {
+      ...poRow,
+      order: { ...poRow.order, port_resolution: pendingPortResolution },
+      status: { code: "attention" as const, label: "港口待确认", count: 0 },
+    };
+    const poHtml = renderToStaticMarkup(
+      <PoManagementTable
+        rows={[pendingPo]}
+        busy={false}
+        onAssign={() => undefined}
+        onRemove={() => undefined}
+        onReclassify={() => undefined}
+        onDelete={() => undefined}
+      />,
+    );
+    const voyageHtml = renderToStaticMarkup(
+      <VoyageManagementTable
+        rows={[
+          {
+            ...voyageRow,
+            arrangement: {
+              ...voyageRow.arrangement!,
+              pending_port_review_count: 1,
+              orders: [pendingPo.order],
+            },
+            status: pendingPo.status,
+          },
+        ]}
+        onShowUnclassified={() => undefined}
+      />,
+    );
+
+    expect(poHtml).toContain("AI 匹配 · 待人工确认");
+    expect(voyageHtml).toContain("1 个 PO 港口待确认");
+    expect(voyageHtml).toContain("港口待确认");
   });
 
   it("renders explicit empty states", () => {

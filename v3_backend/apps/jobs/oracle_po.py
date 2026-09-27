@@ -18,12 +18,15 @@ from domains.identity.models import User
 from domains.inquiry.automation import prepare_inquiry
 from domains.inquiry.models import InquirySupplier
 from domains.inquiry.orchestrator import run_inquiry_for_group
+from domains.masterdata import Port
 from domains.orders import anomaly as anomaly_engine
 from domains.orders.automation import mark_pipeline_stage, new_pipeline_trace
 from domains.orders.matching.automation import match_for_import
 from domains.orders.models import Order
 from domains.orders.oracle_models import OraclePOImport
+from domains.orders.port_resolution import resolve_order_port
 from domains.orders.projection import project_purchase_order
+from infrastructure.config import settings
 from infrastructure.db import session as sessions
 from infrastructure.oracle.adapter import IntegrationError, identity, structure
 from infrastructure.oracle.vendor.extraction import read_pdf
@@ -190,6 +193,8 @@ _ISSUE_MESSAGES = {
     "TEMPLATE_FIELDS_REQUIRED": "供应商模板缺少询价必填字段",
     "DELIVERY_DATE_REQUIRED": "交付日期缺失",
     "DESTINATION_REQUIRES_REVIEW": "目标港口无法唯一确定",
+    "LLM_PORT_UNRESOLVED": "AI 无法唯一确定目标港口",
+    "LLM_PORT_RESOLUTION_FAILED": "AI 目标港口判定失败",
     "ARRANGEMENT_REQUIRED": "缺少装船日或目标港口，暂时无法归入供船安排",
 }
 
@@ -203,11 +208,16 @@ def _oracle_findings(order, issues):
     findings = []
     for issue in issues:
         code = issue.get("code") or "ORACLE_REVIEW_REQUIRED"
+        # The persisted resolution state is the canonical evidence source for
+        # these two findings. Adding a second Oracle finding would show the
+        # same failure twice with different pipeline steps/messages.
+        if code in {"LLM_PORT_UNRESOLVED", "LLM_PORT_RESOLUTION_FAILED"}:
+            continue
         row = products.get(issue.get("line_id"), {})
         step = 3 if code.startswith("SOURCE_") or code == "EXTRACTION_INCOMPLETE" else 5
         if code in {"TEMPLATE_BINDING_REQUIRED", "TEMPLATE_FIELDS_REQUIRED", "UNIT_REQUIRED", "UNIT_CONVERSION_EVIDENCE_REQUIRED", "UNIT_CONVERSION_INCONSISTENT"}:
             step = 7
-        if code in {"DESTINATION_REQUIRES_REVIEW"}:
+        if code == "DESTINATION_REQUIRES_REVIEW":
             step = 6
         findings.append(
             anomaly_engine.finding(
@@ -250,6 +260,24 @@ def _save_anomaly_result(db, order, pipeline, *, inquiry=None, issues=None):
     flag_modified(order, "anomaly_data")
     db.commit()
     return result
+
+
+def _resolve_legacy_import_port(db, order):
+    """Preserve the pre-feature-flag exact/Tokyo behavior without model I/O."""
+    destination = (order.destination_port or "").strip().upper()
+    names = {destination}
+    if destination == "TOKYO":
+        names.add("東京")
+    ports = [
+        port
+        for port in db.query(Port).all()
+        if port.name and port.name.strip().upper() in names
+    ]
+    if len(ports) != 1 or not ports[0].country_id:
+        return [{"code": "DESTINATION_REQUIRES_REVIEW"}]
+    order.port_id = ports[0].id
+    order.country_id = ports[0].country_id
+    return []
 
 
 def import_po(
@@ -367,7 +395,24 @@ def import_po(
             ):
                 issues.append({"code": "EXTRACTION_INCOMPLETE"})
             issues.extend(_source_checks(doc))
-            matching_issues = match_for_import(db, order)
+            if settings.LLM_PORT_RESOLUTION_ENABLED:
+                resolution = resolve_order_port(
+                    db,
+                    order,
+                    destination=order.destination_port or "",
+                    source_code=(order.order_metadata or {}).get("location_code"),
+                    api_key=api_key or settings.GOOGLE_API_KEY,
+                    model=settings.LLM_PORT_RESOLUTION_MODEL,
+                )
+                matching_issues = (
+                    [{"code": resolution.issue_code}]
+                    if resolution.issue_code
+                    else match_for_import(db, order)
+                )
+            else:
+                matching_issues = _resolve_legacy_import_port(db, order)
+                if not matching_issues:
+                    matching_issues = match_for_import(db, order)
             issues.extend(matching_issues)
             bindings = {}
             if not matching_issues:

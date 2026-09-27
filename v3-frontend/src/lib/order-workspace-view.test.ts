@@ -4,6 +4,7 @@ import type { ArrangementWorkspace } from "./order-groups-api";
 import {
   arrangementPoStatus,
   arrangementWorkspaceStatus,
+  canStartArrangementInquiry,
   formatBusinessDateTime,
   orderDetailStatus,
   supplierInquiryStatus,
@@ -98,6 +99,62 @@ describe("structured order workspace view", () => {
       },
       match_statistics: { total: 1, matched: 0, not_matched: 1, match_rate: 0 },
     })).toEqual({ label: "需要处理 1 项", tone: "warning" });
+  });
+
+  it("keeps port review separate from product issues and inquiry controls", () => {
+    const current = workspace({
+      arrangement: {
+        ...workspace().arrangement,
+        orders: [{
+          id: 7,
+          po_number: "PO-7",
+          filename: "7.pdf",
+          document_id: null,
+          product_count: 1,
+          product_names: [],
+          ship: "SHIP",
+          day: "2026-09-20",
+          port: "大阪",
+          status: "ready",
+          fulfillment_status: "pending",
+          inquiry_status: null,
+          requires_human_review: false,
+          anomaly_count: 0,
+          unmatched_count: 0,
+          reason: null,
+          port_resolution: {
+            method: "llm",
+            status: "pending_review",
+            source_destination: "OSAKA",
+            source_port_code: null,
+            suggested_port_id: 21,
+            final_port_id: 21,
+            model: "gemini",
+            prompt_version: "v1",
+            decision_id: "d1",
+            reason: "matched",
+            decided_at: null,
+            failure_code: null,
+            reviewed_by: null,
+            reviewed_at: null,
+          },
+        }],
+      },
+      summary: {
+        ...workspace().summary,
+        pending_port_review_count: 1,
+      },
+    });
+
+    expect(arrangementPoStatus(current.arrangement.orders[0])).toEqual({
+      label: "检查完成",
+      tone: "success",
+    });
+    expect(arrangementWorkspaceStatus(current)).toEqual({
+      label: "待生成询价",
+      tone: "neutral",
+    });
+    expect(canStartArrangementInquiry(current, false)).toBe(true);
   });
 
   it("formats stored UTC timestamps in the business timezone", () => {

@@ -22,9 +22,35 @@ from domains.masterdata import Port, Supplier
 from domains.orders.anomaly import actionable_row_counts, is_current_actionable_finding
 from domains.orders.groups.automation import MARKER, lock_grouping, mark_manual, regroup
 from domains.orders.groups.rules import grouping_identity, identity_key, normalized_date
-from domains.orders.groups.schemas import SupplyArrangementUpdate
+from domains.orders.groups.schemas import (
+    ArrangementPortResolutionState,
+    SupplyArrangementUpdate,
+)
 from domains.orders.groups.service import BadRequest, NotFound, _admin, require_manage
 from domains.orders.models import Order, OrderGroup
+from domains.orders.port_resolution import apply_manual_port_override
+
+
+def _port_resolution(order):
+    data = order.port_resolution_data if isinstance(order.port_resolution_data, dict) else {}
+    if not order.port_resolution_method or not order.port_resolution_status:
+        return None
+    return ArrangementPortResolutionState(
+        method=order.port_resolution_method,
+        status=order.port_resolution_status,
+        source_destination=data.get('source_destination'),
+        source_port_code=data.get('source_port_code'),
+        suggested_port_id=data.get('suggested_port_id'),
+        final_port_id=data.get('final_port_id'),
+        model=data.get('model'),
+        prompt_version=data.get('prompt_version'),
+        decision_id=data.get('decision_id'),
+        reason=data.get('reason'),
+        decided_at=data.get('decided_at'),
+        failure_code=data.get('failure_code'),
+        reviewed_by=order.port_resolution_reviewed_by,
+        reviewed_at=order.port_resolution_reviewed_at,
+    ).model_dump(mode='json')
 
 
 def _raw_product_names(products: object) -> list[str]:
@@ -55,7 +81,9 @@ def list_arrangements(db, *, user_id):
         Order.po_number, Order.filename, Order.document_id, Order.ship_name,
         Order.loading_date, Order.delivery_date, Order.destination_port,
         Order.port_id, Order.status, Order.fulfillment_status, Order.anomaly_data,
-        Order.product_count, Order.products,
+        Order.product_count, Order.products, Order.port_resolution_method,
+        Order.port_resolution_status, Order.port_resolution_data,
+        Order.port_resolution_reviewed_by, Order.port_resolution_reviewed_at,
     ))
     if not admin:
         query = query.filter(Order.user_id == user_id)
@@ -137,6 +165,7 @@ def list_arrangements(db, *, user_id):
             'status': order.status, 'fulfillment_status': order.fulfillment_status or 'pending',
             'requires_human_review': requires_human_review,
             'anomaly_count': anomaly_count,
+            'port_resolution': _port_resolution(order),
             'inquiry_status': (
                 group_inquiries[gid]["status"] if gid in group_inquiries
                 else order_inquiries.get(order.id)
@@ -178,6 +207,11 @@ def list_arrangements(db, *, user_id):
             'manual': any((o.order_metadata or {}).get(MARKER, {}).get('mode') != 'auto' for o in orders if o.group_id == gid),
             'can_manage': can_manage,
             'can_generate_inquiry': can_manage and len(owners[gid]) == 1,
+            'pending_port_review_count': sum(
+                member.get('port_resolution', {}).get('status') == 'pending_review'
+                for member in members
+                if member.get('port_resolution')
+            ),
             'inquiry_version': (latest_inquiry or {}).get('version'),
             'inquiry_members_changed': bool(
                 latest_inquiry and current_member_ids != snapshot_member_ids
@@ -407,6 +441,7 @@ def get_arrangement_workspace(db, *, user_id, group_id):
             'unmatched_count': max(total_products - matched_products, len(unassigned)),
             'supplier_count': len(suppliers),
             'anomaly_count': total_anomalies,
+            'pending_port_review_count': arrangement['pending_port_review_count'],
             'updated_at': max(timestamps) if timestamps else None,
         },
         'latest_inquiry': ({
@@ -450,8 +485,8 @@ def update_arrangement(
     port = db.get(Port, body.port_id)
     if port is None:
         raise BadRequest('目标港口不存在')
-    if port.country_id is None:
-        raise BadRequest('目标港口没有国家信息')
+    if port.status is not True or port.country_id is None:
+        raise BadRequest('目标港口未启用或没有国家信息')
     orders = db.query(Order).filter(Order.group_id == group_id).all()
     if not orders:
         raise BadRequest('供船订单中没有 PO')
@@ -461,6 +496,13 @@ def update_arrangement(
     group.loading_date = loading_date
     group.updated_at = datetime.utcnow()
     for order in orders:
+        apply_manual_port_override(
+            order,
+            port_id=port.id,
+            country_id=port.country_id,
+            reviewer_id=user_id,
+            source='arrangement_edit',
+        )
         order.ship_name = group.ship_name
         order.loading_date = loading_date
         order.port_id = port.id

@@ -1,4 +1,4 @@
-"""Strict source-backed matching for automated Oracle imports."""
+"""Strict source-backed product matching for automated Oracle imports."""
 
 from datetime import date, datetime
 
@@ -7,25 +7,25 @@ from domains.orders.matching.code_first import load_candidate_pool, match_by_cod
 
 
 def match_for_import(db, order):
-    """Exact, unambiguous scope; no currency guess or fuzzy auto-selection."""
-    destination = (order.destination_port or "").strip().upper()
-    names = {destination}
-    # Same explicit translation already verified by the scheduler adapter.
-    if destination == "TOKYO":
-        names.add("東京")
-    ports = [p for p in db.query(Port).all() if p.name and p.name.strip().upper() in names]
+    """Match products inside an already validated country and port scope."""
     try:
         day = date.fromisoformat(order.delivery_date or "")
     except ValueError:
         return [{"code": "DELIVERY_DATE_REQUIRED"}]
-    if len(ports) != 1 or not ports[0].country_id:
+    if order.port_id is None or order.country_id is None:
         return [{"code": "DESTINATION_REQUIRES_REVIEW"}]
-    port = ports[0]
-    order.port_id, order.country_id = port.id, port.country_id
+    port = db.get(Port, order.port_id)
+    if (
+        port is None
+        or port.status is not True
+        or port.country_id is None
+        or port.country_id != order.country_id
+    ):
+        return [{"code": "DESTINATION_REQUIRES_REVIEW"}]
     pool = load_candidate_pool(
         db,
-        country_id=port.country_id,
-        port_id=port.id,
+        country_id=order.country_id,
+        port_id=order.port_id,
         delivery_date=datetime.combine(day, datetime.min.time()),
     )
     results, _ = match_by_code(order.products or [], pool)
