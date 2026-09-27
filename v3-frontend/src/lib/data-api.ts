@@ -225,6 +225,8 @@ export interface PaginatedResponse<T> {
   items: T[];
 }
 
+export type ProductSort = "latest" | "name_asc" | "name_desc";
+
 // ─── List API Functions ───────────────────────────────────────
 
 export function listProducts(params?: {
@@ -240,6 +242,7 @@ export function listProducts(params?: {
    * what each row's badge displays.
    */
   is_effective?: boolean;
+  sort?: ProductSort;
   limit?: number;
   offset?: number;
 }): Promise<PaginatedResponse<ProductItem>> {
@@ -252,6 +255,7 @@ export function listProducts(params?: {
   if (params?.is_effective !== undefined && params?.is_effective !== null) {
     qs.set("is_effective", String(params.is_effective));
   }
+  if (params?.sort) qs.set("sort", params.sort);
   if (params?.limit) qs.set("limit", String(params.limit));
   if (params?.offset != null) qs.set("offset", String(params.offset));
   const query = qs.toString();

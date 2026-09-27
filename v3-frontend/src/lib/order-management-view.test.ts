@@ -10,6 +10,7 @@ import {
   filterPoRows,
   filterVoyageRows,
   managementFilterOptions,
+  managementPagesAfterViewChange,
   managementStatusForOrder,
   paginateRows,
   weekdayLabel,
@@ -202,6 +203,25 @@ describe("order management normalization", () => {
       });
   });
 
+  it("never describes a zero-count human review as zero actionable items", () => {
+    const reviewOnly = makeOrder(8, {
+      requires_human_review: true,
+      anomaly_count: 0,
+    });
+
+    expect(managementStatusForOrder(reviewOnly)).toEqual({
+      code: "attention",
+      label: "需人工确认",
+      count: 0,
+    });
+    expect(buildVoyageRows(makeData([makeGroup(80, [reviewOnly])]))[0].status)
+      .toEqual({
+        code: "attention",
+        label: "需人工确认",
+        count: 0,
+      });
+  });
+
   it("aggregates voyage counts and keeps the unclassified bucket last", () => {
     const actionable = makeOrder(1, {
       product_count: 3,
@@ -237,6 +257,24 @@ describe("order management normalization", () => {
       poCount: 1,
       productCount: 5,
       status: { code: "missing_info", label: "需补充信息", count: 0 },
+      pendingPortReviewCount: 0,
+    });
+  });
+
+  it("counts pending AI port reviews in the unclassified voyage bucket", () => {
+    const pending = makeOrder(9, {
+      day: null,
+      port: null,
+      port_resolution: pendingPortResolution,
+      requires_human_review: true,
+      anomaly_count: 0,
+    });
+
+    const row = buildVoyageRows(makeData([], [pending]))[0];
+
+    expect(row).toMatchObject({
+      kind: "unclassified",
+      pendingPortReviewCount: 1,
     });
   });
 
@@ -259,6 +297,15 @@ describe("order management normalization", () => {
 });
 
 describe("order management filters and pagination", () => {
+  it("resets the destination page whenever the management view changes", () => {
+    expect(
+      managementPagesAfterViewChange("voyage", { poPage: 4, voyagePage: 3 }),
+    ).toEqual({ poPage: 4, voyagePage: 1 });
+    expect(
+      managementPagesAfterViewChange("po", { poPage: 4, voyagePage: 3 }),
+    ).toEqual({ poPage: 1, voyagePage: 3 });
+  });
+
   it("searches each PO's own raw product names without cross-row leakage", () => {
     const rows = buildPoRows(
       makeData([

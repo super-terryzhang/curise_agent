@@ -42,6 +42,8 @@ const product = (
 });
 
 const callbacks = {
+  sort: "latest" as const,
+  onSortChange: () => undefined,
   onPageChange: () => undefined,
   onOpenImages: () => undefined,
   onOpenHistory: () => undefined,
@@ -75,6 +77,9 @@ describe("product gallery grid", () => {
     );
 
     expect(html).toContain('aria-label="产品图库"');
+    expect(html).toContain('aria-label="图库排序"');
+    expect(html).toContain("最新录入");
+    expect(html).toContain("产品名称 A–Z");
     expect(html).toContain('src="https://example.com/product.jpg"');
     expect(html).toContain('alt="Chamisul Original"');
     expect(html).toContain("チャミスル");

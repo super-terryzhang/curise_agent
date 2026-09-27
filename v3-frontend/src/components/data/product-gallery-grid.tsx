@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { ProductItem } from "@/lib/data-api";
+import type { ProductSort } from "@/lib/data-api";
 
 export type ProductView = "list" | "gallery";
 
@@ -108,6 +109,8 @@ interface ProductGalleryGridProps {
   pageIndex: number;
   pageSize: number;
   isWriter: boolean;
+  sort: ProductSort;
+  onSortChange: (sort: ProductSort) => void;
   onPageChange: (pageIndex: number) => void;
   onOpenImages: (product: ProductItem) => void;
   onOpenHistory: (product: ProductItem) => void;
@@ -123,6 +126,8 @@ export function ProductGalleryGrid({
   pageIndex,
   pageSize,
   isWriter,
+  sort,
+  onSortChange,
   onPageChange,
   onOpenImages,
   onOpenHistory,
@@ -136,6 +141,20 @@ export function ProductGalleryGrid({
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+        <label htmlFor="product-gallery-sort">排序</label>
+        <select
+          id="product-gallery-sort"
+          aria-label="图库排序"
+          className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+          value={sort}
+          onChange={(event) => onSortChange(event.target.value as ProductSort)}
+        >
+          <option value="latest">最新录入</option>
+          <option value="name_asc">产品名称 A–Z</option>
+          <option value="name_desc">产品名称 Z–A</option>
+        </select>
+      </div>
       {products.length ? (
         <section
           aria-label="产品图库"

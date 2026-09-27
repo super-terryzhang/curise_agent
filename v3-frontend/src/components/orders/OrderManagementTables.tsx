@@ -204,12 +204,6 @@ export function VoyageManagementTable({
         <tbody>
           {rows.map((row) => {
             const unclassified = row.kind === "unclassified";
-            const pendingPortReviewCount = row.arrangement
-              ? row.arrangement.pending_port_review_count ??
-                row.arrangement.orders.filter(
-                  (order) => order.port_resolution?.status === "pending_review",
-                ).length
-              : 0;
             return (
               <tr
                 key={row.id}
@@ -241,9 +235,9 @@ export function VoyageManagementTable({
                   <span className="block truncate" title={row.port || undefined}>
                     {row.port || "—"}
                   </span>
-                  {pendingPortReviewCount > 0 ? (
+                  {row.pendingPortReviewCount > 0 ? (
                     <span className="mt-1 block text-xs text-amber-700 dark:text-amber-300">
-                      {pendingPortReviewCount} 个 PO 港口待确认
+                      {row.pendingPortReviewCount} 个 PO 港口待确认
                     </span>
                   ) : null}
                 </td>

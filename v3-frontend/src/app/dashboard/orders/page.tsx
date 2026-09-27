@@ -33,6 +33,7 @@ import {
   filterPoRows,
   filterVoyageRows,
   managementFilterOptions,
+  managementPagesAfterViewChange,
   paginateRows,
   type ManagementFilters,
   type ManagementStatus,
@@ -220,6 +221,17 @@ export default function OrdersPage() {
     }
   }
 
+  function handleViewChange(nextView: ManagementView) {
+    if (nextView === view) return;
+    const pages = managementPagesAfterViewChange(nextView, {
+      poPage,
+      voyagePage,
+    });
+    setPoPage(pages.poPage);
+    setVoyagePage(pages.voyagePage);
+    setView(nextView);
+  }
+
   const action = async (work: () => Promise<void>) => {
     setBusy(true);
     try {
@@ -299,7 +311,7 @@ export default function OrdersPage() {
             size="sm"
             variant={view === "po" ? "secondary" : "ghost"}
             aria-pressed={view === "po"}
-            onClick={() => setView("po")}
+            onClick={() => handleViewChange("po")}
           >
             按 PO
           </Button>
@@ -307,7 +319,7 @@ export default function OrdersPage() {
             size="sm"
             variant={view === "voyage" ? "secondary" : "ghost"}
             aria-pressed={view === "voyage"}
-            onClick={() => setView("voyage")}
+            onClick={() => handleViewChange("voyage")}
           >
             按轮次
           </Button>

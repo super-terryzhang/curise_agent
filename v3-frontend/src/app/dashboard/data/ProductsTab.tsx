@@ -55,6 +55,7 @@ import {
   updateProduct,
   deleteProduct,
   type ProductItem,
+  type ProductSort,
   type CategoryItem,
   type SupplierItem,
   type CountryItem,
@@ -185,6 +186,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   const [currentPage, setCurrentPage] = useState(0);
   const [listPaginationVersion, setListPaginationVersion] = useState(0);
   const [view, setView] = useState<ProductView>("list");
+  const [gallerySort, setGallerySort] = useState<ProductSort>("latest");
   const activePageSize = view === "gallery" ? GALLERY_PAGE_SIZE : LIST_PAGE_SIZE;
 
   const [searchText, setSearchText] = useState(initialSearch);
@@ -211,7 +213,11 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   })();
 
   // Build filter params for server-side query
-  const getFilterParams = useCallback((page: number, pageSize = activePageSize) => {
+  const getFilterParams = useCallback((
+    page: number,
+    pageSize = activePageSize,
+    sort?: ProductSort,
+  ) => {
     const params: Parameters<typeof listProducts>[0] = {
       limit: pageSize,
       offset: page * pageSize,
@@ -232,16 +238,24 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
     }
     if (filterStatus === "effective") params.is_effective = true;
     else if (filterStatus === "invalid") params.is_effective = false;
+    if (sort) params.sort = sort;
     return params;
   }, [activePageSize, debouncedSearch, filterCategory, filterSupplier, filterCountry, filterStatus, categories, suppliers, countries]);
 
-  const fetchProducts = useCallback(async (page: number, pageSize = activePageSize) => {
+  const fetchProducts = useCallback(async (
+    page: number,
+    pageSize = activePageSize,
+    sortOverride?: ProductSort | null,
+  ) => {
+    const sort = sortOverride === undefined
+      ? (view === "gallery" ? gallerySort : undefined)
+      : (sortOverride ?? undefined);
     setProductsRefreshing(true);
     setProductsError(null);
     try {
       const result = await productRequestRunner.run(() =>
         loadProductPage(page, pageSize, (requestedPage) =>
-          listProducts(getFilterParams(requestedPage, pageSize)),
+          listProducts(getFilterParams(requestedPage, pageSize, sort)),
         ),
       );
       if (!result) return;
@@ -259,7 +273,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
       setProductsRefreshing(false);
       toast.error(message);
     }
-  }, [activePageSize, getFilterParams, productRequestRunner]);
+  }, [activePageSize, gallerySort, getFilterParams, productRequestRunner, view]);
 
   const reload = useCallback(() => {
     fetchProducts(currentPage);
@@ -270,7 +284,18 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
     const nextPageSize = nextView === "gallery" ? GALLERY_PAGE_SIZE : LIST_PAGE_SIZE;
     setView(nextView);
     setCurrentPage(0);
-    fetchProducts(0, nextPageSize);
+    fetchProducts(
+      0,
+      nextPageSize,
+      nextView === "gallery" ? gallerySort : null,
+    );
+  }
+
+  function handleGallerySortChange(nextSort: ProductSort) {
+    if (nextSort === gallerySort) return;
+    setGallerySort(nextSort);
+    setCurrentPage(0);
+    fetchProducts(0, GALLERY_PAGE_SIZE, nextSort);
   }
 
   // Initial load: reference data + first page of products
@@ -885,6 +910,8 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
                 pageIndex={currentPage}
                 pageSize={GALLERY_PAGE_SIZE}
                 isWriter={isWriter}
+                sort={gallerySort}
+                onSortChange={handleGallerySortChange}
                 onPageChange={(pageIndex) => {
                   setCurrentPage(pageIndex);
                   fetchProducts(pageIndex, GALLERY_PAGE_SIZE);

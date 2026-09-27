@@ -23,7 +23,6 @@ from typing import Any
 
 from test_v2.fixtures.helpers import login
 
-
 # ─── Helpers ─────────────────────────────────────────────────
 
 
@@ -100,6 +99,32 @@ def test_list_products_returns_total_items_shape(client, seed_user):
     assert isinstance(body["items"], list)
 
 
+def test_list_products_validates_and_applies_sort(client, seed_user, db):
+    from test_v2.fixtures.helpers import seed_product
+
+    headers = _admin_headers(client, seed_user)
+    seed_product(db, code="SORT-Z", name="Zulu", price=1.0)
+    seed_product(db, code="SORT-A", name="Alpha", price=1.0)
+
+    response = client.get(
+        "/api/data/products",
+        params={"search": "SORT-", "sort": "name_asc"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert [item["product_name_en"] for item in response.json()["items"]] == [
+        "Alpha",
+        "Zulu",
+    ]
+
+    invalid = client.get(
+        "/api/data/products",
+        params={"sort": "unsupported"},
+        headers=headers,
+    )
+    assert invalid.status_code == 422
+
+
 # ─── POST create + conflict ──────────────────────────────────
 
 
@@ -168,7 +193,6 @@ def test_delete_product_removes_row(client, seed_user, db):
     from sqlalchemy.orm import Session as _Session
 
     from domains.masterdata.models import Product
-
     from test_v2.fixtures.helpers import seed_product
 
     headers = _admin_headers(client, seed_user)

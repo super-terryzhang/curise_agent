@@ -82,6 +82,7 @@ const voyageRow: VoyageManagementRow = {
   port: "シンガポール",
   poCount: 2,
   productCount: 7,
+  pendingPortReviewCount: 0,
   status: { code: "normal", label: "正常", count: 0 },
 };
 
@@ -95,6 +96,7 @@ const unclassifiedRow: VoyageManagementRow = {
   port: null,
   poCount: 3,
   productCount: 12,
+  pendingPortReviewCount: 0,
   status: { code: "missing_info", label: "需补充信息", count: 0 },
 };
 
@@ -194,6 +196,7 @@ describe("order management tables", () => {
               pending_port_review_count: 1,
               orders: [pendingPo.order],
             },
+            pendingPortReviewCount: 1,
             status: pendingPo.status,
           },
         ]}
@@ -204,6 +207,17 @@ describe("order management tables", () => {
     expect(poHtml).toContain("AI 匹配 · 待人工确认");
     expect(voyageHtml).toContain("1 个 PO 港口待确认");
     expect(voyageHtml).toContain("港口待确认");
+  });
+
+  it("shows pending AI port reviews for the unclassified voyage bucket", () => {
+    const html = renderToStaticMarkup(
+      <VoyageManagementTable
+        rows={[{ ...unclassifiedRow, pendingPortReviewCount: 2 }]}
+        onShowUnclassified={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("2 个 PO 港口待确认");
   });
 
   it("renders explicit empty states", () => {

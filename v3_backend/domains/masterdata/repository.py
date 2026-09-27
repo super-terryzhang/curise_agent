@@ -6,7 +6,7 @@ SQL queries live here; service layer never calls `db.query(...)` directly.
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
@@ -145,6 +145,7 @@ def list_products(
     category_id: int | None = None,
     supplier_id: int | None = None,
     is_effective: bool | None = None,
+    sort: Literal["latest", "name_asc", "name_desc"] = "latest",
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[int, list[Product]]:
@@ -185,7 +186,13 @@ def list_products(
     count_stmt = stmt.with_only_columns(Product.id).order_by(None)
     total = len(db.execute(count_stmt).all())
 
-    items = list(db.execute(stmt.order_by(Product.id.desc()).limit(limit).offset(offset)).scalars())
+    if sort == "name_asc":
+        ordering = (func.lower(Product.product_name_en).asc(), Product.id.asc())
+    elif sort == "name_desc":
+        ordering = (func.lower(Product.product_name_en).desc(), Product.id.desc())
+    else:
+        ordering = (Product.id.desc(),)
+    items = list(db.execute(stmt.order_by(*ordering).limit(limit).offset(offset)).scalars())
     return total, items
 
 

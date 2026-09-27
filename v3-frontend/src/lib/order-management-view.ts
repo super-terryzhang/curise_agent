@@ -67,6 +67,7 @@ export interface VoyageManagementRow {
   port: string | null;
   poCount: number;
   productCount: number;
+  pendingPortReviewCount: number;
   status: StatusPresentation;
 }
 
@@ -119,7 +120,11 @@ export function managementStatusForOrder(
     return { code: "attention", label: "港口待确认", count: 0 };
   }
   if (order.requires_human_review || count > 0) {
-    return { code: "attention", label: `需处理 ${count} 项`, count };
+    return {
+      code: "attention",
+      label: count > 0 ? `需处理 ${count} 项` : "需人工确认",
+      count,
+    };
   }
   return { code: "normal", label: "正常", count: 0 };
 }
@@ -196,7 +201,11 @@ function voyageStatus(orders: ArrangementOrder[]): StatusPresentation {
   ) {
     return { code: "attention", label: "港口待确认", count: 0 };
   }
-  return { code: "attention", label: `需处理 ${count} 项`, count };
+  return {
+    code: "attention",
+    label: count > 0 ? `需处理 ${count} 项` : "需人工确认",
+    count,
+  };
 }
 
 export function buildVoyageRows(
@@ -215,6 +224,11 @@ export function buildVoyageRows(
       (sum, order) => sum + (Number(order.product_count) || 0),
       0,
     ),
+    pendingPortReviewCount:
+      arrangement.pending_port_review_count ??
+      arrangement.orders.filter(
+        (order) => order.port_resolution?.status === "pending_review",
+      ).length,
     status: voyageStatus(arrangement.orders),
   }));
   rows.sort((left, right) => {
@@ -240,10 +254,22 @@ export function buildVoyageRows(
         (sum, order) => sum + (Number(order.product_count) || 0),
         0,
       ),
+      pendingPortReviewCount: data.unclassified.filter(
+        (order) => order.port_resolution?.status === "pending_review",
+      ).length,
       status: { code: "missing_info", label: "需补充信息", count: 0 },
     });
   }
   return rows;
+}
+
+export function managementPagesAfterViewChange(
+  nextView: ManagementView,
+  pages: { poPage: number; voyagePage: number },
+): { poPage: number; voyagePage: number } {
+  return nextView === "po"
+    ? { ...pages, poPage: 1 }
+    : { ...pages, voyagePage: 1 };
 }
 
 function includesFolded(value: string | null | undefined, term: string): boolean {
