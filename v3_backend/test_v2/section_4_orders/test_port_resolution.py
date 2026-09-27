@@ -19,6 +19,7 @@ from domains.orders.port_resolution import (
     PortResolutionError,
     resolve_destination,
 )
+from domains.orders.oracle_models import OraclePOImport
 
 
 @dataclass
@@ -429,3 +430,171 @@ def test_provider_failure_is_persisted_instead_of_raised(db, monkeypatch):
     assert order.port_resolution_status == "unresolved"
     assert order.port_resolution_data["failure_code"] == "provider_unavailable"
     assert order.port_resolution_data["reason"] == "timed out"
+
+
+def _oracle_source_for_repair(db, order: Order, *, po_number: str = "PO168798CCI"):
+    source = OraclePOImport(
+        source_key=f"source-{order.id}",
+        version_key=f"version-{order.id}",
+        po_number=po_number,
+        source_record={"OrderNumber": po_number},
+        user_id=order.user_id,
+        order_id=order.id,
+        status="needs_review",
+        stage="anomaly",
+        issues=[{"code": "DESTINATION_REQUIRES_REVIEW"}],
+    )
+    db.add(source)
+    db.commit()
+    return source
+
+
+def test_repair_parser_requires_one_explicit_po_number():
+    from scripts.reprocess_unresolved_oracle_ports import build_parser
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args([])
+
+    args = build_parser().parse_args(["--po-number", "PO168798CCI"])
+    assert args.po_number == "PO168798CCI"
+    assert args.apply is False
+    assert args.expected_order_id is None
+
+
+def test_repair_defaults_to_dry_run_and_rolls_back(
+    db,
+    session_factory,
+    monkeypatch,
+):
+    from domains.orders.port_resolution.service import PortResolutionOutcome
+    from scripts import reprocess_unresolved_oracle_ports as repair
+
+    country, active, _, _ = _seed_port_states(db)
+    order = _order_for_resolution(db)
+    _oracle_source_for_repair(db, order)
+
+    def fake_resolve(current_db, current_order, **_kwargs):
+        current_order.port_id = active.id
+        current_order.country_id = country.id
+        current_order.port_resolution_method = "llm"
+        current_order.port_resolution_status = "pending_review"
+        current_order.port_resolution_data = {"decision_id": "decision-repair"}
+        current_db.flush()
+        return PortResolutionOutcome(
+            status="matched",
+            port_id=active.id,
+            issue_code=None,
+            decision_id="decision-repair",
+            reason="OSAKA matches Osaka",
+        )
+
+    monkeypatch.setattr(repair, "resolve_order_port", fake_resolve)
+    emitted: list[dict[str, Any]] = []
+
+    result = repair.run_repair(
+        po_number="PO168798CCI",
+        apply=False,
+        expected_order_id=None,
+        session_factory=session_factory,
+        pipeline_runner=lambda _order_id: pytest.fail("dry-run started pipeline"),
+        emit=emitted.append,
+    )
+
+    db.expire_all()
+    assert db.get(Order, order.id).port_id is None
+    assert result["mode"] == "dry_run"
+    assert result["before"]["port_id"] is None
+    assert result["proposed"]["port_id"] == active.id
+    assert result["after"] == result["before"]
+    assert result["assertions"]["database_unchanged"] is True
+    assert emitted == [result]
+
+
+def test_repair_apply_requires_expected_order_id(db, session_factory):
+    from scripts.reprocess_unresolved_oracle_ports import RepairGuardError, run_repair
+
+    order = _order_for_resolution(db)
+    _oracle_source_for_repair(db, order)
+
+    with pytest.raises(RepairGuardError, match="expected-order-id"):
+        run_repair(
+            po_number="PO168798CCI",
+            apply=True,
+            expected_order_id=None,
+            session_factory=session_factory,
+        )
+
+
+@pytest.mark.parametrize("po_number", ["*", "PO1,PO2", "PO%"])
+def test_repair_rejects_bulk_or_pattern_targets(po_number, session_factory):
+    from scripts.reprocess_unresolved_oracle_ports import RepairGuardError, run_repair
+
+    with pytest.raises(RepairGuardError, match="single exact"):
+        run_repair(
+            po_number=po_number,
+            apply=True,
+            expected_order_id=1,
+            session_factory=session_factory,
+        )
+
+
+def test_repair_apply_runs_shared_resolution_then_pipeline_once(
+    db,
+    session_factory,
+    monkeypatch,
+):
+    from domains.orders.port_resolution.service import PortResolutionOutcome
+    from scripts import reprocess_unresolved_oracle_ports as repair
+
+    country, active, _, _ = _seed_port_states(db)
+    order = _order_for_resolution(db)
+    source = _oracle_source_for_repair(db, order)
+    calls: list[int] = []
+
+    def fake_resolve(current_db, current_order, **_kwargs):
+        current_order.port_id = active.id
+        current_order.country_id = country.id
+        current_order.port_resolution_method = "llm"
+        current_order.port_resolution_status = "pending_review"
+        current_order.port_resolution_data = {"decision_id": "decision-apply"}
+        current_db.flush()
+        return PortResolutionOutcome(
+            status="matched",
+            port_id=active.id,
+            issue_code=None,
+            decision_id="decision-apply",
+            reason="OSAKA matches Osaka",
+        )
+
+    def fake_pipeline(order_id: int):
+        calls.append(order_id)
+        with session_factory() as current_db:
+            current_order = current_db.get(Order, order_id)
+            current_order.status = "ready"
+            current_order.anomaly_data = {
+                "requires_human_review": True,
+                "findings": [{"code": "LLM_PORT_REVIEW_REQUIRED"}],
+            }
+            current_db.commit()
+            return dict(current_order.anomaly_data)
+
+    monkeypatch.setattr(repair, "resolve_order_port", fake_resolve)
+    result = repair.run_repair(
+        po_number="PO168798CCI",
+        apply=True,
+        expected_order_id=order.id,
+        session_factory=session_factory,
+        pipeline_runner=fake_pipeline,
+    )
+
+    db.expire_all()
+    repaired = db.get(Order, order.id)
+    repaired_source = db.get(OraclePOImport, source.source_key)
+    assert calls == [order.id]
+    assert repaired.port_id == active.id
+    assert repaired.port_resolution_status == "pending_review"
+    assert repaired_source.status == "needs_review"
+    assert repaired_source.issues == [{"code": "LLM_PORT_REVIEW_REQUIRED"}]
+    assert result["mode"] == "apply"
+    assert result["after"]["port_id"] == active.id
+    assert result["assertions"]["expected_order_id_matches"] is True
