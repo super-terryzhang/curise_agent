@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from functools import wraps
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session
@@ -73,6 +73,7 @@ def list_products(
     category_id: int | None = None,
     supplier_id: int | None = None,
     is_effective: bool | None = None,
+    sort: Literal["latest", "name_asc", "name_desc"] = "latest",
     limit: int = 20,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -84,6 +85,7 @@ def list_products(
         category_id=category_id,
         supplier_id=supplier_id,
         is_effective=is_effective,
+        sort=sort,
         limit=limit,
         offset=offset,
     )

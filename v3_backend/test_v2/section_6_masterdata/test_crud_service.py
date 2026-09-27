@@ -40,7 +40,6 @@ from domains.masterdata.schemas import (
     SupplierCreate,
 )
 
-
 # ─── {total, items} contract — search_* + list_products ───────
 
 
@@ -149,6 +148,33 @@ def test_list_products_total_is_true_count_not_items_length(db):
     result = service.list_products(db, limit=5)
     assert result["total"] == 12
     assert len(result["items"]) == 5
+
+
+def test_list_products_supports_explicit_deterministic_sorting(db):
+    first = service.create_product(db, ProductCreate(product_name_en="Zulu"))
+    second = service.create_product(db, ProductCreate(product_name_en="Alpha"))
+    third = service.create_product(db, ProductCreate(product_name_en="Bravo"))
+
+    latest = service.list_products(db, sort="latest")
+    assert [item["id"] for item in latest["items"]] == [
+        third["id"],
+        second["id"],
+        first["id"],
+    ]
+
+    ascending = service.list_products(db, sort="name_asc")
+    assert [item["product_name_en"] for item in ascending["items"]] == [
+        "Alpha",
+        "Bravo",
+        "Zulu",
+    ]
+
+    descending = service.list_products(db, sort="name_desc")
+    assert [item["product_name_en"] for item in descending["items"]] == [
+        "Zulu",
+        "Bravo",
+        "Alpha",
+    ]
 
 
 def test_search_suppliers_with_limit_caps_items_but_keeps_full_total(db):

@@ -7,6 +7,15 @@ import { ProductPriceHistoryDialog } from "@/components/data/product-price-histo
 import { ProductPricePeriodsDialog } from "@/components/data/product-price-periods";
 import { ProductImageCell } from "@/components/data/product-image-cell";
 import { ProductImagesGallery } from "@/components/data/product-images-gallery";
+import {
+  ProductGalleryGrid,
+  ProductViewToggle,
+  type ProductView,
+} from "@/components/data/product-gallery-grid";
+import {
+  createLatestRequestRunner,
+  loadProductPage,
+} from "@/components/data/product-gallery-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +55,7 @@ import {
   updateProduct,
   deleteProduct,
   type ProductItem,
+  type ProductSort,
   type CategoryItem,
   type SupplierItem,
   type CountryItem,
@@ -147,7 +157,8 @@ const emptyForm: ProductForm = {
   pack_size: "", country_of_origin: "", effective_from: "", effective_to: "",
 };
 
-const PAGE_SIZE = 20;
+const LIST_PAGE_SIZE = 20;
+const GALLERY_PAGE_SIZE = 24;
 
 interface ProductsTabProps {
   initialProductId?: number | null;
@@ -163,6 +174,8 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   const [countries, setCountries] = useState<CountryItem[]>([]);
   const [ports, setPorts] = useState<PortItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [productsRefreshing, setProductsRefreshing] = useState(false);
+  const [productsError, setProductsError] = useState<string | null>(null);
 
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterSupplier, setFilterSupplier] = useState("all");
@@ -171,10 +184,15 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   // Mirrors StatusBadge semantics so filter result agrees with each row's badge.
   const [filterStatus, setFilterStatus] = useState<"all" | "effective" | "invalid">("all");
   const [currentPage, setCurrentPage] = useState(0);
+  const [listPaginationVersion, setListPaginationVersion] = useState(0);
+  const [view, setView] = useState<ProductView>("list");
+  const [gallerySort, setGallerySort] = useState<ProductSort>("latest");
+  const activePageSize = view === "gallery" ? GALLERY_PAGE_SIZE : LIST_PAGE_SIZE;
 
   const [searchText, setSearchText] = useState(initialSearch);
   const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
   const deepLinkHandled = useRef(false);
+  const productRequestRunner = useRef(createLatestRequestRunner()).current;
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ProductItem | null>(null);
@@ -195,10 +213,14 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   })();
 
   // Build filter params for server-side query
-  const getFilterParams = useCallback((page: number) => {
+  const getFilterParams = useCallback((
+    page: number,
+    pageSize = activePageSize,
+    sort?: ProductSort,
+  ) => {
     const params: Parameters<typeof listProducts>[0] = {
-      limit: PAGE_SIZE,
-      offset: page * PAGE_SIZE,
+      limit: pageSize,
+      offset: page * pageSize,
     };
     if (debouncedSearch) params.search = debouncedSearch;
     // Map filter name back to id for server-side filtering
@@ -216,26 +238,69 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
     }
     if (filterStatus === "effective") params.is_effective = true;
     else if (filterStatus === "invalid") params.is_effective = false;
+    if (sort) params.sort = sort;
     return params;
-  }, [debouncedSearch, filterCategory, filterSupplier, filterCountry, filterStatus, categories, suppliers, countries]);
+  }, [activePageSize, debouncedSearch, filterCategory, filterSupplier, filterCountry, filterStatus, categories, suppliers, countries]);
 
-  const fetchProducts = useCallback((page: number) => {
-    const params = getFilterParams(page);
-    listProducts(params)
-      .then(({ total, items }) => {
-        setProducts(items);
-        setTotalProducts(total);
-      })
-      .catch((err) => toast.error(err.message));
-  }, [getFilterParams]);
+  const fetchProducts = useCallback(async (
+    page: number,
+    pageSize = activePageSize,
+    sortOverride?: ProductSort | null,
+  ) => {
+    const sort = sortOverride === undefined
+      ? (view === "gallery" ? gallerySort : undefined)
+      : (sortOverride ?? undefined);
+    setProductsRefreshing(true);
+    setProductsError(null);
+    try {
+      const result = await productRequestRunner.run(() =>
+        loadProductPage(page, pageSize, (requestedPage) =>
+          listProducts(getFilterParams(requestedPage, pageSize, sort)),
+        ),
+      );
+      if (!result) return;
+
+      if (result.page !== page) {
+        setCurrentPage(result.page);
+        setListPaginationVersion((version) => version + 1);
+      }
+      setProducts(result.items);
+      setTotalProducts(result.total);
+      setProductsRefreshing(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "产品加载失败";
+      setProductsError(message);
+      setProductsRefreshing(false);
+      toast.error(message);
+    }
+  }, [activePageSize, gallerySort, getFilterParams, productRequestRunner, view]);
 
   const reload = useCallback(() => {
     fetchProducts(currentPage);
   }, [fetchProducts, currentPage]);
 
+  function handleViewChange(nextView: ProductView) {
+    if (nextView === view) return;
+    const nextPageSize = nextView === "gallery" ? GALLERY_PAGE_SIZE : LIST_PAGE_SIZE;
+    setView(nextView);
+    setCurrentPage(0);
+    fetchProducts(
+      0,
+      nextPageSize,
+      nextView === "gallery" ? gallerySort : null,
+    );
+  }
+
+  function handleGallerySortChange(nextSort: ProductSort) {
+    if (nextSort === gallerySort) return;
+    setGallerySort(nextSort);
+    setCurrentPage(0);
+    fetchProducts(0, GALLERY_PAGE_SIZE, nextSort);
+  }
+
   // Initial load: reference data + first page of products
   useEffect(() => {
-    Promise.all([listProducts({ search: initialSearch || undefined, limit: PAGE_SIZE, offset: 0 }), listCategories(), listSuppliers(), listCountries(), listPorts()])
+    Promise.all([listProducts({ search: initialSearch || undefined, limit: LIST_PAGE_SIZE, offset: 0 }), listCategories(), listSuppliers(), listCountries(), listPorts()])
       .then(([pRes, cat, sup, cty, pts]) => {
         setProducts(pRes.items);
         setTotalProducts(pRes.total);
@@ -244,7 +309,11 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
         setCountries(cty);
         setPorts(pts);
       })
-      .catch((err) => toast.error(err.message))
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : "产品加载失败";
+        setProductsError(message);
+        toast.error(message);
+      })
       .finally(() => setLoading(false));
   }, [initialSearch]);
 
@@ -258,6 +327,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   useEffect(() => {
     if (!loading) {
       setCurrentPage(0);
+      setListPaginationVersion((version) => version + 1);
       fetchProducts(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -676,7 +746,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   }
 
   const toolbar = (
-    <div className="flex items-center gap-2 flex-1">
+    <div className="flex flex-1 flex-wrap items-center gap-2">
       <div className="relative max-w-xs">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
         <Input
@@ -740,7 +810,10 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
         </SelectContent>
       </Select>
 
-      <span className="text-xs text-muted-foreground ml-auto">
+      <div className="ml-auto">
+        <ProductViewToggle view={view} onViewChange={handleViewChange} />
+      </div>
+      <span className="text-xs text-muted-foreground">
         共 {totalProducts} 个产品
       </span>
       <Button
@@ -772,34 +845,88 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
     </div>
   );
 
+  const productEmptyState = productsRefreshing ? (
+    <div className="flex flex-col items-center justify-center py-16 text-sm text-muted-foreground">
+      <Loader2 className="mb-3 h-6 w-6 animate-spin" />
+      正在加载产品…
+    </div>
+  ) : productsError ? (
+    <EmptyState
+      icon={Package}
+      title="产品加载失败"
+      description={productsError}
+      action={(
+        <Button variant="outline" size="sm" onClick={() => void fetchProducts(currentPage)}>
+          重新加载
+        </Button>
+      )}
+    />
+  ) : (
+    <EmptyState icon={Package} title="暂无产品数据" />
+  );
+
   return (
     <>
-      <DataTable
-        columns={columns}
-        data={products}
-        pageSize={PAGE_SIZE}
-        toolbar={toolbar}
-        emptyState={<EmptyState icon={Package} title="暂无产品数据" />}
-        totalRows={totalProducts}
-        onPageChange={(pageIndex) => {
-          setCurrentPage(pageIndex);
-          fetchProducts(pageIndex);
-        }}
-        // Default view keeps the table readable on a laptop. The R7
-        // financial column `contract_price` IS visible by default —
-        // that's why we added it in the first place. Lower-frequency
-        // attributes (港口/品牌/原产地/单位规格/effective_from) are
-        // hidden by default and toggled via the "列" button.
-        defaultHiddenColumns={[
-          "product_name_jp",
-          "port_name",
-          "brand",
-          "country_of_origin",
-          "unit_size",
-          "effective_from",
-        ]}
-        visibilityStorageKey="v3.data.products.cols"
-      />
+      {view === "list" ? (
+        <DataTable
+          key={`products-list-${listPaginationVersion}`}
+          columns={columns}
+          data={productsRefreshing || productsError ? [] : products}
+          pageSize={LIST_PAGE_SIZE}
+          toolbar={toolbar}
+          emptyState={productEmptyState}
+          totalRows={totalProducts}
+          onPageChange={(pageIndex) => {
+            setCurrentPage(pageIndex);
+            fetchProducts(pageIndex, LIST_PAGE_SIZE);
+          }}
+          // Default view keeps the table readable on a laptop. The R7
+          // financial column `contract_price` IS visible by default —
+          // that's why we added it in the first place. Lower-frequency
+          // attributes (港口/品牌/原产地/单位规格/effective_from) are
+          // hidden by default and toggled via the "列" button.
+          defaultHiddenColumns={[
+            "product_name_jp",
+            "port_name",
+            "brand",
+            "country_of_origin",
+            "unit_size",
+            "effective_from",
+          ]}
+          visibilityStorageKey="v3.data.products.cols"
+        />
+      ) : (
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="flex shrink-0 items-center gap-3 px-4 py-3">
+            {toolbar}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+            {productsRefreshing || productsError ? (
+              productEmptyState
+            ) : (
+              <ProductGalleryGrid
+                products={products}
+                totalProducts={totalProducts}
+                pageIndex={currentPage}
+                pageSize={GALLERY_PAGE_SIZE}
+                isWriter={isWriter}
+                sort={gallerySort}
+                onSortChange={handleGallerySortChange}
+                onPageChange={(pageIndex) => {
+                  setCurrentPage(pageIndex);
+                  fetchProducts(pageIndex, GALLERY_PAGE_SIZE);
+                }}
+                onOpenImages={setGalleryProduct}
+                onOpenHistory={setHistoryProduct}
+                onManagePrices={setPeriodProduct}
+                onEdit={openEdit}
+                onToggleStatus={(product) => void handleToggleStatus(product)}
+                onDelete={(product) => void handleDelete(product)}
+              />
+            )}
+          </div>
+        </div>
+      )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">

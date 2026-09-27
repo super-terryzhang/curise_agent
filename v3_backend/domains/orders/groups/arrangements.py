@@ -1,9 +1,10 @@
 """Permission-scoped supply arrangement read models.
 
-The list view intentionally loads only summary columns.  The workspace detail
-view loads matching blobs for one visible arrangement so the frontend can show
-PO and supplier readiness without downloading every order in the system.
-Reading either view never mutates grouping.
+The list view intentionally avoids matching blobs and loads only summary
+fields plus the raw PO product rows needed for truthful name search.  The
+workspace detail view loads matching blobs for one visible arrangement so the
+frontend can show PO and supplier readiness without downloading every order in
+the system.  Reading either view never mutates grouping.
 """
 from collections import defaultdict
 from datetime import datetime
@@ -52,6 +53,27 @@ def _port_resolution(order):
     ).model_dump(mode='json')
 
 
+def _raw_product_names(products: object) -> list[str]:
+    """Return stable, searchable names exactly from the stored PO rows."""
+    if not isinstance(products, list):
+        return []
+    names: list[str] = []
+    seen: set[str] = set()
+    for row in products:
+        if not isinstance(row, dict):
+            continue
+        value = row.get('product_name')
+        if not isinstance(value, str):
+            continue
+        name = value.strip()
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
 def list_arrangements(db, *, user_id):
     admin = _admin(db, user_id)
     query = db.query(Order).options(load_only(
@@ -59,15 +81,16 @@ def list_arrangements(db, *, user_id):
         Order.po_number, Order.filename, Order.document_id, Order.ship_name,
         Order.loading_date, Order.delivery_date, Order.destination_port,
         Order.port_id, Order.status, Order.fulfillment_status, Order.anomaly_data,
-        Order.product_count, Order.port_resolution_method,
+        Order.product_count, Order.products, Order.port_resolution_method,
         Order.port_resolution_status, Order.port_resolution_data,
         Order.port_resolution_reviewed_by, Order.port_resolution_reviewed_at,
     ))
     if not admin:
         query = query.filter(Order.user_id == user_id)
     orders = query.order_by(Order.id.desc()).all()
-    # Preserve the summary-only query: current records carry row provenance in
-    # their findings, while legacy records fall back to stored aggregate counts.
+    # Keep matching blobs out of the list query: current records carry row
+    # provenance in their findings, while legacy records fall back to stored
+    # aggregate counts.
     actionable_counts = actionable_row_counts(orders, include_match_results=False)
     ports = {p.id: p for p in db.query(Port).all()}
     inquiry_rows = db.query(
@@ -136,6 +159,7 @@ def list_arrangements(db, *, user_id):
             'id': order.id, 'po_number': value('po_number'),
             'filename': order.filename, 'document_id': order.document_id,
             'product_count': order.product_count or 0,
+            'product_names': _raw_product_names(order.products),
             'ship': value('ship_name'), 'day': normalized_date(value('loading_date')),
             'port': ports[order.port_id].name if order.port_id in ports else None,
             'status': order.status, 'fulfillment_status': order.fulfillment_status or 'pending',

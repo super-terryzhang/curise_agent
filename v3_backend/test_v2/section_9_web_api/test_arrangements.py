@@ -15,7 +15,8 @@ def test_summary_scopes_members_and_separates_generation_from_fulfillment(client
     x.product_count = 7
     hidden = order(db, b.id, po_number='SECRET')
     bad = order(db, a.id, loading_date=None)
-    db.add(Inquiry(order_id=x.id, status='completed')); db.commit()
+    db.add(Inquiry(order_id=x.id, status='completed'))
+    db.commit()
     regroup(db, apply=True)
     h = login(client, 'a@test')
     r = client.get('/api/order-groups/arrangements', headers=h)
@@ -51,20 +52,78 @@ def test_unclassified_manual_choice_retry_and_zero_bucket(client, db):
     assert data['unclassified'][0]['reason'] == '已手动移至未分类'
     r = client.post(f'/api/order-groups/orders/{x.id}/classify', headers=h)
     assert r.status_code == 200 and r.json()['group_id'] is not None
-    x.loading_date = None; db.commit()
+    x.loading_date = None
+    db.commit()
     r = client.post(f'/api/order-groups/orders/{x.id}/classify', headers=h)
     assert r.json() == {'group_id': None, 'reason': '缺少或无法识别装船日'}
 
 
 def test_all_members_returned_without_order_page_limit(client, db):
     u = seed_user(db, email='a@test')
-    port=Port(name='東京'); db.add(port); db.flush()
+    port=Port(name='東京')
+    db.add(port)
+    db.flush()
     for i in range(105):
         db.add(Order(user_id=u.id, filename=f'{i}.pdf', ship_name='SOLSTICE', loading_date='2026-09-11', destination_port='TOKYO', port_id=port.id, status='ready'))
-    db.commit(); regroup(db, apply=True)
+    db.commit()
+    regroup(db, apply=True)
     r = client.get('/api/order-groups/arrangements', headers=login(client, 'a@test')).json()
     assert r['total_orders'] == 105 and len(r['arrangements']) == 1
     assert len(r['arrangements'][0]['orders']) == 105
+
+
+def test_arrangement_summary_exposes_unique_raw_product_names(client, db):
+    visible_user = seed_user(db, email='product-search@test')
+    foreign_user = seed_user(db, email='foreign-products@test')
+    named = order(
+        db,
+        visible_user.id,
+        po_number='PO-NAMED',
+        products=[
+            {'product_name': '  Apple Granny Smith  '},
+            {'product_name': 'apple granny smith'},
+            {'product_name': 'Orange  Navel'},
+            {'product_name': '   '},
+            {'product_name': None},
+            {'product_name': 42},
+            {'other': 'ignored'},
+            'malformed-row',
+        ],
+    )
+    empty = order(
+        db,
+        visible_user.id,
+        po_number='PO-EMPTY',
+        loading_date='2026-09-12',
+        products=None,
+    )
+    order(
+        db,
+        foreign_user.id,
+        po_number='PO-FOREIGN',
+        products=[{'product_name': 'Secret Mango'}],
+    )
+    regroup(db, apply=True)
+
+    response = client.get(
+        '/api/order-groups/arrangements',
+        headers=login(client, 'product-search@test'),
+    )
+
+    assert response.status_code == 200, response.text
+    assert 'Secret Mango' not in response.text
+    data = response.json()
+    summaries = {
+        item['id']: item
+        for arrangement in data['arrangements']
+        for item in arrangement['orders']
+    }
+    summaries.update({item['id']: item for item in data['unclassified']})
+    assert summaries[named.id]['product_names'] == [
+        'Apple Granny Smith',
+        'Orange  Navel',
+    ]
+    assert summaries[empty.id]['product_names'] == []
 
 
 def test_delivery_date_does_not_fill_missing_loading_date(client, db):
@@ -95,6 +154,7 @@ def test_selected_port_is_the_only_api_destination_and_can_be_cleared(client, db
 def test_background_match_classifies_after_selecting_port(db,monkeypatch):
     from contextlib import nullcontext
     from types import SimpleNamespace
+
     from domains.orders import service as orders_service
     u=seed_user(db,email='a@test')
     x=order(db,u.id,port_id=None)

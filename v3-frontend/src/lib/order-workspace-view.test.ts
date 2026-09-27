@@ -72,7 +72,7 @@ describe("structured order workspace view", () => {
   it("labels PO and supplier rows without exposing PO-level inquiry actions", () => {
     expect(arrangementPoStatus({
       id: 2, po_number: "PO-2", filename: "2.pdf", document_id: null,
-      product_count: 8, ship: "SHIP", day: "2026-09-20", port: "横滨港",
+      product_count: 8, product_names: [], ship: "SHIP", day: "2026-09-20", port: "横滨港",
       status: "ready", fulfillment_status: "pending", inquiry_status: null,
       requires_human_review: true, anomaly_count: 1, reason: null,
     })).toEqual({ label: "需要处理 1 项", tone: "warning" });
@@ -111,6 +111,7 @@ describe("structured order workspace view", () => {
           filename: "7.pdf",
           document_id: null,
           product_count: 1,
+          product_names: [],
           ship: "SHIP",
           day: "2026-09-20",
           port: "大阪",

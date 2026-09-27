@@ -10,7 +10,7 @@ Role policy (mirrors v2):
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
@@ -286,6 +286,7 @@ def list_products(
             "expired); omit = all."
         ),
     ),
+    sort: Literal["latest", "name_asc", "name_desc"] = Query("latest"),
     limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
@@ -297,6 +298,7 @@ def list_products(
         category_id=category_id,
         supplier_id=supplier_id,
         is_effective=is_effective,
+        sort=sort,
         limit=limit,
         offset=offset,
     )
