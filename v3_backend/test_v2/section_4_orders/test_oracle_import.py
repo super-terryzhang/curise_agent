@@ -11,6 +11,8 @@ from domains.inquiry.repository import list_inquiries_by_group
 from domains.masterdata.models import Country, Port, Product, Supplier
 from domains.orders.models import Order
 from domains.orders.oracle_models import OraclePOImport
+from domains.orders.port_resolution import PortResolutionDecision, PortResolutionError
+from infrastructure.config import settings
 
 
 @pytest.fixture
@@ -28,7 +30,8 @@ def setup_po(db, seed_user, monkeypatch):
             "po_number": record["OrderNumber"],
             "metadata": {
                 "ship_name": "Test Ship",
-                "destination_name": "TOKYO",
+                "destination_name": "OSAKA",
+                "location_code": "OSA",
                 "delivery_date": "2026-09-11",
                 "loading_date": "2026-09-11",
             },
@@ -57,7 +60,7 @@ def setup_po(db, seed_user, monkeypatch):
         "provenance": {"raw_model_result": {"complete": True}},
     }
     db.add(Country(id=9, name="Japan", code="JPN"))
-    db.add(Port(id=28, name="東京", code="10", country_id=9))
+    db.add(Port(id=21, name="大阪", code="20", country_id=9))
     db.add(Supplier(id=45, name="Test Supplier"))
     db.add(
         Product(
@@ -65,7 +68,7 @@ def setup_po(db, seed_user, monkeypatch):
             code="P1",
             product_name_en="Test product",
             country_id=9,
-            port_id=28,
+            port_id=21,
             supplier_id=45,
             unit="CA",
             price=10,
@@ -89,6 +92,32 @@ def setup_po(db, seed_user, monkeypatch):
         )
     )
     db.commit()
+    monkeypatch.setattr(settings, "LLM_PORT_RESOLUTION_ENABLED", True)
+
+    def resolve_destination(destination, _candidates, **_kwargs):
+        if destination == "TIMEOUT":
+            raise PortResolutionError("provider_timeout", "port resolver timed out")
+        if destination != "OSAKA":
+            return PortResolutionDecision(
+                status="unmatched",
+                port_id=None,
+                reason="No unique database port",
+                model=settings.LLM_PORT_RESOLUTION_MODEL,
+                prompt_version="oracle-port-resolution-v1",
+                candidate_snapshot_hash="fixture-candidates",
+            )
+        return PortResolutionDecision(
+            status="matched",
+            port_id=21,
+            reason="Final destination OSAKA maps to 大阪",
+            model=settings.LLM_PORT_RESOLUTION_MODEL,
+            prompt_version="oracle-port-resolution-v1",
+            candidate_snapshot_hash="fixture-candidates",
+        )
+
+    monkeypatch.setattr(
+        "domains.orders.port_resolution.service.resolve_destination", resolve_destination
+    )
     monkeypatch.setattr("apps.jobs.oracle_po.structure", lambda *a, **k: deepcopy(parsed))
     monkeypatch.setattr(
         "apps.jobs.oracle_po.read_pdf",
@@ -133,6 +162,14 @@ def test_complete_and_same_version_reused(db, setup_po, tmp_path):
     assert order.products[0]["quantity"] == "2"
     assert order.match_results[0]["rfq_quantity"] == 2
     assert order.group_id is not None
+    assert order.port_id == 21
+    assert order.port_resolution_method == "llm"
+    assert order.port_resolution_status == "pending_review"
+    assert order.port_resolution_data["source_destination"] == "OSAKA"
+    assert order.port_resolution_data["source_port_code"] == "OSA"
+    assert "LLM_PORT_REVIEW_REQUIRED" in {
+        item["code"] for item in order.anomaly_data["findings"]
+    }
 
 
 def test_same_code_source_rows_survive(db, setup_po, tmp_path):
@@ -186,7 +223,7 @@ def test_new_po_in_same_arrangement_creates_cumulative_version(db, setup_po, tmp
         ("identity", "SOURCE_IDENTITY_UNVERIFIED", False),
         ("quantity", "SOURCE_AMOUNT_MISMATCH", True),
         ("unit", "UNIT_CONVERSION_EVIDENCE_REQUIRED", True),
-        ("port", "DESTINATION_REQUIRES_REVIEW", False),
+        ("port", "LLM_PORT_UNRESOLVED", False),
         ("date", "SOURCE_DELIVERY_DATE_UNVERIFIED", False),
     ],
 )
@@ -222,7 +259,7 @@ def test_multiple_exact_candidates_block(db, setup_po, tmp_path):
             code="P1",
             product_name_en="Conflict",
             country_id=9,
-            port_id=28,
+            port_id=21,
             supplier_id=45,
             unit="CA",
             price=10,
@@ -235,6 +272,77 @@ def test_multiple_exact_candidates_block(db, setup_po, tmp_path):
     assert result["status"] == "needs_review", result
     assert "EXACT_UNIQUE_MATCH_REQUIRED" in [row["code"] for row in result["issues"]]
     assert db.query(Inquiry).count() == 1
+
+
+def test_llm_port_timeout_isolated_to_current_po(db, setup_po, tmp_path):
+    setup_po[1]["document"]["metadata"]["destination_name"] = "TIMEOUT"
+
+    result = run(setup_po, tmp_path)
+
+    assert result["status"] == "needs_review", result
+    assert "LLM_PORT_RESOLUTION_FAILED" in {item["code"] for item in result["issues"]}
+    assert db.query(Inquiry).count() == 0
+    order = db.get(Order, result["order_id"])
+    assert order.port_id is None
+    assert order.port_resolution_status == "unresolved"
+    assert order.port_resolution_data["failure_code"] == "provider_timeout"
+
+
+def test_oracle_scan_completes_next_po_after_llm_port_timeout(
+    db, setup_po, tmp_path, monkeypatch
+):
+    from apps.jobs import oracle_scan
+
+    first = {
+        **setup_po[0],
+        "POHeaderId": 99,
+        "OrderNumber": "PO-PORT-TIMEOUT",
+    }
+    second = setup_po[0]
+    parsed_by_po = {}
+    for record, destination in ((first, "TIMEOUT"), (second, "OSAKA")):
+        parsed = deepcopy(setup_po[1])
+        parsed["document"]["po_number"] = record["OrderNumber"]
+        parsed["document"]["metadata"]["destination_name"] = destination
+        parsed_by_po[record["OrderNumber"]] = parsed
+
+    monkeypatch.setattr(
+        "apps.jobs.oracle_po.structure",
+        lambda _pdf, record, *_args, **_kwargs: deepcopy(
+            parsed_by_po[record["OrderNumber"]]
+        ),
+    )
+    setup_po[2].list_orders = lambda **_kwargs: [first, second]
+    monkeypatch.setenv("ORACLE_SCAN_ENABLED", "true")
+    monkeypatch.setenv("ORACLE_SCAN_NOT_BEFORE", "2026-08-01T00:00:00Z")
+    monkeypatch.setenv("ORACLE_SCAN_OWNER_ID", str(setup_po[3].id))
+    monkeypatch.setenv("ORACLE_SCAN_CACHE_DIR", str(tmp_path))
+
+    result = oracle_scan.execute_scan(client=setup_po[2], importer=import_po)
+
+    assert result["status"] == "completed_with_issues"
+    items = {item["po_number"]: item for item in result["items"]}
+    assert items["PO-PORT-TIMEOUT"]["status"] == "needs_review"
+    assert items["PO-ACCEPTANCE"]["status"] == "completed"
+    assert items["PO-ACCEPTANCE"]["inquiry_id"] is not None
+    assert db.query(Inquiry).count() == 1
+
+
+def test_feature_flag_off_preserves_destination_review_fallback(
+    db, setup_po, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(settings, "LLM_PORT_RESOLUTION_ENABLED", False)
+
+    result = run(setup_po, tmp_path)
+
+    assert result["status"] == "needs_review", result
+    assert "DESTINATION_REQUIRES_REVIEW" in {
+        item["code"] for item in result["issues"]
+    }
+    assert db.query(Inquiry).count() == 0
+    order = db.get(Order, result["order_id"])
+    assert order.port_id is None
+    assert order.port_resolution_method is None
 
 
 def test_unbound_template_is_not_automatically_selected(db, setup_po, tmp_path):
@@ -318,7 +426,7 @@ def test_conversion_is_exactly_scoped(db, setup_po, tmp_path, bad_scope):
         "line_id": "line-00001",
         "product_id": 1759,
         "supplier_id": 45,
-        "port_id": 28,
+        "port_id": 21,
         "delivery_date": "2026-09-11",
         "source_unit": "CA10.0",
         "supplier_unit": "CA",
