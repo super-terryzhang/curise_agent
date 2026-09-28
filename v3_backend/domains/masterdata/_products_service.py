@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import ROUND_HALF_UP, Decimal
 from functools import wraps
 from typing import Any, Literal
 
@@ -30,6 +31,17 @@ _PRICE_PERIODS = (
     ("purchase_price_effective_from", "purchase_price_effective_to", "采购价"),
     ("selling_price_effective_from", "selling_price_effective_to", "卖价"),
 )
+
+
+def _calculate_profit_margin(
+    purchase_price: Decimal | None,
+    selling_price: Decimal | None,
+) -> float | None:
+    """Return the sale-price margin percentage shown by product management."""
+    if purchase_price is None or selling_price is None or selling_price <= 0:
+        return None
+    margin = ((selling_price - purchase_price) / selling_price) * Decimal("100")
+    return float(margin.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def _validate_price_periods(values: dict[str, datetime | None]) -> None:
@@ -327,6 +339,7 @@ def serialize(
         "contract_price": (
             float(p.contract_price) if p.contract_price is not None else None
         ),
+        "profit_margin": _calculate_profit_margin(p.price, p.contract_price),
         "purchase_price_effective_from": (
             str(p.purchase_price_effective_from)
             if p.purchase_price_effective_from else None

@@ -245,6 +245,7 @@ class ProductResponse(BaseModel):
     unit: str | None = None
     price: float | None = None
     contract_price: float | None = None
+    profit_margin: float | None = None
     purchase_price_effective_from: str | None = None
     purchase_price_effective_to: str | None = None
     selling_price_effective_from: str | None = None

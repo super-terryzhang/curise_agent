@@ -177,6 +177,41 @@ def test_list_products_supports_explicit_deterministic_sorting(db):
     ]
 
 
+@pytest.mark.parametrize(
+    ("purchase_price", "selling_price", "expected_margin"),
+    [
+        (80.0, 100.0, 20.0),
+        (100.0, 100.0, 0.0),
+        (100.0, 80.0, -25.0),
+        (0.0, 100.0, 100.0),
+        (None, 100.0, None),
+        (80.0, None, None),
+        (80.0, 0.0, None),
+    ],
+)
+def test_product_profit_margin_is_derived_from_display_prices(
+    db,
+    purchase_price,
+    selling_price,
+    expected_margin,
+):
+    name = f"Margin {purchase_price} {selling_price}"
+    created = service.create_product(
+        db,
+        ProductCreate(
+            product_name_en=name,
+            price=purchase_price,
+            contract_price=selling_price,
+        ),
+    )
+
+    assert created["profit_margin"] == expected_margin
+
+    listed = service.list_products(db, search=name)
+    assert listed["total"] == 1
+    assert listed["items"][0]["profit_margin"] == expected_margin
+
+
 def test_search_suppliers_with_limit_caps_items_but_keeps_full_total(db):
     """20 suppliers + limit=3 → total=20, items length=3.
     `total` answers "how many", `items` is just the page the UI wants to render."""
