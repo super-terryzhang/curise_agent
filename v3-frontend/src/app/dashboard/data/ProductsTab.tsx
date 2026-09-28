@@ -47,6 +47,7 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { Loader2, Package, Download, Plus, MoreHorizontal, Search } from "lucide-react";
 import { exportProductPrices } from "@/lib/export-products";
+import { normalizeProductPortFilter } from "@/lib/product-filter-query";
 import { toast } from "sonner";
 import { getUser } from "@/lib/auth";
 import {
@@ -184,6 +185,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterSupplier, setFilterSupplier] = useState("all");
   const [filterCountry, setFilterCountry] = useState("all");
+  const [filterPort, setFilterPort] = useState("all");
   // "all" | "effective" | "invalid" — server resolves to true/false/omit.
   // Mirrors StatusBadge semantics so filter result agrees with each row's badge.
   const [filterStatus, setFilterStatus] = useState<"all" | "effective" | "invalid">("all");
@@ -240,11 +242,13 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
       const cty = countries.find((c) => c.name === filterCountry);
       if (cty) params.country_id = cty.id;
     }
+    const portId = normalizeProductPortFilter(filterPort);
+    if (portId !== undefined) params.port_id = portId;
     if (filterStatus === "effective") params.is_effective = true;
     else if (filterStatus === "invalid") params.is_effective = false;
     if (sort) params.sort = sort;
     return params;
-  }, [activePageSize, debouncedSearch, filterCategory, filterSupplier, filterCountry, filterStatus, categories, suppliers, countries]);
+  }, [activePageSize, debouncedSearch, filterCategory, filterSupplier, filterCountry, filterPort, filterStatus, categories, suppliers, countries]);
 
   const fetchProducts = useCallback(async (
     page: number,
@@ -335,7 +339,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
       fetchProducts(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterCategory, filterSupplier, filterCountry, filterStatus, debouncedSearch]);
+  }, [filterCategory, filterSupplier, filterCountry, filterPort, filterStatus, debouncedSearch]);
 
   function openCreate() {
     setEditing(null);
@@ -803,6 +807,20 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
           <SelectItem value="all">全部国家</SelectItem>
           {countries.map((c) => (
             <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <Select value={filterPort} onValueChange={setFilterPort}>
+        <SelectTrigger className="h-8 w-32 text-xs">
+          <SelectValue placeholder="港口" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">全部港口</SelectItem>
+          {ports.map((port) => (
+            <SelectItem key={port.id} value={String(port.id)}>
+              {port.name}
+            </SelectItem>
           ))}
         </SelectContent>
       </Select>
