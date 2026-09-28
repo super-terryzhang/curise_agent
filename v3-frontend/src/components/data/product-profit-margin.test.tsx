@@ -13,6 +13,9 @@ describe("calculateProductProfitMargin", () => {
     [100, 80, -25],
     [0, 100, 100],
     [10, 30, 66.67],
+    ["0.63", "1.60", 60.63],
+    ["1.234", "2.345", 47.66],
+    ["1.61", "1.60", -0.63],
   ])("calculates purchase %s and selling %s", (purchase, selling, expected) => {
     expect(calculateProductProfitMargin(purchase, selling)).toBe(expected);
   });

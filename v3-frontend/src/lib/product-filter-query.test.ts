@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeProductPortFilter } from "./product-filter-query";
+import {
+  getProductPortFilterParams,
+  normalizeProductPortFilter,
+} from "./product-filter-query";
 
 describe("normalizeProductPortFilter", () => {
   it.each([
@@ -16,4 +19,14 @@ describe("normalizeProductPortFilter", () => {
       expect(normalizeProductPortFilter(value)).toBeUndefined();
     },
   );
+});
+
+describe("getProductPortFilterParams", () => {
+  it("returns the shared list/export query fragment for a selected port", () => {
+    expect(getProductPortFilterParams("19")).toEqual({ port_id: 19 });
+  });
+
+  it("omits port_id when all ports are selected", () => {
+    expect(getProductPortFilterParams("all")).toEqual({});
+  });
 });

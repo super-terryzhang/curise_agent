@@ -47,7 +47,7 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { Loader2, Package, Download, Plus, MoreHorizontal, Search } from "lucide-react";
 import { exportProductPrices } from "@/lib/export-products";
-import { normalizeProductPortFilter } from "@/lib/product-filter-query";
+import { getProductPortFilterParams } from "@/lib/product-filter-query";
 import { toast } from "sonner";
 import { getUser } from "@/lib/auth";
 import {
@@ -242,8 +242,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
       const cty = countries.find((c) => c.name === filterCountry);
       if (cty) params.country_id = cty.id;
     }
-    const portId = normalizeProductPortFilter(filterPort);
-    if (portId !== undefined) params.port_id = portId;
+    Object.assign(params, getProductPortFilterParams(filterPort));
     if (filterStatus === "effective") params.is_effective = true;
     else if (filterStatus === "invalid") params.is_effective = false;
     if (sort) params.sort = sort;
