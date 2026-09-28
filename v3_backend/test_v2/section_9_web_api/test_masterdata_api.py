@@ -188,6 +188,34 @@ def test_patch_product_updates_fields(client, seed_user, db):
     assert body["unit"] == "PCS"
 
 
+def test_patch_product_recomputes_profit_margin(client, seed_user, db):
+    from test_v2.fixtures.helpers import seed_product
+
+    headers = _admin_headers(client, seed_user)
+    product = seed_product(db, code="MARGIN-1", name="Margin product", price=50.0)
+
+    response = client.patch(
+        f"/api/data/products/{product.id}",
+        json={
+            "price": 80.0,
+            "contract_price": 100.0,
+            "expected_revision": product.revision,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["profit_margin"] == 20.0
+
+    listed = client.get(
+        "/api/data/products",
+        params={"search": "MARGIN-1"},
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["items"][0]["profit_margin"] == 20.0
+
+
 def test_delete_product_removes_row(client, seed_user, db):
     """DELETE → 204, and the row is gone (verified via a fresh session)."""
     from sqlalchemy.orm import Session as _Session

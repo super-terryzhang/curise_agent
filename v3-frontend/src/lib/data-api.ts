@@ -20,6 +20,8 @@ export interface ProductItem {
    * the financial dashboard. Nullable — not every product is on contract.
    */
   contract_price: number | null;
+  /** Derived on the server from the displayed purchase and selling prices. */
+  profit_margin: number | null;
   purchase_price_effective_from?: string | null;
   purchase_price_effective_to?: string | null;
   selling_price_effective_from?: string | null;

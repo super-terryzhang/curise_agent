@@ -8,6 +8,10 @@ import { ProductPricePeriodsDialog } from "@/components/data/product-price-perio
 import { ProductImageCell } from "@/components/data/product-image-cell";
 import { ProductImagesGallery } from "@/components/data/product-images-gallery";
 import {
+  calculateProductProfitMargin,
+  ProductProfitMargin,
+} from "@/components/data/product-profit-margin";
+import {
   ProductGalleryGrid,
   ProductViewToggle,
   type ProductView,
@@ -43,6 +47,7 @@ import {
 import { EmptyState } from "@/components/empty-state";
 import { Loader2, Package, Download, Plus, MoreHorizontal, Search } from "lucide-react";
 import { exportProductPrices } from "@/lib/export-products";
+import { getProductPortFilterParams } from "@/lib/product-filter-query";
 import { toast } from "sonner";
 import { getUser } from "@/lib/auth";
 import {
@@ -180,6 +185,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterSupplier, setFilterSupplier] = useState("all");
   const [filterCountry, setFilterCountry] = useState("all");
+  const [filterPort, setFilterPort] = useState("all");
   // "all" | "effective" | "invalid" — server resolves to true/false/omit.
   // Mirrors StatusBadge semantics so filter result agrees with each row's badge.
   const [filterStatus, setFilterStatus] = useState<"all" | "effective" | "invalid">("all");
@@ -236,11 +242,12 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
       const cty = countries.find((c) => c.name === filterCountry);
       if (cty) params.country_id = cty.id;
     }
+    Object.assign(params, getProductPortFilterParams(filterPort));
     if (filterStatus === "effective") params.is_effective = true;
     else if (filterStatus === "invalid") params.is_effective = false;
     if (sort) params.sort = sort;
     return params;
-  }, [activePageSize, debouncedSearch, filterCategory, filterSupplier, filterCountry, filterStatus, categories, suppliers, countries]);
+  }, [activePageSize, debouncedSearch, filterCategory, filterSupplier, filterCountry, filterPort, filterStatus, categories, suppliers, countries]);
 
   const fetchProducts = useCallback(async (
     page: number,
@@ -331,7 +338,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
       fetchProducts(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterCategory, filterSupplier, filterCountry, filterStatus, debouncedSearch]);
+  }, [filterCategory, filterSupplier, filterCountry, filterPort, filterStatus, debouncedSearch]);
 
   function openCreate() {
     setEditing(null);
@@ -653,6 +660,16 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
       },
     },
     {
+      accessorKey: "profit_margin",
+      header: () => <span className="text-right block">利润率</span>,
+      size: 90,
+      cell: ({ row }) => (
+        <div className="text-right">
+          <ProductProfitMargin value={row.original.profit_margin} />
+        </div>
+      ),
+    },
+    {
       accessorKey: "effective_from",
       header: "产品有效开始",
       size: 110,
@@ -789,6 +806,20 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
           <SelectItem value="all">全部国家</SelectItem>
           {countries.map((c) => (
             <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <Select value={filterPort} onValueChange={setFilterPort}>
+        <SelectTrigger className="h-8 w-32 text-xs">
+          <SelectValue placeholder="港口" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">全部港口</SelectItem>
+          {ports.map((port) => (
+            <SelectItem key={port.id} value={String(port.id)}>
+              {port.name}
+            </SelectItem>
           ))}
         </SelectContent>
       </Select>
@@ -1040,8 +1071,8 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
               </div>
             </div>
 
-            {/* Row 4: Price (procurement) + Selling price + Currency */}
-            <div className="grid grid-cols-3 gap-4">
+            {/* Row 4: Purchase price + Selling price + derived margin + Currency */}
+            <div className="grid grid-cols-4 gap-4">
               <div className="grid gap-2">
                 <Label>采购价</Label>
                 <Input
@@ -1068,6 +1099,17 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
                   onChange={(e) => updateForm("contract_price", e.target.value)}
                   placeholder="0.00"
                 />
+              </div>
+              <div className="grid gap-2">
+                <Label>利润率</Label>
+                <div className="flex h-9 items-center rounded-md border bg-muted/30 px-3 text-sm">
+                  <ProductProfitMargin
+                    value={calculateProductProfitMargin(
+                      form.price,
+                      form.contract_price,
+                    )}
+                  />
+                </div>
               </div>
               <div className="grid gap-2">
                 <Label>币种</Label>
