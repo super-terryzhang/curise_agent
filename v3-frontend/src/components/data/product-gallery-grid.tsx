@@ -17,6 +17,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ProductProfitMargin } from "@/components/data/product-profit-margin";
 import type { ProductItem } from "@/lib/data-api";
 import type { ProductSort } from "@/lib/data-api";
 
@@ -221,9 +222,17 @@ export function ProductGalleryGrid({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-sm font-semibold tabular-nums">
-                    {sellingPrice(product)}
-                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold tabular-nums">
+                      {sellingPrice(product)}
+                    </div>
+                    <div className="mt-0.5 text-xs">
+                      <ProductProfitMargin
+                        value={product.profit_margin}
+                        emptyLabel="利润率未配置"
+                      />
+                    </div>
+                  </div>
                   <ProductEffectiveBadge product={product} />
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>

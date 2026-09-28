@@ -8,6 +8,10 @@ import { ProductPricePeriodsDialog } from "@/components/data/product-price-perio
 import { ProductImageCell } from "@/components/data/product-image-cell";
 import { ProductImagesGallery } from "@/components/data/product-images-gallery";
 import {
+  calculateProductProfitMargin,
+  ProductProfitMargin,
+} from "@/components/data/product-profit-margin";
+import {
   ProductGalleryGrid,
   ProductViewToggle,
   type ProductView,
@@ -653,6 +657,16 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
       },
     },
     {
+      accessorKey: "profit_margin",
+      header: () => <span className="text-right block">利润率</span>,
+      size: 90,
+      cell: ({ row }) => (
+        <div className="text-right">
+          <ProductProfitMargin value={row.original.profit_margin} />
+        </div>
+      ),
+    },
+    {
       accessorKey: "effective_from",
       header: "产品有效开始",
       size: 110,
@@ -1040,8 +1054,8 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
               </div>
             </div>
 
-            {/* Row 4: Price (procurement) + Selling price + Currency */}
-            <div className="grid grid-cols-3 gap-4">
+            {/* Row 4: Purchase price + Selling price + derived margin + Currency */}
+            <div className="grid grid-cols-4 gap-4">
               <div className="grid gap-2">
                 <Label>采购价</Label>
                 <Input
@@ -1068,6 +1082,17 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
                   onChange={(e) => updateForm("contract_price", e.target.value)}
                   placeholder="0.00"
                 />
+              </div>
+              <div className="grid gap-2">
+                <Label>利润率</Label>
+                <div className="flex h-9 items-center rounded-md border bg-muted/30 px-3 text-sm">
+                  <ProductProfitMargin
+                    value={calculateProductProfitMargin(
+                      form.price,
+                      form.contract_price,
+                    )}
+                  />
+                </div>
               </div>
               <div className="grid gap-2">
                 <Label>币种</Label>

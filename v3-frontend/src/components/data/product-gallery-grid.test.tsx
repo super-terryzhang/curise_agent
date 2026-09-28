@@ -19,6 +19,7 @@ const product = (
   unit: "EA",
   price: 3.25,
   contract_price: 4.4,
+  profit_margin: 26.14,
   thumbnail_url: "https://example.com/product.jpg",
   image_count: 1,
   unit_size: null,
@@ -85,6 +86,7 @@ describe("product gallery grid", () => {
     expect(html).toContain("チャミスル");
     expect(html).toContain("Example Brand · 東京");
     expect(html).toContain("USD 4.40");
+    expect(html).toContain("26.14%");
     expect(html).toContain("有效");
     expect(html).toContain("上传图片");
     expect(html).toContain("2 / 3");
@@ -100,6 +102,7 @@ describe("product gallery grid", () => {
             thumbnail_url: null,
             image_count: 0,
             contract_price: null,
+            profit_margin: null,
             status: true,
             is_effective: false,
             brand: null,
@@ -117,6 +120,7 @@ describe("product gallery grid", () => {
     expect(html).toContain("暂无图片");
     expect(html).not.toContain("上传图片");
     expect(html).toContain("卖价未配置");
+    expect(html).toContain("利润率未配置");
     expect(html).toContain("品牌未填写 · 港口未填写");
     expect(html).toContain("无效");
   });
