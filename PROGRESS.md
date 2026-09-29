@@ -2,14 +2,15 @@
 
 更新时间：2026-09-29（Asia/Tokyo）
 
-## 2026-09-29 产品详情、价格历史与图片页面已在本地完成，尚未部署
+## 2026-09-29 产品详情、价格历史与图片页面已正式上线
 
 - 新增稳定产品详情路由 `/dashboard/data/products/{id}?tab=basic|prices|images`：基本信息只展示现有主数据字段；价格页分别管理采购价/卖价区间并保留审计筛选、分页与恢复；图片页保留批量选择/拖放上传、主图标识、查看和删除。
 - 新增只读 `GET /api/data/products/{id}`，不存在返回 404；未新增数据库字段或迁移。`employee` 保持可读，产品、价格和图片写操作仍只向现有有权限角色开放。
 - 产品列表/图库、PO 商品问题与单位换算规则均已接入新详情路由；旧 `?product={id}&action=edit|prices` 深链由单一兼容映射跳转，不再依赖当前列表分页才能打开产品。
 - 已清理产品列表中的三组弹窗状态与 400 余行重复表单逻辑；新增/编辑共用一个表单组件，价格与图片主体改为可嵌入面板。图片排序、手动设主图、AI 图片识别和无关 passlib/crypt 告警未纳入本轮。
 - 验证证据：后端产品/价格/图片聚焦回归 `187 passed`，触及后端文件 Ruff 通过；前端完整回归 `226 passed`、TypeScript 通过、Next.js 生产构建通过；后端完整回归 `1874 passed, 101 skipped, 5 warnings`，无失败。
-- 待人工检查：使用正式权限账号核对 employee/admin/superadmin 三种权限；用真实产品分别检查区间新增/修改/停用、历史恢复、图片上传/查看/删除和旧书签跳转。当前代码仅在分支 `feature/product-detail-page-20260929`，**尚未合并、尚未部署，也未修改生产数据库或生产数据**。
+- 生产源码和 GitHub main 均为 `27af29d4b9b5e6935e03e0a25604596ea4633b82`，CI `36577665407` 成功；后端 `cruise-v3-backend-product-detail-20260929` 接收 100% 流量，镜像 digest 为 `sha256:34569bf20a39f88df4877be3b246360570a31fdd82ada7808a559d7416174df2`；前端 `dpl_6b16LdmXSnYdWoAaECgBhyGCy7i7` 为 Production / Ready；Oracle Job generation 23 使用同一镜像并已完成首次自动扫描。数据库保持 `0032_llm_port_resolution`，本轮没有迁移。
+- 待人工检查：使用正式权限账号核对 employee/admin/superadmin 三种权限；用真实产品分别检查区间新增/修改/停用、历史恢复、图片上传/查看/删除和旧书签跳转。自动化没有向生产产品写入测试数据；完整证据见根目录 `DEPLOYMENT_VERIFIED_2026-09-29_PRODUCT_DETAIL.md`。
 
 ## 2026-09-26 最新上线
 
