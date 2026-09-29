@@ -39,6 +39,7 @@ from domains.masterdata._product_images_service import (
 from domains.masterdata._products_service import (
     create_product,
     delete_product,
+    get_product,
     list_image_upload_products,
     list_products,
     update_product,
@@ -127,6 +128,7 @@ __all__ = [
     "update_supplier",
     "delete_supplier",
     # Products (re-exported from _products_service)
+    "get_product",
     "list_products",
     "list_image_upload_products",
     "create_product",

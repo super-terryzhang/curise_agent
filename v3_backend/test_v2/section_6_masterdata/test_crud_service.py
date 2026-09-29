@@ -106,6 +106,38 @@ def test_list_products_returns_total_items_envelope(db):
     assert len(result["items"]) == 2
 
 
+def test_get_product_returns_the_full_serialized_detail(db):
+    country = service.create_country(db, CountryCreate(name="Japan", code="JP"))
+    supplier = service.create_supplier(db, SupplierCreate(name="Takanashi"))
+    created = service.create_product(
+        db,
+        ProductCreate(
+            product_name_en="Cod fillet block",
+            code="SP100028",
+            country_id=country["id"],
+            supplier_id=supplier["id"],
+            price=100,
+            contract_price=150,
+            currency="JPY",
+        ),
+    )
+
+    detail = service.get_product(db, created["id"])
+
+    assert detail["id"] == created["id"]
+    assert detail["country_name"] == "Japan"
+    assert detail["supplier_name"] == "Takanashi"
+    assert detail["profit_margin"] == 33.33
+    assert detail["price_periods"] == created["price_periods"]
+    assert detail["thumbnail_url"] is None
+    assert detail["image_count"] == 0
+
+
+def test_get_product_rejects_an_unknown_id(db):
+    with pytest.raises(service.NotFound, match="产品不存在"):
+        service.get_product(db, 999_999)
+
+
 def test_list_exchange_rates_returns_bare_list(db):
     """`list_exchange_rates` is intentionally a flat list — exchange rate listings
     are small enough that pagination isn't needed. Locking this contract so a

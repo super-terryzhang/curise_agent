@@ -13,7 +13,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from domains.masterdata import _validation, price_history
 from domains.masterdata import repository as repo
-from domains.masterdata.errors import BadRequest, Conflict
+from domains.masterdata.errors import BadRequest, Conflict, NotFound
 from domains.masterdata.models import Product
 from domains.masterdata.price_periods import periods_by_product, sync_compatibility_periods
 from domains.masterdata.schemas import ProductCreate, ProductUpdate
@@ -123,6 +123,13 @@ def list_products(
             for p in products
         ],
     }
+
+
+def get_product(db: Session, product_id: int) -> dict[str, Any]:
+    product = repo.get_product(db, product_id)
+    if product is None:
+        raise NotFound("产品不存在")
+    return serialize(db, product)
 
 
 def list_image_upload_products(

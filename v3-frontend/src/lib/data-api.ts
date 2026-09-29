@@ -264,6 +264,10 @@ export function listProducts(params?: {
   return api<PaginatedResponse<ProductItem>>(`/api/data/products${query ? `?${query}` : ""}`);
 }
 
+export function getProduct(productId: number): Promise<ProductItem> {
+  return api<ProductItem>(`/api/data/products/${productId}`);
+}
+
 export function listImageUploadProducts(params?: {
   search?: string;
   country_id?: number;

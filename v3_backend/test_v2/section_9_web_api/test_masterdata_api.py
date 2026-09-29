@@ -289,6 +289,30 @@ def test_employee_can_read_products(client, auth_tokens):
     assert r.status_code == 200, r.text
 
 
+def test_employee_can_read_one_product_by_id(client, auth_tokens, db):
+    from test_v2.fixtures.helpers import seed_product
+
+    product = seed_product(db, code="DETAIL-1", name="Detail product", price=12.0)
+    headers = {"Authorization": f"Bearer {auth_tokens['access_token']}"}
+
+    response = client.get(f"/api/data/products/{product.id}", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == product.id
+    assert response.json()["code"] == "DETAIL-1"
+    assert "price_periods" in response.json()
+    assert response.json()["image_count"] == 0
+
+
+def test_get_product_by_id_returns_404_for_unknown_product(client, seed_user):
+    headers = _admin_headers(client, seed_user)
+
+    response = client.get("/api/data/products/999999", headers=headers)
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "产品不存在"
+
+
 # ─── fetch exchange rates (external API) ─────────────────────
 
 

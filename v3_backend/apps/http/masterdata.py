@@ -32,6 +32,7 @@ from domains.masterdata.schemas import (
     ProductImageUpdate,
     ProductPricePeriodCreate,
     ProductPricePeriodUpdate,
+    ProductResponse,
     ProductUpdate,
     SupplierCreate,
     SupplierUpdate,
@@ -302,6 +303,14 @@ def list_products(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/products/{product_id}", response_model=ProductResponse)
+def get_product(product_id: int, db: DbDep, _reader: Writer) -> dict[str, Any]:
+    try:
+        return service.get_product(db, product_id)
+    except service.MasterdataError as exc:
+        raise _translate(exc) from exc
 
 
 @router.post("/products", status_code=201)

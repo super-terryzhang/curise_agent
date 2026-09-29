@@ -1,13 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fetchWithAuth } from "./fetch-with-auth";
-import { listProducts } from "./data-api";
+import { getProduct, listProducts } from "./data-api";
 
 vi.mock("./fetch-with-auth", () => ({ fetchWithAuth: vi.fn() }));
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("product list API", () => {
+  it("reads one product directly by stable ID", async () => {
+    vi.mocked(fetchWithAuth).mockResolvedValue(
+      new Response(JSON.stringify({ id: 42, code: "SP100028" }), { status: 200 }),
+    );
+
+    const product = await getProduct(42);
+
+    expect(String(vi.mocked(fetchWithAuth).mock.calls[0][0])).toBe(
+      "http://localhost:8001/api/data/products/42",
+    );
+    expect(product.id).toBe(42);
+    expect(product.code).toBe("SP100028");
+  });
+
   it("sends the selected server-side sort with pagination", async () => {
     vi.mocked(fetchWithAuth).mockResolvedValue(
       new Response(JSON.stringify({ total: 0, items: [] }), { status: 200 }),
