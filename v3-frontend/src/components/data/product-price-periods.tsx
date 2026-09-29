@@ -5,7 +5,6 @@ import { Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -19,7 +18,6 @@ import {
 } from "@/lib/data-api";
 
 interface PanelProps { product: ProductItem; canEdit: boolean; onChanged: () => void }
-interface DialogProps extends PanelProps { onClose: () => void }
 
 const blank = {
   price_type: "purchase" as "purchase" | "selling",
@@ -127,12 +125,4 @@ export function ProductPricePeriodsPanel({ product, canEdit, onChanged }: PanelP
         <Button onClick={() => void save()} disabled={saving}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{editingId ? "保存修改" : "新增区间"}</Button></div>
     </div>}
   </section>;
-}
-
-export function ProductPricePeriodsDialog({ product, canEdit, onClose, onChanged }: DialogProps) {
-  return <Dialog open onOpenChange={open => !open && onClose()}><DialogContent className="max-h-[85vh] max-w-5xl overflow-y-auto">
-    <DialogHeader><DialogTitle>价格区间 · {product.product_name_en}</DialogTitle></DialogHeader>
-    <ProductPricePeriodsPanel product={product} canEdit={canEdit} onChanged={onChanged} />
-    <DialogFooter><Button variant="outline" onClick={onClose}>关闭</Button></DialogFooter>
-  </DialogContent></Dialog>;
 }

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { getProductPriceHistory, restoreProductPrice, type ProductItem,
   type ProductPriceHistory, type ProductPriceEvent, type ProductPriceSnapshot } from "@/lib/data-api";
@@ -34,8 +33,8 @@ function periodText(
   return `${start} 至 ${end}`;
 }
 
-export function ProductPriceHistoryPanel({ product, canRestore, onRestored, onRestoringChange }: {
-  product: ProductItem; canRestore: boolean; onRestored: () => void; onRestoringChange?: (restoring: boolean) => void;
+export function ProductPriceHistoryPanel({ product, canRestore, onRestored }: {
+  product: ProductItem; canRestore: boolean; onRestored: () => void;
 }) {
   const [data, setData] = useState<ProductPriceHistory | null>(null);
   const [page, setPage] = useState(0);
@@ -68,14 +67,14 @@ export function ProductPriceHistoryPanel({ product, canRestore, onRestored, onRe
 
   async function restore() {
     if (!confirmEvent || data?.revision == null) return;
-    setRestoring(true); onRestoringChange?.(true);
+    setRestoring(true);
     try {
       await restoreProductPrice(product.id, confirmEvent.id, data.revision);
       toast.success("价格已恢复，并保留本次恢复记录");
       resetPages(); setRefresh(v => v + 1); onRestored();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "恢复失败，请刷新后核对价格");
-    } finally { setRestoring(false); onRestoringChange?.(false); }
+    } finally { setRestoring(false); }
   }
 
   return <section aria-labelledby="product-price-history-heading" className="space-y-4 rounded-md border bg-background p-5">
@@ -139,16 +138,4 @@ export function ProductPriceHistoryStatus({ loading, error, data }: {
   if (error) return <p role="alert" className="text-destructive">{error}，请刷新重试。</p>;
   if (data && data.items.length === 0) return <p>此筛选范围内没有价格记录。</p>;
   return null;
-}
-
-export function ProductPriceHistoryDialog({ product, canRestore, onClose, onRestored }: {
-  product: ProductItem; canRestore: boolean; onClose: () => void; onRestored: () => void;
-}) {
-  const [restoring, setRestoring] = useState(false);
-  return <Dialog open onOpenChange={open => { if (!open && !restoring) onClose(); }}>
-    <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-      <DialogHeader><DialogTitle>{product.product_name_en || `产品 #${product.id}`} · 价格历史</DialogTitle><DialogDescription>查看这个产品的采购价、卖价及计价条件变化。</DialogDescription></DialogHeader>
-      <ProductPriceHistoryPanel product={product} canRestore={canRestore} onRestored={onRestored} onRestoringChange={setRestoring} />
-    </DialogContent>
-  </Dialog>;
 }

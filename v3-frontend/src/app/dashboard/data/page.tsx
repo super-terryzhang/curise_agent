@@ -3,7 +3,9 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/page-header";
 import { Sparkles } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import { useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { legacyProductDetailHref } from "@/lib/product-detail-route";
 import ProductsTab from "./ProductsTab";
 import SuppliersTab from "./SuppliersTab";
 import CountriesTab from "./CountriesTab";
@@ -15,10 +17,13 @@ import UnitConversionRulesTab from "./UnitConversionRulesTab";
 
 export default function DataPage() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const requestedTab = searchParams.get("tab") || "products";
-  const initialProductId = Number(searchParams.get("product")) || null;
-  const initialAction = searchParams.get("action") === "prices" ? "prices" : searchParams.get("action") === "edit" ? "edit" : null;
   const initialSearch = searchParams.get("search") || "";
+  useEffect(() => {
+    const legacyHref = legacyProductDetailHref(searchParams.get("product"), searchParams.get("action"));
+    if (legacyHref) router.replace(legacyHref);
+  }, [router, searchParams]);
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="shrink-0 px-6 pt-6">
@@ -44,7 +49,7 @@ export default function DataPage() {
         </TabsList>
 
         <TabsContent value="products" className="flex-1 overflow-hidden py-4">
-          <ProductsTab initialProductId={initialProductId} initialAction={initialAction} initialSearch={initialSearch} />
+          <ProductsTab initialSearch={initialSearch} />
         </TabsContent>
         <TabsContent value="suppliers" className="flex-1 overflow-hidden py-4">
           <SuppliersTab />

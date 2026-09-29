@@ -3,6 +3,7 @@ import type {
   OrderIssueResolutionTarget,
   OrderIssueRow,
 } from "./orders-api";
+import { productDetailHref } from "./product-detail-route";
 
 export type OrderIssueFilter =
   | "all"
@@ -65,11 +66,7 @@ export function productResolutionHref(
 ): string | null {
   const product = row.matched_product;
   if (!product?.id || !["product_master", "price_periods"].includes(target)) return null;
-  const params = new URLSearchParams({
-    tab: "products",
-    product: String(product.id),
-    search: product.code || row.product_code || product.product_name_en || "",
-    action: target === "price_periods" ? "prices" : "edit",
-  });
-  return `/dashboard/data?${params.toString()}`;
+  return target === "price_periods"
+    ? productDetailHref(product.id, { tab: "prices" })
+    : productDetailHref(product.id, { tab: "basic", edit: true });
 }

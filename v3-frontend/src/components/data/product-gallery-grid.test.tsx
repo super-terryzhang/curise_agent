@@ -46,10 +46,6 @@ const callbacks = {
   sort: "latest" as const,
   onSortChange: () => undefined,
   onPageChange: () => undefined,
-  onOpenImages: () => undefined,
-  onOpenHistory: () => undefined,
-  onManagePrices: () => undefined,
-  onEdit: () => undefined,
   onToggleStatus: () => undefined,
   onDelete: () => undefined,
 };
@@ -92,6 +88,8 @@ describe("product gallery grid", () => {
     expect(html).toContain("2 / 3");
     expect(html).toContain('aria-label="上一页"');
     expect(html).toContain('aria-label="下一页"');
+    expect(html).toContain('/dashboard/data/products/1?tab=images');
+    expect(html).toContain('/dashboard/data/products/1?tab=prices');
   });
 
   it("shows truthful read-only empty-image, price and effective-state labels", () => {

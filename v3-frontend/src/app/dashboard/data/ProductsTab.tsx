@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table";
-import { ProductPriceHistoryDialog } from "@/components/data/product-price-history";
-import { ProductPricePeriodsDialog } from "@/components/data/product-price-periods";
 import { ProductImageCell } from "@/components/data/product-image-cell";
-import { ProductImagesGallery } from "@/components/data/product-images-gallery";
 import { ProductFormDialog } from "@/components/data/product-form-dialog";
 import { ProductProfitMargin } from "@/components/data/product-profit-margin";
 import {
@@ -38,6 +37,7 @@ import { EmptyState } from "@/components/empty-state";
 import { Loader2, Package, Download, Plus, MoreHorizontal, Search } from "lucide-react";
 import { exportProductPrices } from "@/lib/export-products";
 import { getProductPortFilterParams } from "@/lib/product-filter-query";
+import { productDetailHref } from "@/lib/product-detail-route";
 import { toast } from "sonner";
 import { getUser } from "@/lib/auth";
 import {
@@ -120,12 +120,11 @@ const LIST_PAGE_SIZE = 20;
 const GALLERY_PAGE_SIZE = 24;
 
 interface ProductsTabProps {
-  initialProductId?: number | null;
-  initialAction?: "edit" | "prices" | null;
   initialSearch?: string;
 }
 
-export default function ProductsTab({ initialProductId, initialAction, initialSearch = "" }: ProductsTabProps) {
+export default function ProductsTab({ initialSearch = "" }: ProductsTabProps) {
+  const router = useRouter();
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [totalProducts, setTotalProducts] = useState(0);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
@@ -151,19 +150,10 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
 
   const [searchText, setSearchText] = useState(initialSearch);
   const [debouncedSearch, setDebouncedSearch] = useState(initialSearch);
-  const deepLinkHandled = useRef(false);
   const productRequestRunner = useRef(createLatestRequestRunner()).current;
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState<ProductItem | null>(null);
   const [exporting, setExporting] = useState(false);
-
-  // R5 (2026-06-22): track which product's gallery is open (null = none).
-  // Only ONE gallery dialog ever exists at a time — clicking another
-  // row's thumbnail simply swaps the productId.
-  const [historyProduct, setHistoryProduct] = useState<ProductItem | null>(null);
-  const [periodProduct, setPeriodProduct] = useState<ProductItem | null>(null);
-  const [galleryProduct, setGalleryProduct] = useState<ProductItem | null>(null);
 
   const isWriter = (() => {
     const user = getUser();
@@ -293,24 +283,12 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
   }, [filterCategory, filterSupplier, filterCountry, filterPort, filterStatus, debouncedSearch]);
 
   function openCreate() {
-    setEditing(null);
     setDialogOpen(true);
   }
 
   function openEdit(item: ProductItem) {
-    setEditing(item);
-    setDialogOpen(true);
+    router.push(productDetailHref(item.id, { tab: "basic", edit: true }));
   }
-
-  useEffect(() => {
-    if (deepLinkHandled.current || !initialProductId || !initialAction || loading) return;
-    const target = products.find((product) => product.id === initialProductId);
-    if (!target) return;
-    deepLinkHandled.current = true;
-    if (!isWriter) return;
-    if (initialAction === "prices") setPeriodProduct(target);
-    else openEdit(target);
-  }, [initialAction, initialProductId, isWriter, loading, products]);
 
 
   async function handleToggleStatus(item: ProductItem) {
@@ -336,9 +314,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
 
   const columns: ColumnDef<ProductItem>[] = [
     {
-      // R5 (2026-06-22): primary image thumbnail. Clicking opens the
-      // gallery dialog without navigating away from the table. Placed
-      // first so users can scan the column visually before reading codes.
+      // Primary image thumbnail links to the product's image panel.
       id: "thumbnail",
       header: "图片",
       size: 50,
@@ -347,7 +323,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
           thumbnailUrl={row.original.thumbnail_url}
           imageCount={row.original.image_count}
           productName={row.original.product_name_en}
-          onClick={() => setGalleryProduct(row.original)}
+          onClick={() => router.push(productDetailHref(row.original.id, { tab: "images" }))}
         />
       ),
     },
@@ -365,9 +341,9 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
       accessorKey: "product_name_en",
       header: "英文品名",
       cell: ({ row }) => (
-        <span className="font-medium max-w-[200px] truncate block">
+        <Link href={productDetailHref(row.original.id)} className="font-medium max-w-[200px] truncate block hover:underline">
           {row.original.product_name_en || "-"}
-        </span>
+        </Link>
       ),
     },
     {
@@ -550,9 +526,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
       header: "价格记录",
       size: 100,
       cell: ({ row }) => (
-        <Button variant="ghost" size="sm" className="text-xs" onClick={() => setHistoryProduct(row.original)}>
-          价格历史
-        </Button>
+        <Button asChild variant="ghost" size="sm" className="text-xs"><Link href={productDetailHref(row.original.id, { tab: "prices" })}>价格历史</Link></Button>
       ),
     },
     ...(isWriter
@@ -569,12 +543,8 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setPeriodProduct(row.original)}>
-                    管理价格区间
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => openEdit(row.original)}>
-                    编辑
-                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild><Link href={productDetailHref(row.original.id, { tab: "prices" })}>管理价格区间</Link></DropdownMenuItem>
+                  <DropdownMenuItem asChild><Link href={productDetailHref(row.original.id, { tab: "basic", edit: true })}>编辑</Link></DropdownMenuItem>
                   <DropdownMenuItem onClick={() => handleToggleStatus(row.original)}>
                     {row.original.status ? "停用" : "启用"}
                   </DropdownMenuItem>
@@ -785,10 +755,6 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
                   setCurrentPage(pageIndex);
                   fetchProducts(pageIndex, GALLERY_PAGE_SIZE);
                 }}
-                onOpenImages={setGalleryProduct}
-                onOpenHistory={setHistoryProduct}
-                onManagePrices={setPeriodProduct}
-                onEdit={openEdit}
                 onToggleStatus={(product) => void handleToggleStatus(product)}
                 onDelete={(product) => void handleDelete(product)}
               />
@@ -799,7 +765,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
 
       <ProductFormDialog
         open={dialogOpen}
-        product={editing}
+        product={null}
         categories={categories}
         suppliers={suppliers}
         countries={countries}
@@ -808,36 +774,6 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
         onSaved={() => reload()}
         onDuplicate={openEdit}
       />
-
-      {/* R5 (2026-06-22): per-product image gallery. Lazy — only mounted
-          when galleryProduct is set, so cells with no clicks never pay
-          for the dialog. Re-fetches the product list on changes so the
-          row thumbnail stays in sync. */}
-      {historyProduct && (
-        <ProductPriceHistoryDialog key={historyProduct.id} product={historyProduct} canRestore={isWriter}
-          onClose={() => setHistoryProduct(null)} onRestored={() => fetchProducts(currentPage)} />
-      )}
-      {periodProduct && (
-        <ProductPricePeriodsDialog
-          key={periodProduct.id}
-          product={periodProduct}
-          canEdit={isWriter}
-          onClose={() => setPeriodProduct(null)}
-          onChanged={() => fetchProducts(currentPage)}
-        />
-      )}
-      {galleryProduct && (
-        <ProductImagesGallery
-          productId={galleryProduct.id}
-          productName={galleryProduct.product_name_en ?? `#${galleryProduct.id}`}
-          open={galleryProduct !== null}
-          onOpenChange={(open) => {
-            if (!open) setGalleryProduct(null);
-          }}
-          onImagesChanged={() => fetchProducts(currentPage)}
-          readOnly={!isWriter}
-        />
-      )}
     </>
   );
 }

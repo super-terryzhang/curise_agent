@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Upload, X, ZoomIn } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
   deleteProductImage,
@@ -20,10 +20,6 @@ interface PanelProps {
   readOnly?: boolean;
 }
 
-interface GalleryProps extends PanelProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}
 
 export function ProductImageGrid({ images, readOnly, onView, onDelete }: {
   images: ProductImage[];
@@ -137,13 +133,6 @@ export function ProductImagesPanel({ productId, productName, onImagesChanged, re
 
     {lightboxIndex !== null && images[lightboxIndex] && <Lightbox images={images} startIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} />}
   </section>;
-}
-
-export function ProductImagesGallery({ productId, productName, open, onOpenChange, onImagesChanged, readOnly = false }: GalleryProps) {
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
-    <DialogHeader><DialogTitle>{productName} · 图片</DialogTitle></DialogHeader>
-    {open && <ProductImagesPanel productId={productId} productName={productName} onImagesChanged={onImagesChanged} readOnly={readOnly} />}
-  </DialogContent></Dialog>;
 }
 
 function Lightbox({ images, startIndex, onClose }: { images: ProductImage[]; startIndex: number; onClose: () => void }) {

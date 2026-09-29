@@ -99,10 +99,10 @@ describe("order issue presentation model", () => {
       },
     });
     expect(productResolutionHref(current, "product_master")).toBe(
-      "/dashboard/data?tab=products&product=42&search=MASTER-42&action=edit",
+      "/dashboard/data/products/42?tab=basic&edit=1",
     );
     expect(productResolutionHref(current, "price_periods")).toBe(
-      "/dashboard/data?tab=products&product=42&search=MASTER-42&action=prices",
+      "/dashboard/data/products/42?tab=prices",
     );
     expect(productResolutionHref(row({ matched_product: undefined }), "product_master")).toBeNull();
   });

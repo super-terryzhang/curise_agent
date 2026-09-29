@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   ChevronLeft,
   ChevronRight,
@@ -20,6 +21,7 @@ import {
 import { ProductProfitMargin } from "@/components/data/product-profit-margin";
 import type { ProductItem } from "@/lib/data-api";
 import type { ProductSort } from "@/lib/data-api";
+import { productDetailHref } from "@/lib/product-detail-route";
 
 export type ProductView = "list" | "gallery";
 
@@ -113,10 +115,6 @@ interface ProductGalleryGridProps {
   sort: ProductSort;
   onSortChange: (sort: ProductSort) => void;
   onPageChange: (pageIndex: number) => void;
-  onOpenImages: (product: ProductItem) => void;
-  onOpenHistory: (product: ProductItem) => void;
-  onManagePrices: (product: ProductItem) => void;
-  onEdit: (product: ProductItem) => void;
   onToggleStatus: (product: ProductItem) => void;
   onDelete: (product: ProductItem) => void;
 }
@@ -130,10 +128,6 @@ export function ProductGalleryGrid({
   sort,
   onSortChange,
   onPageChange,
-  onOpenImages,
-  onOpenHistory,
-  onManagePrices,
-  onEdit,
   onToggleStatus,
   onDelete,
 }: ProductGalleryGridProps) {
@@ -168,15 +162,14 @@ export function ProductGalleryGrid({
               key={product.id}
               className="group overflow-hidden rounded-lg border bg-background shadow-xs transition-shadow hover:shadow-sm"
             >
-              <button
-                type="button"
+              <Link
+                href={productDetailHref(product.id, { tab: "images" })}
                 aria-label={
                   product.thumbnail_url || !isWriter
                     ? `查看 ${name} 图片`
                     : `为 ${name} 上传图片`
                 }
                 className="relative flex h-40 w-full items-center justify-center overflow-hidden bg-muted/30"
-                onClick={() => onOpenImages(product)}
               >
                 {product.thumbnail_url ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -201,13 +194,11 @@ export function ProductGalleryGrid({
                     {product.image_count} 张
                   </span>
                 ) : null}
-              </button>
+              </Link>
 
               <div className="space-y-2 p-3">
                 <div className="min-w-0">
-                  <h3 className="truncate text-sm font-medium" title={name}>
-                    {name}
-                  </h3>
+                  <h3 className="truncate text-sm font-medium" title={name}><Link className="hover:underline" href={productDetailHref(product.id)}>{name}</Link></h3>
                   {product.product_name_jp ? (
                     <p
                       className="mt-0.5 truncate text-xs text-muted-foreground"
@@ -222,7 +213,7 @@ export function ProductGalleryGrid({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <div className="min-w-0 flex-1">
+                  <Link href={productDetailHref(product.id, { tab: "prices" })} className="min-w-0 flex-1 hover:underline">
                     <div className="truncate text-sm font-semibold tabular-nums">
                       {sellingPrice(product)}
                     </div>
@@ -232,7 +223,7 @@ export function ProductGalleryGrid({
                         emptyLabel="利润率未配置"
                       />
                     </div>
-                  </div>
+                  </Link>
                   <ProductEffectiveBadge product={product} />
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -246,19 +237,11 @@ export function ProductGalleryGrid({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem onSelect={() => onOpenHistory(product)}>
-                        价格历史
-                      </DropdownMenuItem>
+                      <DropdownMenuItem asChild><Link href={productDetailHref(product.id, { tab: "prices" })}>价格历史</Link></DropdownMenuItem>
                       {isWriter ? (
                         <>
-                          <DropdownMenuItem
-                            onSelect={() => onManagePrices(product)}
-                          >
-                            管理价格区间
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onSelect={() => onEdit(product)}>
-                            编辑
-                          </DropdownMenuItem>
+                          <DropdownMenuItem asChild><Link href={productDetailHref(product.id, { tab: "prices" })}>管理价格区间</Link></DropdownMenuItem>
+                          <DropdownMenuItem asChild><Link href={productDetailHref(product.id, { tab: "basic", edit: true })}>编辑</Link></DropdownMenuItem>
                           <DropdownMenuItem
                             onSelect={() => onToggleStatus(product)}
                           >

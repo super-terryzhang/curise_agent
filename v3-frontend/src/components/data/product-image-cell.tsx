@@ -4,8 +4,7 @@
  * Cell-shaped thumbnail with optional "+N" overlay (R5 2026-06-22).
  *
  * Used in the ProductsTab table row. Stays at 32x32 to keep the row
- * compact; clicking opens the gallery dialog (mounted by the parent so
- * the cell stays cheap — no dialog is rendered when nothing is open).
+ * compact; clicking follows the parent-provided product image-page action.
  *
  * Empty state (product has zero images) renders a muted icon
  * placeholder. This is intentional — showing nothing would shift the
@@ -57,9 +56,7 @@ export function ProductImageCell({
     <button
       type="button"
       onClick={(e) => {
-        // Prevent the row's onClick (which navigates to detail) from
-        // also firing — clicking the cell thumbnail means "preview the
-        // gallery", not "go to detail".
+        // Prevent a surrounding row action from also firing.
         e.stopPropagation();
         onClick?.(e);
       }}

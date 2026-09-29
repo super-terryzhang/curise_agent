@@ -147,7 +147,7 @@ export function RuleDetailsContent({ rule }: { rule: UnitConversionRuleItem }) {
           <DetailRow label="适用范围">{scopeLabels[rule.scope_type]}</DetailRow>
           <DetailRow label="关联商品">
             {rule.product_id ? (
-              <Link className="text-primary underline-offset-2 hover:underline" href={`/dashboard/data?tab=products&product=${rule.product_id}`}>
+              <Link className="text-primary underline-offset-2 hover:underline" href={`/dashboard/data/products/${rule.product_id}?tab=basic`}>
                 商品 #{rule.product_id}
               </Link>
             ) : "所有完全相同的单位组合"}
