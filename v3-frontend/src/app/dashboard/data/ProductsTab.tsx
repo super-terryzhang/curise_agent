@@ -7,10 +7,8 @@ import { ProductPriceHistoryDialog } from "@/components/data/product-price-histo
 import { ProductPricePeriodsDialog } from "@/components/data/product-price-periods";
 import { ProductImageCell } from "@/components/data/product-image-cell";
 import { ProductImagesGallery } from "@/components/data/product-images-gallery";
-import {
-  calculateProductProfitMargin,
-  ProductProfitMargin,
-} from "@/components/data/product-profit-margin";
+import { ProductFormDialog } from "@/components/data/product-form-dialog";
+import { ProductProfitMargin } from "@/components/data/product-profit-margin";
 import {
   ProductGalleryGrid,
   ProductViewToggle,
@@ -23,14 +21,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,7 +46,6 @@ import {
   listSuppliers,
   listCountries,
   listPorts,
-  createProduct,
   updateProduct,
   deleteProduct,
   type ProductItem,
@@ -126,41 +115,6 @@ function PricePeriodSummary({
   );
 }
 
-interface ProductForm {
-  product_name_en: string;
-  product_name_jp: string;
-  code: string;
-  brand: string;
-  country_id: string;
-  category_id: string;
-  supplier_id: string;
-  port_id: string;
-  price: string;
-  // Contract-bound selling price (UI label: 卖价). Stored as string here
-  // because the input is `<Input type="number">`; converted to float
-  // before sending to the API. Empty string = NULL on save.
-  contract_price: string;
-  purchase_price_effective_from: string;
-  purchase_price_effective_to: string;
-  selling_price_effective_from: string;
-  selling_price_effective_to: string;
-  currency: string;
-  unit: string;
-  unit_size: string;
-  pack_size: string;
-  country_of_origin: string;
-  effective_from: string;
-  effective_to: string;
-}
-
-const emptyForm: ProductForm = {
-  product_name_en: "", product_name_jp: "", code: "", brand: "",
-  country_id: "", category_id: "", supplier_id: "", port_id: "",
-  price: "", contract_price: "", purchase_price_effective_from: "",
-  purchase_price_effective_to: "", selling_price_effective_from: "",
-  selling_price_effective_to: "", currency: "", unit: "", unit_size: "",
-  pack_size: "", country_of_origin: "", effective_from: "", effective_to: "",
-};
 
 const LIST_PAGE_SIZE = 20;
 const GALLERY_PAGE_SIZE = 24;
@@ -202,9 +156,7 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ProductItem | null>(null);
-  const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [form, setForm] = useState<ProductForm>(emptyForm);
 
   // R5 (2026-06-22): track which product's gallery is open (null = none).
   // Only ONE gallery dialog ever exists at a time — clicking another
@@ -342,35 +294,11 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
 
   function openCreate() {
     setEditing(null);
-    setForm(emptyForm);
     setDialogOpen(true);
   }
 
   function openEdit(item: ProductItem) {
     setEditing(item);
-    setForm({
-      product_name_en: item.product_name_en || "",
-      product_name_jp: item.product_name_jp || "",
-      code: item.code || "",
-      brand: item.brand || "",
-      country_id: item.country_id ? String(item.country_id) : "",
-      category_id: item.category_id ? String(item.category_id) : "",
-      supplier_id: item.supplier_id ? String(item.supplier_id) : "",
-      port_id: item.port_id ? String(item.port_id) : "",
-      price: item.price != null ? String(item.price) : "",
-      contract_price: item.contract_price != null ? String(item.contract_price) : "",
-      purchase_price_effective_from: item.purchase_price_effective_from?.slice(0, 10) || "",
-      purchase_price_effective_to: item.purchase_price_effective_to?.slice(0, 10) || "",
-      selling_price_effective_from: item.selling_price_effective_from?.slice(0, 10) || "",
-      selling_price_effective_to: item.selling_price_effective_to?.slice(0, 10) || "",
-      currency: item.currency || "",
-      unit: item.unit || "",
-      unit_size: item.unit_size || "",
-      pack_size: item.pack_size || "",
-      country_of_origin: item.country_of_origin || "",
-      effective_from: item.effective_from?.slice(0, 10) || "",
-      effective_to: item.effective_to?.slice(0, 10) || "",
-    });
     setDialogOpen(true);
   }
 
@@ -384,96 +312,6 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
     else openEdit(target);
   }, [initialAction, initialProductId, isWriter, loading, products]);
 
-  function updateForm(key: keyof ProductForm, value: string) {
-    setForm((prev) => ({ ...prev, [key]: value }));
-  }
-
-  async function handleSave() {
-    if (!form.product_name_en.trim()) {
-      toast.error("英文品名不能为空");
-      return;
-    }
-    for (const [start, end, label] of [
-      [form.purchase_price_effective_from, form.purchase_price_effective_to, "采购价"],
-      [form.selling_price_effective_from, form.selling_price_effective_to, "卖价"],
-    ] as const) {
-      if (start && end && start > end) {
-        toast.error(`${label}有效开始日期不能晚于结束日期`);
-        return;
-      }
-    }
-    setSaving(true);
-    try {
-      // When editing, send null for cleared FK fields so backend clears them.
-      // When creating, send undefined (stripped by JSON.stringify) to use defaults.
-      const cleared = editing ? null : undefined;
-      const payload: Record<string, unknown> = {
-        product_name_en: form.product_name_en.trim(),
-        product_name_jp: form.product_name_jp.trim() || cleared,
-        code: form.code.trim() || cleared,
-        brand: form.brand.trim() || cleared,
-        country_id: form.country_id ? Number(form.country_id) : cleared,
-        category_id: form.category_id ? Number(form.category_id) : cleared,
-        supplier_id: form.supplier_id ? Number(form.supplier_id) : cleared,
-        port_id: form.port_id ? Number(form.port_id) : cleared,
-        price: form.price ? Number(form.price) : cleared,
-        // contract_price: empty string → null on edit (clear the field),
-        // undefined on create (DB default = NULL). 0 is a valid value
-        // so we explicitly check for empty-string, not falsy.
-        contract_price: form.contract_price === "" ? cleared : Number(form.contract_price),
-        purchase_price_effective_from: form.purchase_price_effective_from || cleared,
-        purchase_price_effective_to: form.purchase_price_effective_to || cleared,
-        selling_price_effective_from: form.selling_price_effective_from || cleared,
-        selling_price_effective_to: form.selling_price_effective_to || cleared,
-        currency: form.currency.trim() || cleared,
-        unit: form.unit.trim() || cleared,
-        unit_size: form.unit_size.trim() || cleared,
-        pack_size: form.pack_size.trim() || cleared,
-        country_of_origin: form.country_of_origin.trim() || cleared,
-        effective_from: form.effective_from || cleared,
-        effective_to: form.effective_to || cleared,
-      };
-      if (editing) {
-        await updateProduct(editing.id, { ...payload, expected_revision: editing.revision });
-        toast.success("更新成功");
-      } else {
-        await createProduct(payload as unknown as Parameters<typeof createProduct>[0]);
-        toast.success("创建成功");
-      }
-      setDialogOpen(false);
-      reload();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "操作失败";
-      if (msg.includes("已存在")) {
-        // Try to find existing product and open it for editing
-        try {
-          const { items } = await listProducts({
-            search: form.product_name_en.trim(),
-            limit: 10,
-          });
-          const countryId = form.country_id ? Number(form.country_id) : null;
-          const portId = form.port_id ? Number(form.port_id) : null;
-          const existing = items.find(
-            (p) =>
-              p.product_name_en === form.product_name_en.trim() &&
-              p.country_id === countryId &&
-              p.port_id === portId
-          );
-          if (existing) {
-            setDialogOpen(false);
-            toast.info("该产品已存在，已为您打开编辑");
-            openEdit(existing);
-            return;
-          }
-        } catch {
-          // fallback to just showing the error
-        }
-      }
-      toast.error(msg);
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function handleToggleStatus(item: ProductItem) {
     try {
@@ -959,275 +797,17 @@ export default function ProductsTab({ initialProductId, initialAction, initialSe
         </div>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editing ? "编辑产品" : "新增产品"}</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            {/* Row 1: Names */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>英文品名 *</Label>
-                <Input
-                  value={form.product_name_en}
-                  onChange={(e) => updateForm("product_name_en", e.target.value)}
-                  placeholder="Product name in English"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>日文品名</Label>
-                <Input
-                  value={form.product_name_jp}
-                  onChange={(e) => updateForm("product_name_jp", e.target.value)}
-                  placeholder="日本語の商品名"
-                />
-              </div>
-            </div>
-
-            {/* Row 2: Code + Brand */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>商品代码</Label>
-                <Input
-                  value={form.code}
-                  onChange={(e) => updateForm("code", e.target.value)}
-                  placeholder="例如：BEEF-001"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>品牌</Label>
-                <Input
-                  value={form.brand}
-                  onChange={(e) => updateForm("brand", e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Row 3: FK Selects */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>国家</Label>
-                <Select
-                  value={form.country_id}
-                  onValueChange={(v) => updateForm("country_id", v === "__none__" ? "" : v)}
-                >
-                  <SelectTrigger><SelectValue placeholder="选择国家" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">无</SelectItem>
-                    {countries.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label>类别</Label>
-                <Select
-                  value={form.category_id}
-                  onValueChange={(v) => updateForm("category_id", v === "__none__" ? "" : v)}
-                >
-                  <SelectTrigger><SelectValue placeholder="选择类别" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">无</SelectItem>
-                    {categories.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>供应商</Label>
-                <Select
-                  value={form.supplier_id}
-                  onValueChange={(v) => updateForm("supplier_id", v === "__none__" ? "" : v)}
-                >
-                  <SelectTrigger><SelectValue placeholder="选择供应商" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">无</SelectItem>
-                    {suppliers.map((s) => (
-                      <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label>港口</Label>
-                <Select
-                  value={form.port_id}
-                  onValueChange={(v) => updateForm("port_id", v === "__none__" ? "" : v)}
-                >
-                  <SelectTrigger><SelectValue placeholder="选择港口" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">无</SelectItem>
-                    {ports.map((p) => (
-                      <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {/* Row 4: Purchase price + Selling price + derived margin + Currency */}
-            <div className="grid grid-cols-4 gap-4">
-              <div className="grid gap-2">
-                <Label>采购价</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={form.price}
-                  onChange={(e) => updateForm("price", e.target.value)}
-                  placeholder="0.00"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>
-                  卖价
-                  <span className="ml-1 text-[10px] font-normal text-muted-foreground">
-                    (财务对比基线)
-                  </span>
-                </Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={form.contract_price}
-                  onChange={(e) => updateForm("contract_price", e.target.value)}
-                  placeholder="0.00"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>利润率</Label>
-                <div className="flex h-9 items-center rounded-md border bg-muted/30 px-3 text-sm">
-                  <ProductProfitMargin
-                    value={calculateProductProfitMargin(
-                      form.price,
-                      form.contract_price,
-                    )}
-                  />
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <Label>币种</Label>
-                <Input
-                  value={form.currency}
-                  onChange={(e) => updateForm("currency", e.target.value)}
-                  placeholder="例如：AUD"
-                />
-              </div>
-            </div>
-
-            {/* Row 5: Purchase price period */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>采购价有效开始日期</Label>
-                <Input
-                  type="date"
-                  value={form.purchase_price_effective_from}
-                  onChange={(e) => updateForm("purchase_price_effective_from", e.target.value)}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>采购价有效结束日期</Label>
-                <Input
-                  type="date"
-                  value={form.purchase_price_effective_to}
-                  onChange={(e) => updateForm("purchase_price_effective_to", e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Row 6: Selling price period */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>卖价有效开始日期</Label>
-                <Input
-                  type="date"
-                  value={form.selling_price_effective_from}
-                  onChange={(e) => updateForm("selling_price_effective_from", e.target.value)}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>卖价有效结束日期</Label>
-                <Input
-                  type="date"
-                  value={form.selling_price_effective_to}
-                  onChange={(e) => updateForm("selling_price_effective_to", e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Row 7: Unit specs */}
-            <div className="grid grid-cols-3 gap-4">
-              <div className="grid gap-2">
-                <Label>单位</Label>
-                <Input
-                  value={form.unit}
-                  onChange={(e) => updateForm("unit", e.target.value)}
-                  placeholder="例如：KG"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>单位规格</Label>
-                <Input
-                  value={form.unit_size}
-                  onChange={(e) => updateForm("unit_size", e.target.value)}
-                  placeholder="例如：10kg"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>包装规格</Label>
-                <Input
-                  value={form.pack_size}
-                  onChange={(e) => updateForm("pack_size", e.target.value)}
-                  placeholder="例如：6-10ct/10kg"
-                />
-              </div>
-            </div>
-
-            {/* Row 8: Origin */}
-            <div className="grid gap-2">
-              <Label>原产地</Label>
-              <Input
-                value={form.country_of_origin}
-                onChange={(e) => updateForm("country_of_origin", e.target.value)}
-                placeholder="例如：Australia"
-              />
-            </div>
-
-            {/* Row 9: Product availability dates */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>产品有效开始日期</Label>
-                <Input
-                  type="date"
-                  value={form.effective_from}
-                  onChange={(e) => updateForm("effective_from", e.target.value)}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>产品有效结束日期</Label>
-                <Input
-                  type="date"
-                  value={form.effective_to}
-                  onChange={(e) => updateForm("effective_to", e.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button>
-            <Button onClick={handleSave} disabled={saving}>
-              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {editing ? "保存" : "创建"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ProductFormDialog
+        open={dialogOpen}
+        product={editing}
+        categories={categories}
+        suppliers={suppliers}
+        countries={countries}
+        ports={ports}
+        onOpenChange={setDialogOpen}
+        onSaved={() => reload()}
+        onDuplicate={openEdit}
+      />
 
       {/* R5 (2026-06-22): per-product image gallery. Lazy — only mounted
           when galleryProduct is set, so cells with no clicks never pay
