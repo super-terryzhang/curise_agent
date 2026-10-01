@@ -48,15 +48,9 @@ export interface ProductItem {
   category_id: number | null;
   supplier_id: number | null;
   port_id: number | null;
-  effective_from: string | null;
-  effective_to: string | null;
   /**
-   * Computed availability: `status AND (effective_to is null OR
-   * effective_to >= today)`. The UI's StatusBadge prefers this over
-   * `status` so expired products show as 无效 even though `status` is
-   * still True (semantics: `status` = manual switch, `is_effective` =
-   * real-world usability). Optional for backward compat with pre-v43
-   * backends that don't compute this server-side.
+   * Compatibility projection of the product's active status. Optional for
+   * backward compatibility with older backends.
    */
   is_effective?: boolean | null;
 }
@@ -423,8 +417,6 @@ export interface ProductCreateData {
   country_of_origin?: string | null;
   brand?: string | null;
   currency?: string | null;
-  effective_from?: string | null;
-  effective_to?: string | null;
   status?: boolean;
 }
 

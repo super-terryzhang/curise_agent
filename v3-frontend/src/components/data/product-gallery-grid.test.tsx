@@ -36,8 +36,6 @@ const product = (
   category_id: 2,
   supplier_id: 3,
   port_id: 4,
-  effective_from: null,
-  effective_to: null,
   is_effective: true,
   ...overrides,
 });

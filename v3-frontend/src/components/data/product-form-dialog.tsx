@@ -56,8 +56,6 @@ export interface ProductForm {
   unit_size: string;
   pack_size: string;
   country_of_origin: string;
-  effective_from: string;
-  effective_to: string;
 }
 
 export const emptyProductForm: ProductForm = {
@@ -80,8 +78,6 @@ export const emptyProductForm: ProductForm = {
   unit_size: "",
   pack_size: "",
   country_of_origin: "",
-  effective_from: "",
-  effective_to: "",
 };
 
 function dateValue(value: string | null | undefined) {
@@ -109,8 +105,6 @@ export function productToForm(product: ProductItem): ProductForm {
     unit_size: product.unit_size || "",
     pack_size: product.pack_size || "",
     country_of_origin: product.country_of_origin || "",
-    effective_from: dateValue(product.effective_from),
-    effective_to: dateValue(product.effective_to),
   };
 }
 
@@ -158,8 +152,6 @@ export function productFormPayload(
     unit_size: form.unit_size.trim() || cleared,
     pack_size: form.pack_size.trim() || cleared,
     country_of_origin: form.country_of_origin.trim() || cleared,
-    effective_from: form.effective_from || cleared,
-    effective_to: form.effective_to || cleared,
     ...(product ? { expected_revision: product.revision } : {}),
   };
   return payload;
@@ -292,10 +284,6 @@ export function ProductFormDialog({
             <FormInput label="包装规格" value={form.pack_size} onChange={(value) => updateForm("pack_size", value)} placeholder="例如：6-10ct/10kg" />
           </div>
           <FormInput label="原产地" value={form.country_of_origin} onChange={(value) => updateForm("country_of_origin", value)} placeholder="例如：Australia" />
-          <div className="grid grid-cols-2 gap-4">
-            <FormInput label="产品有效开始日期" type="date" value={form.effective_from} onChange={(value) => updateForm("effective_from", value)} />
-            <FormInput label="产品有效结束日期" type="date" value={form.effective_to} onChange={(value) => updateForm("effective_to", value)} />
-          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button>

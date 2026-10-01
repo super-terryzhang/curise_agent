@@ -61,9 +61,7 @@ function StatusBadge({
   isEffective,
 }: {
   status: boolean | null;
-  // v43+: prefer the server-computed availability so expired products
-  // (effective_to < today) show as 无效 even though `status` is still
-  // True. Pre-v43 backends don't return this; fall back to `status`.
+  // Prefer the server compatibility projection; fall back to status.
   isEffective?: boolean | null;
 }) {
   const effective =
@@ -484,33 +482,6 @@ export default function ProductsTab({ initialSearch = "" }: ProductsTabProps) {
       ),
     },
     {
-      accessorKey: "effective_from",
-      header: "产品有效开始",
-      size: 110,
-      cell: ({ row }) => {
-        const raw = row.original.effective_from;
-        return (
-          <span className="font-mono text-xs text-muted-foreground">
-            {raw ? raw.slice(0, 10) : "-"}
-          </span>
-        );
-      },
-    },
-    {
-      accessorKey: "effective_to",
-      header: "产品有效结束",
-      size: 110,
-      cell: ({ row }) => {
-        // ISO datetime → YYYY-MM-DD. NULL = no expiry = blank dash.
-        const raw = row.original.effective_to;
-        return (
-          <span className="font-mono text-xs text-muted-foreground">
-            {raw ? raw.slice(0, 10) : "-"}
-          </span>
-        );
-      },
-    },
-    {
       accessorKey: "status",
       header: "状态",
       size: 70,
@@ -722,7 +693,7 @@ export default function ProductsTab({ initialSearch = "" }: ProductsTabProps) {
           // Default view keeps the table readable on a laptop. The R7
           // financial column `contract_price` IS visible by default —
           // that's why we added it in the first place. Lower-frequency
-          // attributes (港口/品牌/原产地/单位规格/effective_from) are
+          // attributes (港口/品牌/原产地/单位规格) are
           // hidden by default and toggled via the "列" button.
           defaultHiddenColumns={[
             "product_name_jp",
@@ -730,7 +701,6 @@ export default function ProductsTab({ initialSearch = "" }: ProductsTabProps) {
             "brand",
             "country_of_origin",
             "unit_size",
-            "effective_from",
           ]}
           visibilityStorageKey="v3.data.products.cols"
         />
