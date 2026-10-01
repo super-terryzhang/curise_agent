@@ -1017,7 +1017,7 @@ def preview_changes(
 #       the same value as DB (action=unchanged, not "missing") — agent
 #       had to GUESS because preview hid this state.
 #   (b) Preview never surfaced changes to product_name_jp / brand /
-#       country_id / supplier_id / effective_from etc. — 11 fields were
+#       country_id / supplier_id / price-period dates etc. — 11 fields were
 #       invisible. User confirmed commits without knowing what would
 #       actually change.
 #
@@ -1693,9 +1693,9 @@ def inspect_row(
 #
 # Format quirks established by sampling real changelog data:
 #   - `_log()` calls `str(old)`. For Decimal price → `"67.0"`. For int FK
-#     → `"15"`. For naive datetime → `"2026-03-01 00:00:00"` BUT for
-#     tz-aware datetime (which Postgres returns for `effective_from` even
-#     though the column is TIMESTAMP WITHOUT TZ) → `"2026-03-01 00:00:00+00:00"`.
+#     → `"15"`. For naive datetime → `"2026-03-01 00:00:00"`; older
+#     changelog rows can also contain an aware form such as
+#     `"2026-03-01 00:00:00+00:00"`.
 #     Python 3.11's `datetime.fromisoformat` handles BOTH; we strip
 #     `tzinfo` so the assigned value matches the column (naive).
 #   - `_log()` calls `str(None)` and stores literal `"None"` — NO. Look

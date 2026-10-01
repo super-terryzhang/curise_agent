@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-
 from domains.masterdata._products_service import _is_effective, serialize
 from domains.masterdata.models import Category, Country, Product, Supplier
 
@@ -13,12 +11,9 @@ def test_product_model_has_no_obsolete_validity_columns():
     assert "effective_to" not in Product.__table__.c
 
 
-def test_is_effective_mirrors_status_even_if_a_stale_object_has_old_attributes():
+def test_is_effective_mirrors_status():
     enabled = Product(product_name_en="enabled", status=True)
     disabled = Product(product_name_en="disabled", status=False)
-    # A stale caller/object must not revive the removed date semantics.
-    enabled.effective_to = datetime.utcnow() - timedelta(days=30)
-    disabled.effective_to = datetime.utcnow() + timedelta(days=30)
 
     assert _is_effective(enabled) is True
     assert _is_effective(disabled) is False

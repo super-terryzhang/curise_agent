@@ -282,9 +282,8 @@ def list_products(
     is_effective: bool | None = Query(
         None,
         description=(
-            "True = only 有效 products (status AND (effective_to IS NULL OR "
-            "effective_to >= today)); False = only 无效 (manual disable OR "
-            "expired); omit = all."
+            "True = only 已启用 products; False = only 已停用 products; "
+            "omit = all."
         ),
     ),
     sort: Literal["latest", "name_asc", "name_desc"] = Query("latest"),
