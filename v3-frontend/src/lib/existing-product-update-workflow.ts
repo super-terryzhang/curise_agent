@@ -27,6 +27,7 @@ export type ExistingProductUpdateAction =
   | { type: "continue_scope" }
   | { type: "go_back"; stage: ExistingProductUpdateStage }
   | { type: "upload_started" }
+  | { type: "validation_request_failed"; error: string; batch?: WorkflowBatch | null }
   | { type: "validation_failed"; batch: WorkflowBatch; rows: WorkflowRow[] }
   | { type: "validation_succeeded"; batch: WorkflowBatch; rows: WorkflowRow[] }
   | { type: "commit_failed"; error: string }
@@ -81,6 +82,13 @@ export function existingProductUpdateReducer(
       return { ...state, stage: action.stage, error: null };
     case "upload_started":
       return { ...state, stage: 4, rows: [], batch: null, result: null, completed: false, error: null };
+    case "validation_request_failed":
+      return {
+        ...state,
+        stage: 4,
+        batch: action.batch ?? state.batch,
+        error: action.error,
+      };
     case "validation_failed":
       return { ...state, stage: 4, batch: action.batch, rows: action.rows, error: null };
     case "validation_succeeded":

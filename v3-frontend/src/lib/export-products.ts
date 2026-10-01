@@ -70,7 +70,7 @@ export async function buildProductWorkbook(
       : [...identity, ...blankProductFields, null, period.id, null, null, null, period.amount, excelDate(period.effective_from), excelDate(period.effective_to), period.currency || p.currency]);
     return [productRow, ...periodRows];
   });
-  const sheet = XLSX.utils.aoa_to_sheet([PRODUCT_WORKBOOK_HEADERS, ...rows]);
+  const sheet = XLSX.utils.aoa_to_sheet([[...PRODUCT_WORKBOOK_HEADERS], ...rows]);
   sheet["!cols"] = [12, 14, 32, 18, 20, 20, 24, 18, 18, 22, 12, 16, 18, 22, 22, 20, 16, 18, 18, 16, 18, 18, 12]
     .map((wch, index) => ({
       wch,

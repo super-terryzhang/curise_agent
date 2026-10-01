@@ -87,6 +87,17 @@ describe("existing product update workflow", () => {
     expect(valid.error).toBeNull();
   });
 
+  it("keeps an upload or validation request failure visible in stage four", () => {
+    const state = existingProductUpdateReducer(initialExistingProductUpdateState(), {
+      type: "validation_request_failed",
+      batch: batch(false),
+      error: "检查服务暂时不可用",
+    });
+    expect(state.stage).toBe(4);
+    expect(state.batch?.id).toBe(8);
+    expect(state.error).toBe("检查服务暂时不可用");
+  });
+
   it("blocks rows classified as new products in the dedicated update flow", () => {
     const state = existingProductUpdateReducer(initialExistingProductUpdateState(), {
       type: "validation_succeeded",
