@@ -101,6 +101,22 @@ export function existingProductUpdateReducer(
           error: "文件包含新增产品，请改用“产品数据上传”处理新增产品",
         };
       }
+      {
+        const scopeError = updateBoundaryError(
+          action.rows,
+          new Set(Object.keys(state.selectedProducts).map(Number)),
+          state.scope,
+        );
+        if (scopeError) {
+          return {
+            ...state,
+            stage: 4,
+            batch: action.batch,
+            rows: action.rows,
+            error: scopeError,
+          };
+        }
+      }
       return { ...state, stage: 5, batch: action.batch, rows: action.rows, error: null };
     case "commit_failed":
       return { ...state, stage: 5, error: action.error };
@@ -113,6 +129,47 @@ export function existingProductUpdateReducer(
 
 function actionHasScope(scope: ExistingProductUpdateScope): boolean {
   return scope.basic || scope.purchase || scope.selling;
+}
+
+function updateBoundaryError(
+  rows: WorkflowRow[],
+  selectedIds: Set<number>,
+  scope: ExistingProductUpdateScope,
+): string | null {
+  for (const row of rows) {
+    const productId = row.identity.product_id;
+    if (productId === null || !selectedIds.has(productId)) {
+      return `Excel 第 ${row.source_row_number} 行的产品不在本次选择中，请重新下载本次更新文件`;
+    }
+    for (const field of row.fields) {
+      if (!field.changed) continue;
+      if (isPurchaseField(field.key) && !scope.purchase) {
+        return `Excel 第 ${row.source_row_number} 行的采购价区间不在本次更新范围中`;
+      }
+      if (isSellingField(field.key) && !scope.selling) {
+        return `Excel 第 ${row.source_row_number} 行的卖价区间不在本次更新范围中`;
+      }
+      if (field.key === "currency" && !scope.purchase && !scope.selling) {
+        return `Excel 第 ${row.source_row_number} 行的价格币种不在本次更新范围中`;
+      }
+      if (isBasicField(field.key) && !scope.basic) {
+        return `Excel 第 ${row.source_row_number} 行的基本信息不在本次更新范围中`;
+      }
+    }
+  }
+  return null;
+}
+
+function isPurchaseField(key: string): boolean {
+  return key === "price" || key.startsWith("purchase_period_");
+}
+
+function isSellingField(key: string): boolean {
+  return key === "contract_price" || key.startsWith("selling_period_");
+}
+
+function isBasicField(key: string): boolean {
+  return key !== "currency" && !isPurchaseField(key) && !isSellingField(key);
 }
 
 export function operationSummary(rows: WorkflowRow[]): Record<string, number> {

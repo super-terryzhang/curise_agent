@@ -210,9 +210,9 @@ export default function ProductUploadPage() {
                   <div className="flex items-center justify-between gap-4 bg-background px-4 py-3">
                     <div>
                       <div className="font-medium">更新已有产品或价格区间</div>
-                      <div className="mt-1 text-muted-foreground">先导出价格 Excel，修改内容时请保留系统 ID。</div>
+                      <div className="mt-1 text-muted-foreground">从数据库选择产品，系统会生成包含必要标识的更新文件。</div>
                     </div>
-                    <a href="/dashboard/data?tab=products" className="flex shrink-0 items-center gap-1.5 font-medium text-primary hover:underline">前往导出<ArrowRight className="h-3.5 w-3.5" /></a>
+                    <a href="/dashboard/workbench/product-update" className="flex shrink-0 items-center gap-1.5 font-medium text-primary hover:underline">进入已有产品更新<ArrowRight className="h-3.5 w-3.5" /></a>
                   </div>
                 </div>
               </div>

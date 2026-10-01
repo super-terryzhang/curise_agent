@@ -78,7 +78,12 @@ describe("existing product update workflow", () => {
     expect(failed.stage).toBe(4);
     expect(failed.rows).toHaveLength(1);
 
-    const valid = existingProductUpdateReducer(initialExistingProductUpdateState(), {
+    let validStart = initialExistingProductUpdateState({ 7: product(7) });
+    validStart = existingProductUpdateReducer(validStart, {
+      type: "set_scope",
+      scope: { basic: false, purchase: true, selling: false },
+    });
+    const valid = existingProductUpdateReducer(validStart, {
       type: "validation_succeeded",
       batch: batch(true),
       rows: [row()],
@@ -108,8 +113,40 @@ describe("existing product update workflow", () => {
     expect(state.error).toContain("新增产品");
   });
 
+  it("blocks updates outside the selected products or selected scope", () => {
+    let state = initialExistingProductUpdateState({ 7: product(7) });
+    state = existingProductUpdateReducer(state, {
+      type: "set_scope",
+      scope: { basic: false, purchase: true, selling: false },
+    });
+
+    const unselected = existingProductUpdateReducer(state, {
+      type: "validation_succeeded",
+      batch: batch(true),
+      rows: [row({ identity: { product_id: 8, product_code: "008", product_name: "Other" } })],
+    });
+    expect(unselected.stage).toBe(4);
+    expect(unselected.error).toContain("不在本次选择中");
+
+    const wrongScope = existingProductUpdateReducer(state, {
+      type: "validation_succeeded",
+      batch: batch(true),
+      rows: [row({
+        fields: [{ key: "brand", label: "品牌", before: "A", after: "B", action: "change", changed: true, currency: null }],
+        operations: ["更新产品"],
+      })],
+    });
+    expect(wrongScope.stage).toBe(4);
+    expect(wrongScope.error).toContain("基本信息不在本次更新范围中");
+  });
+
   it("preserves review data on commit conflict and records completion", () => {
-    let state = existingProductUpdateReducer(initialExistingProductUpdateState(), {
+    let state = initialExistingProductUpdateState({ 7: product(7) });
+    state = existingProductUpdateReducer(state, {
+      type: "set_scope",
+      scope: { basic: false, purchase: true, selling: false },
+    });
+    state = existingProductUpdateReducer(state, {
       type: "validation_succeeded",
       batch: batch(true),
       rows: [row()],
