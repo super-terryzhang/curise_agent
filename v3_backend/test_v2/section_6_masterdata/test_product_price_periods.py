@@ -8,6 +8,7 @@ from domains.masterdata.errors import Conflict
 from domains.masterdata.models import Country, Port, Product, ProductPricePeriod, Supplier
 from domains.masterdata.price_periods import attach_effective_prices, create_period
 from domains.masterdata.schemas import ProductPricePeriodCreate
+from domains.masterdata.upload.models import StagingProduct
 from domains.orders import anomaly
 from domains.orders.groups.matching import match_arrangement
 from domains.orders.matching.automation import match_for_import
@@ -319,3 +320,101 @@ def test_batch_upload_creates_one_new_product_with_multiple_periods(db):
     assert result["created"] == 1
     assert len(products) == 1
     assert len(periods) == 2
+
+
+def test_batch_upload_rejects_same_purchase_range_with_different_amounts_before_commit(db):
+    from domains.masterdata.upload import parse_excel, resolve_and_score
+
+    product, country, port = _product(db)
+    rows = [
+        {
+            "product_name": product.product_name_en,
+            "product_code": product.code,
+            "country": country.name,
+            "port": port.name,
+            "price": amount,
+            "purchase_price_effective_from": "2026-01-01",
+            "purchase_price_effective_to": "2026-06-30",
+        }
+        for amount in (10, 20)
+    ]
+    batch = parse_excel(
+        db, file_bytes=make_excel(rows), filename="same-range.xlsx", user_id=1
+    )
+
+    resolved = resolve_and_score(db, batch_id=batch.id, user_id=1)
+
+    assert resolved.error_rows == 2
+    staged = db.query(StagingProduct).filter_by(batch_id=batch.id).all()
+    messages = [
+        message
+        for row in staged
+        for message in (row.validation_errors or [])
+    ]
+    assert any("同一日期区间只能有一个价格" in message for message in messages)
+    assert db.query(ProductPricePeriod).filter_by(product_id=product.id).count() == 0
+
+
+def test_batch_upload_rejects_workbook_overlap_before_commit(db):
+    from domains.masterdata.upload import parse_excel, resolve_and_score
+
+    product, country, port = _product(db)
+    rows = [
+        {
+            "product_name": product.product_name_en,
+            "product_code": product.code,
+            "country": country.name,
+            "port": port.name,
+            "price": amount,
+            "purchase_price_effective_from": start,
+            "purchase_price_effective_to": end,
+        }
+        for amount, start, end in (
+            (10, "2026-01-01", "2026-06-30"),
+            (20, "2026-06-15", "2026-12-31"),
+        )
+    ]
+    batch = parse_excel(
+        db, file_bytes=make_excel(rows), filename="overlap.xlsx", user_id=1
+    )
+
+    resolved = resolve_and_score(db, batch_id=batch.id, user_id=1)
+
+    assert resolved.error_rows == 2
+    staged = db.query(StagingProduct).filter_by(batch_id=batch.id).all()
+    assert all(
+        any("期间重叠" in message for message in (row.validation_errors or []))
+        for row in staged
+    )
+
+
+def test_batch_upload_rejects_overlap_with_existing_period_before_commit(db):
+    from domains.masterdata.upload import parse_excel, resolve_and_score
+
+    product, country, port = _product(db)
+    _create(db, product, "purchase", 10, "2026-01-01", "2026-06-30")
+    batch = parse_excel(
+        db,
+        file_bytes=make_excel(
+            [
+                {
+                    "product_name": product.product_name_en,
+                    "product_code": product.code,
+                    "country": country.name,
+                    "port": port.name,
+                    "price": 20,
+                    "purchase_price_effective_from": "2026-06-15",
+                    "purchase_price_effective_to": "2026-12-31",
+                }
+            ]
+        ),
+        filename="db-overlap.xlsx",
+        user_id=1,
+    )
+
+    resolved = resolve_and_score(db, batch_id=batch.id, user_id=1)
+
+    assert resolved.error_rows == 1
+    staged = db.query(StagingProduct).filter_by(batch_id=batch.id).one()
+    assert "与数据库现有区间" in " ".join(staged.validation_errors or [])
+    assert db.query(ProductPricePeriod).filter_by(product_id=product.id).count() == 1

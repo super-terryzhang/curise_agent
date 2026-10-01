@@ -87,20 +87,20 @@ OPTIONAL_COLUMNS = [
      "对应 UI 的「采购价」。我方付给供应商的价格。0 是有效值（系统会保留）。"),
     ("purchase_price_effective_from", False, "采购价有效开始日期", "2026-01-01",
      "日期 YYYY-MM-DD",
-     "采购价开始生效的日期。新产品空 = 不限制起始；更新时空 = 保留旧值。"),
+     "采购价开始生效的日期。留空表示本行不新建期间；更新时空 = 保留旧值。"),
     ("purchase_price_effective_to", False, "采购价有效结束日期", "2026-06-30",
      "日期 YYYY-MM-DD",
-     "采购价有效的最后一天。新产品空 = 不限制结束；更新时空 = 保留旧值。"),
+     "采购价有效的最后一天。一个期间必须同时填写开始和结束日期。"),
     ("contract_price", False, "卖价", 1050.00,
      "数字（不带 ¥ $ 符号）",
      "对应 UI 的「卖价」。我方卖给邮轮客户的价格 —— 财务对比 PO 单价的基线。"
      "上传时也接受别名「合同价」/「合同卖价」/「合約価格」/「契約価格」（向后兼容）。"),
     ("selling_price_effective_from", False, "卖价有效开始日期", "2026-01-01",
      "日期 YYYY-MM-DD",
-     "卖价开始生效的日期。新产品空 = 不限制起始；更新时空 = 保留旧值。"),
+     "卖价开始生效的日期。留空表示本行不新建期间；更新时空 = 保留旧值。"),
     ("selling_price_effective_to", False, "卖价有效结束日期", "2026-12-31",
      "日期 YYYY-MM-DD",
-     "卖价有效的最后一天。新产品空 = 不限制结束；更新时空 = 保留旧值。"),
+     "卖价有效的最后一天。一个期间必须同时填写开始和结束日期。"),
     ("currency", False, "币种", "USD",
      "ISO 4217 三字母代码",
      "对应 UI 的「币种」。建议：USD / JPY / EUR / AUD / CNY 等。"),
@@ -117,13 +117,6 @@ OPTIONAL_COLUMNS = [
     ("country_of_origin", False, "原产地", "Washington, USA",
      "自由文本",
      "对应 UI 的「原产地」。**字符串字段**（不是 FK）—— 跟「country」（采购国）是两个独立字段。"),
-    # Effective period
-    ("effective_from", False, "产品有效开始日期", "2026-01-01",
-     "日期 YYYY-MM-DD",
-     "控制产品本身是否可用于匹配，不代表采购价或卖价有效期。新产品空 = 不限制起始；更新时空 = 保留旧值。"),
-    ("effective_to", False, "产品有效结束日期", "2026-12-31",
-     "日期 YYYY-MM-DD",
-     "控制产品本身是否可用于匹配，不代表采购价或卖价有效期。新产品空 = 不限制结束；更新时空 = 保留旧值。"),
 ]
 
 ALL_COLUMNS = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
@@ -144,7 +137,7 @@ def _row_dict(values: list) -> dict[str, object]:
 #   product_name, country, port, product_code, product_name_jp, brand,
 #   category, supplier, price, purchase-price dates, contract_price,
 #   selling-price dates, currency, unit, unit_size, pack_size,
-#   country_of_origin, product effective_from, product effective_to
+#   country_of_origin
 EXAMPLE_ROWS: list[dict[str, object]] = [
     _row_dict([
         "Apple - Red Delicious 125ct",         # product_name *
@@ -166,8 +159,6 @@ EXAMPLE_ROWS: list[dict[str, object]] = [
         "40LB/CT",                             # unit_size
         "125CT/CTN",                           # pack_size
         "Washington, USA",                     # country_of_origin
-        datetime(2026, 1, 1),                  # effective_from
-        datetime(2026, 12, 31),                # effective_to
     ]),
     _row_dict([
         "Yogurt - Strawberry 75G",             # product_name *
@@ -189,14 +180,12 @@ EXAMPLE_ROWS: list[dict[str, object]] = [
         "75G×4×6PACK",                         # unit_size
         "24CT/CTN",                            # pack_size
         "Japan",                               # country_of_origin
-        None,                                  # effective_from (blank ok)
-        None,                                  # effective_to
     ]),
     _row_dict([
         "Beef Tenderloin Grade A",             # product_name * (minimum)
         "USA",                                 # country * (required even in minimal row)
         "Yokohama",                            # port * (required even in minimal row)
-        None, None, None, None, None, None, None, None, None,
+        None, None, None, None, None, None, None,
         None, None, None, None, None, None, None, None, None,
     ]),
 ]
@@ -249,7 +238,6 @@ def _build_data_sheet(ws: Worksheet) -> None:
             elif canonical in ("price", "contract_price"):
                 cell.number_format = "#,##0.00"
             elif canonical in (
-                "effective_from", "effective_to",
                 "purchase_price_effective_from", "purchase_price_effective_to",
                 "selling_price_effective_from", "selling_price_effective_to",
             ):
@@ -277,8 +265,6 @@ def _build_data_sheet(ws: Worksheet) -> None:
         "unit_size": 14,
         "pack_size": 16,
         "country_of_origin": 20,
-        "effective_from": 14,
-        "effective_to": 14,
     }
     for idx, (canonical, *_rest) in enumerate(ALL_COLUMNS, start=1):
         ws.column_dimensions[get_column_letter(idx)].width = widths.get(canonical, 16)
@@ -362,13 +348,13 @@ def _build_instructions_sheet(ws: Worksheet) -> None:
         "4. 第 1 行表头改名 / 删列 → 系统识别不到字段。建议保留规范表头；必填列不能删除。",
         "",
         "—— 日期格式 ——",
-        "采购价、卖价和产品本身的所有有效日期列接受：",
+        "采购价和卖价的有效日期列接受：",
         "  · 2026-01-01 （推荐）",
         "  · 2026/01/01",
         "  · 2026.01.01",
         "Excel 把日期单元格存成日期类型也可以，系统会自动转换。",
         "采购价和卖价各自的开始日期不能晚于各自的结束日期。",
-        "effective_from / effective_to 是产品整体有效期，不替代两种价格的有效期。",
+        "同一商品可以用多行填写多个不重叠的价格期间；相同或重叠区间会在预览阶段报错。",
         "",
         "—— 系统不批量管理的字段 ——",
         "下列字段不会被本模板更新，请通过单条编辑修改：",

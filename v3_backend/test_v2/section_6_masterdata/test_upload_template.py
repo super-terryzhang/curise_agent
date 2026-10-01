@@ -224,8 +224,6 @@ def test_template_round_trip_through_parse_excel(client, db):
     assert apple.unit_size == "40LB/CT"
     assert apple.pack_size == "125CT/CTN"
     assert apple.country_of_origin == "Washington, USA"
-    assert apple.effective_from is not None
-    assert apple.effective_to is not None
 
 
 def _seed_masterdata_for_examples(db):
@@ -349,8 +347,8 @@ def test_commit_writes_all_extended_fields(db):
                 "unit_size": "100G",
                 "pack_size": "12x100G",
                 "country_of_origin": "Tokyo, Japan",
-                "effective_from": "2026-03-01",
-                "effective_to": "2026-09-30",
+                "purchase_price_effective_from": "2026-03-01",
+                "purchase_price_effective_to": "2026-09-30",
             }
         ]
     )
@@ -373,18 +371,18 @@ def test_commit_writes_all_extended_fields(db):
     assert p.unit_size == "100G"
     assert p.pack_size == "12x100G"
     assert p.country_of_origin == "Tokyo, Japan"
-    assert p.effective_from == datetime(2026, 3, 1)
-    assert p.effective_to == datetime(2026, 9, 30)
+    assert p.purchase_price_effective_from == datetime(2026, 3, 1)
+    assert p.purchase_price_effective_to == datetime(2026, 9, 30)
 
 
 def test_resolve_invalid_date_flags_row_as_error(db):
-    """An effective_from like "1995/13/45" is not a real date — must
+    """An invalid purchase start date must
     surface as a validation error rather than silently dropping the
     date field."""
     from test_v2.fixtures.helpers import make_excel
 
     blob = make_excel(
-        [{"product_name": "Bad Date Item", "effective_from": "1995/13/45"}]
+        [{"product_name": "Bad Date Item", "purchase_price_effective_from": "1995/13/45"}]
     )
     batch = parse_excel(db, file_bytes=blob, filename="t.xlsx", user_id=1)
     resolved = resolve_and_score(db, batch_id=batch.id, user_id=1)
@@ -393,7 +391,7 @@ def test_resolve_invalid_date_flags_row_as_error(db):
     from domains.masterdata.upload.models import StagingProduct
 
     sp = db.query(StagingProduct).filter(StagingProduct.batch_id == batch.id).one()
-    assert "effective_from '1995/13/45' is not a valid date" in " ".join(
+    assert "purchase_price_effective_from '1995/13/45' is not a valid date" in " ".join(
         sp.validation_errors or []
     )
 
@@ -406,14 +404,14 @@ def test_resolve_accepts_iso_with_T_separator(db):
     from test_v2.fixtures.helpers import make_excel
 
     blob = make_excel(
-        [{"product_name": "ISO Date Item", "effective_from": "2026-01-01T00:00:00"}]
+        [{"product_name": "ISO Date Item", "purchase_price_effective_from": "2026-01-01T00:00:00"}]
     )
     batch = parse_excel(db, file_bytes=blob, filename="t.xlsx", user_id=1)
     resolved = resolve_and_score(db, batch_id=batch.id, user_id=1)
     assert resolved.error_rows == 0
 
 
-def test_template_data_sheet_has_21_columns(db):
+def test_template_data_sheet_has_19_columns(db):
     """Pin the column count so a future "drop a column" change is loud."""
     wb = load_workbook(_TEMPLATE_PATH)
     ws = wb["产品数据"]
@@ -422,8 +420,8 @@ def test_template_data_sheet_has_21_columns(db):
         for c in range(1, 24)
         if ws.cell(row=1, column=c).value
     ]
-    assert len(headers) == 21, (
-        f"expected 21 columns, found {len(headers)}: {headers}"
+    assert len(headers) == 19, (
+        f"expected 19 columns, found {len(headers)}: {headers}"
     )
 
 
@@ -478,7 +476,7 @@ def test_get_upload_template_tool_returns_markdown_with_link(db):
     assert "| `product_code` |" in out
     assert "| `price` |" in out
     assert "| `contract_price` |" in out
-    assert "21 列" in out
+    assert "19 列" in out
     assert "只有 `product_name`" not in out
 
 
@@ -498,7 +496,7 @@ def test_downloaded_template_matches_generated_values_and_formats(client):
     data = actual["产品数据"]
     assert data["L2"].value == 1050
     assert data["L2"].number_format == "#,##0.00"
-    for cell in ("J2", "K2", "M2", "N2", "T2", "U2"):
+    for cell in ("J2", "K2", "M2", "N2"):
         assert data[cell].number_format == "yyyy-mm-dd"
     assert data["D3"].value == "00100"
     text = " ".join(str(c.value) for row in actual["使用说明"] for c in row if c.value)

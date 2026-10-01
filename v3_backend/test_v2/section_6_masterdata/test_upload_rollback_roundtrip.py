@@ -2,9 +2,9 @@
 
 Prior version of `rollback_batch` only restored 3 of the 14 fields
 `_apply_update` is allowed to mutate (price / unit / pack_size).
-The other 11 (product_name_jp, brand, unit_size, country_of_origin,
-currency, category_id, supplier_id, country_id, port_id, effective_from,
-effective_to) stayed dirty — silently incomplete rollback. Verified
+The other mutable fields (product_name_jp, brand, unit_size,
+country_of_origin, currency and foreign keys) stayed dirty — silently
+incomplete rollback. Verified
 prod 2026-05-18 batch #6 — 8 distinct fields mutated, only 3 restorable
 under old code.
 
@@ -66,8 +66,6 @@ def _seed_full_product(db, seed_user) -> tuple[Product, dict]:
         "supplier_id": sup_orig.id,
         "country_id": country_orig.id,
         "port_id": port_orig.id,
-        "effective_from": datetime(2026, 1, 1),
-        "effective_to": datetime(2026, 12, 31),
     }
     p = Product(**seed, status=True)
     db.add(p)
@@ -115,8 +113,6 @@ def _mutate_via_apply_update(db, target: Product, ctx: dict) -> int:
         "supplier": nt["supplier_name"],
         "country": nt["country_name"],
         "port": nt["port_name"],
-        "effective_from": "2026-06-01",
-        "effective_to": "2026-09-30",
     }
     sp = StagingProduct(
         batch_id=batch.id,
@@ -141,7 +137,7 @@ def _mutate_via_apply_update(db, target: Product, ctx: dict) -> int:
 # ─── Round-trip test — the actual contract ────────────────────
 
 
-def test_round_trip_all_19_fields_restore_to_seed(db, seed_user):
+def test_round_trip_all_17_fields_restore_to_seed(db, seed_user):
     """Seed → mutate → rollback. Every field must equal its seed value
     AFTER rollback. Typed equality (Decimal/datetime/int)."""
     p, ctx = _seed_full_product(db, seed_user)
@@ -150,7 +146,7 @@ def test_round_trip_all_19_fields_restore_to_seed(db, seed_user):
 
     batch_id = _mutate_via_apply_update(db, p, ctx)
 
-    # Sanity: all 19 mutable fields changed.
+    # Sanity: all 17 mutable fields changed.
     db.refresh(p)
     assert p.brand == "BRAND_NEW", "setup error: update didn't propagate"
 
@@ -160,8 +156,8 @@ def test_round_trip_all_19_fields_restore_to_seed(db, seed_user):
     db.commit()
 
     result = upload_service.rollback_batch(db, batch_id=batch_id, user_id=1)
-    assert result["restored"] >= 19, (
-        f"expected ≥19 fields restored, got {result}"
+    assert result["restored"] >= 17, (
+        f"expected ≥17 fields restored, got {result}"
     )
     assert result["skipped"] == 0, (
         f"unexpected skipped fields — restorer table missing entry: {result}"
@@ -191,8 +187,6 @@ def test_round_trip_all_19_fields_restore_to_seed(db, seed_user):
     assert fresh.supplier_id == seed["supplier_id"]
     assert fresh.country_id == seed["country_id"]
     assert fresh.port_id == seed["port_id"]
-    assert fresh.effective_from == seed["effective_from"]
-    assert fresh.effective_to == seed["effective_to"]
 
 
 def test_restorer_table_matches_apply_update_mutation_surface(db, seed_user):
@@ -205,7 +199,6 @@ def test_restorer_table_matches_apply_update_mutation_surface(db, seed_user):
         "unit", "pack_size", "product_name_jp", "brand", "unit_size",
         "country_of_origin", "currency", "price", "contract_price",
         "category_id", "supplier_id", "country_id", "port_id",
-        "effective_from", "effective_to",
         "purchase_price_effective_from", "purchase_price_effective_to",
         "selling_price_effective_from", "selling_price_effective_to",
     }

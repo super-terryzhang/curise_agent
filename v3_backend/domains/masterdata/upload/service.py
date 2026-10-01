@@ -60,7 +60,7 @@ from sqlalchemy.orm import Session
 from domains.masterdata import price_history
 from domains.masterdata._money import parse_product_price
 from domains.masterdata.errors import Conflict
-from domains.masterdata.models import Product
+from domains.masterdata.models import Product, ProductPricePeriod
 from domains.masterdata.price_periods import sync_compatibility_periods
 from domains.masterdata.upload.errors import (
     BatchInWrongState,
@@ -140,11 +140,6 @@ _HEADER_ALIASES = {
     "unit": ("unit", "uom", "単位", "单位"),
     "unit_size": ("unit_size", "单位规格", "単位サイズ"),
     "pack_size": ("pack_size", "pack", "spec", "規格", "包装规格", "size"),
-    # Effective period (dates)
-    "effective_from": (
-        "effective_from", "valid_from", "start_date", "生效起", "生效起始日"
-    ),
-    "effective_to": ("effective_to", "valid_to", "end_date", "生效止", "生效结束日"),
     # Legacy backward-compat: supplier_code still gets parsed (a few old
     # spreadsheets shipped this column) but resolves to nothing — the new
     # FK lookup uses the `supplier` (name) column instead. We retain the
@@ -153,12 +148,27 @@ _HEADER_ALIASES = {
 }
 
 _DATE_FIELDS = (
-    "effective_from",
-    "effective_to",
     "purchase_price_effective_from",
     "purchase_price_effective_to",
     "selling_price_effective_from",
     "selling_price_effective_to",
+)
+
+_RETIRED_HEADER_ALIASES = {
+    "effective_from",
+    "valid_from",
+    "start_date",
+    "生效起",
+    "生效起始日",
+    "effective_to",
+    "valid_to",
+    "end_date",
+    "生效止",
+    "生效结束日",
+}
+_RETIRED_HEADER_MESSAGE = (
+    "effective_from/effective_to 已停用，"
+    "请改用 purchase_price_effective_from/purchase_price_effective_to"
 )
 _PRICE_PERIODS = (
     ("purchase_price_effective_from", "purchase_price_effective_to", "采购价"),
@@ -358,7 +368,19 @@ def parse_excel(
             }
         )
 
-    unrecognized = [c for c in header_columns if c["raw"] and c["canonical"] is None]
+    retired = [
+        c
+        for c in header_columns
+        if c["raw"]
+        and c["canonical"] is None
+        and c["raw"].strip().lower() in _RETIRED_HEADER_ALIASES
+    ]
+    retired_columns = {c["column"] for c in retired}
+    unrecognized = [
+        c
+        for c in header_columns
+        if c["raw"] and c["canonical"] is None and c["column"] not in retired_columns
+    ]
     duplicates = [
         {"canonical": canonical, "columns": columns}
         for canonical, columns in canonical_columns.items()
@@ -367,6 +389,15 @@ def parse_excel(
     required_fields = ("product_name", "country", "port")
     missing_required = [field for field in required_fields if field not in canonical_columns]
     blocking_issues: list[dict[str, Any]] = []
+    blocking_issues.extend(
+        {
+            "code": "retired_header",
+            "field": item["raw"],
+            "columns": [item["column"]],
+            "message": _RETIRED_HEADER_MESSAGE,
+        }
+        for item in retired
+    )
     blocking_issues.extend(
         {
             "code": "unknown_header",
@@ -396,6 +427,7 @@ def parse_excel(
     )
     header_diagnostics = {
         "columns": header_columns,
+        "retired": retired,
         "unrecognized": unrecognized,
         "duplicate_canonical": duplicates,
         "missing_required": missing_required,
@@ -671,19 +703,29 @@ def resolve_and_score(db: Session, *, batch_id: int, user_id: int) -> UploadBatc
             "new", fk_resolver.resolve("country", fields.get("country")),
             (sp.product_name or "").strip().casefold(), fk_resolver.resolve("port", fields.get("port")))
         identities.setdefault(key, []).append(sp)
+    validation_by_row: dict[int, list[str]] = {}
     for group in identities.values():
         if len(group) > 1:
             # Existing products may legitimately occupy several rows when each
             # row adds a different complete price interval. Product identity
             # stays one row; only v3_product_price_periods gains records.
             signatures = [_price_period_signature(_canonical_fields(sp)) for sp in group]
-            if all(signature for signature in signatures) and len(set(signatures)) == len(group):
-                continue
-            for sp in group:
-                counters["new" if sp.match_status == "new" else "exact"] -= 1
-                counters["error"] += 1
-                sp.match_status = "error"
-                sp.validation_errors = ["同一批次重复出现同一个产品，请合并为一行后重新上传"]
+            if not all(signatures):
+                for sp in group:
+                    validation_by_row.setdefault(sp.id, []).append(
+                        "同一批次重复出现同一个产品；"
+                        "多行仅用于导入不同的完整价格期间"
+                    )
+        _validate_group_price_periods(db, group, validation_by_row)
+
+    for sp in rows:
+        row_errors = validation_by_row.get(sp.id)
+        if not row_errors or sp.match_status == "error":
+            continue
+        counters["new" if sp.match_status == "new" else "exact"] -= 1
+        counters["error"] += 1
+        sp.match_status = "error"
+        sp.validation_errors = list(dict.fromkeys(row_errors))
     batch.matched_exact = counters["exact"]
     batch.matched_fuzzy = counters["fuzzy"]
     batch.new_rows = counters["new"]
@@ -702,8 +744,98 @@ def _price_period_signature(fields: dict[str, Any]) -> tuple[Any, ...] | None:
         amount_field = "price" if label == "采购价" else "contract_price"
         amount = fields.get(amount_field)
         if amount not in (None, "") and start is not None and end is not None:
-            parts.extend((label, start.date(), end.date(), str(amount)))
+            parts.extend((label, start.date(), end.date()))
     return tuple(parts) or None
+
+
+def _period_proposals(sp: StagingProduct, current: Product | None) -> list[dict[str, Any]]:
+    """Return complete price periods one upload row would materialize."""
+    fields = _canonical_fields(sp)
+    proposals: list[dict[str, Any]] = []
+    for start_field, end_field, label in _PRICE_PERIODS:
+        price_type = "purchase" if label == "采购价" else "selling"
+        amount_field = "price" if price_type == "purchase" else "contract_price"
+        if not any(
+            fields.get(field) not in (None, "")
+            for field in (amount_field, start_field, end_field)
+        ):
+            continue
+        amount = sp.price if price_type == "purchase" else _decimal_or_none(
+            fields.get("contract_price")
+        )
+        if amount is None and current is not None:
+            amount = current.price if price_type == "purchase" else current.contract_price
+        start = _parse_date_safe(fields.get(start_field))
+        end = _parse_date_safe(fields.get(end_field))
+        if current is not None:
+            start = start or getattr(current, start_field)
+            end = end or getattr(current, end_field)
+        if amount is None or start is None or end is None:
+            continue
+        proposals.append(
+            {
+                "row": sp,
+                "price_type": price_type,
+                "label": label,
+                "amount": Decimal(str(amount)),
+                "start": start.date() if isinstance(start, datetime) else start,
+                "end": end.date() if isinstance(end, datetime) else end,
+            }
+        )
+    return proposals
+
+
+def _validate_group_price_periods(
+    db: Session,
+    group: list[StagingProduct],
+    validation_by_row: dict[int, list[str]],
+) -> None:
+    """Report every workbook/DB interval conflict before commit mutates data."""
+    target = db.get(Product, group[0].match_target_id) if group[0].match_target_id else None
+    proposals = [
+        proposal
+        for sp in group
+        for proposal in _period_proposals(sp, target)
+    ]
+
+    for index, left in enumerate(proposals):
+        for right in proposals[index + 1 :]:
+            if left["price_type"] != right["price_type"]:
+                continue
+            if left["start"] <= right["end"] and right["start"] <= left["end"]:
+                if left["start"] == right["start"] and left["end"] == right["end"]:
+                    message = f"{left['label']}期间重复：同一日期区间只能有一个价格"
+                else:
+                    message = f"{left['label']}期间重叠，请调整开始或结束日期"
+                for proposal in (left, right):
+                    validation_by_row.setdefault(proposal["row"].id, []).append(message)
+
+    if target is None or not proposals:
+        return
+    existing_periods = db.scalars(
+        select(ProductPricePeriod).where(
+            ProductPricePeriod.product_id == target.id,
+            ProductPricePeriod.status.is_(True),
+        )
+    ).all()
+    for proposal in proposals:
+        for existing in existing_periods:
+            if existing.price_type != proposal["price_type"]:
+                continue
+            exact = (
+                existing.effective_from == proposal["start"]
+                and existing.effective_to == proposal["end"]
+            )
+            overlaps = (
+                existing.effective_from <= proposal["end"]
+                and proposal["start"] <= existing.effective_to
+            )
+            if overlaps and not exact:
+                validation_by_row.setdefault(proposal["row"].id, []).append(
+                    f"{proposal['label']}期间与数据库现有区间 "
+                    f"{existing.effective_from.isoformat()} 至 "
+                    f"{existing.effective_to.isoformat()} 重叠"
+                )
 
 
 # ─── Stage 3: preview ────────────────────────────────────────
@@ -869,7 +1001,7 @@ def preview_changes(
 # Preview field-diff — 4-state per-field classifier
 # ──────────────────────────────────────────────────────────────
 #
-# Each of the 19 mutable fields gets one of 4 states:
+# Each of the 17 mutable fields gets one of 4 states:
 #
 #   change     — Excel provided value, differs from DB value → will write
 #   unchanged  — Excel provided value, equals DB value       → no-op
@@ -1210,8 +1342,6 @@ def _apply_create(
         pack_size=sp.pack_size,
         country_of_origin=_str_or_none(extras.get("country_of_origin")),
         currency=_str_or_none(extras.get("currency")),
-        effective_from=_parse_date_safe(extras.get("effective_from")),
-        effective_to=_parse_date_safe(extras.get("effective_to")),
         status=True,
     )
     db.add(p)
@@ -1620,8 +1750,6 @@ _FIELD_RESTORERS: dict[str, Any] = {
     "country_id": _restore_optional_int,
     "port_id": _restore_optional_int,
     # Dates
-    "effective_from": _restore_optional_datetime,
-    "effective_to": _restore_optional_datetime,
     "purchase_price_effective_from": _restore_optional_datetime,
     "purchase_price_effective_to": _restore_optional_datetime,
     "selling_price_effective_from": _restore_optional_datetime,
@@ -1676,16 +1804,27 @@ def rollback_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, Any
         try:
             with db.begin_nested():
                 versions = {log.product_revision for log in group}
-                if None in versions or len(versions) != 1:
+                if None in versions:
                     raise Conflict("旧批次缺少可靠版本，不能自动回滚，请核对后重新调价")
-                target = price_history.lock_product(db, product_id, next(iter(versions)))
+                target = price_history.lock_product(db, product_id, max(versions))
                 before = price_history.snapshot(target)
                 creating = any(log.action == "create" for log in group)
+                db.query(ProductPricePeriod).filter(
+                    ProductPricePeriod.product_id == product_id,
+                    ProductPricePeriod.source_batch_id == batch_id,
+                ).delete(synchronize_session=False)
                 if not creating:
                     for log in group:
                         if log.action != "update" or log.field_name not in _FIELD_RESTORERS:
                             raise Conflict("日志字段无法完整恢复，请人工核对")
                         setattr(target, log.field_name, _FIELD_RESTORERS[log.field_name](log.old_value))
+                    sync_compatibility_periods(
+                        db,
+                        target,
+                        actor_id=user_id,
+                        source="rollback",
+                        source_batch_id=None,
+                    )
                 price_history.record_change(db, target, before, actor_id=user_id,
                                             source="rollback", batch_id=batch_id,
                                             event_type="delete" if creating else "restore")
@@ -1730,8 +1869,6 @@ _WORKFLOW_FIELD_LABELS = {
     "supplier_id": "供应商",
     "country_id": "国家",
     "port_id": "港口",
-    "effective_from": "商品有效开始日期",
-    "effective_to": "商品有效结束日期",
 }
 
 _WORKFLOW_VALIDATION_FIELD_LABELS = {
@@ -1743,8 +1880,6 @@ _WORKFLOW_VALIDATION_FIELD_LABELS = {
     "purchase_price_effective_to": "采购价结束日期",
     "selling_price_effective_from": "卖价开始日期",
     "selling_price_effective_to": "卖价结束日期",
-    "effective_from": "商品有效开始日期",
-    "effective_to": "商品有效结束日期",
     "category": "分类",
     "supplier": "供应商",
     "country": "国家",
