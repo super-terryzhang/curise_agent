@@ -282,6 +282,7 @@ def _resolve_one(
     effective_on: date | None,
 ) -> dict[str, Any]:
     label = _LABELS[price_type]
+    review_suffix = "，需要复核" if price_type == "purchase" else ""
     fallback = product.price if price_type == "purchase" else product.contract_price
     if not periods:
         return {
@@ -291,7 +292,7 @@ def _resolve_one(
             "effective_from": None,
             "effective_to": None,
             "source": "legacy",
-            "warning": f"{label}期间未配置",
+            "warning": f"{label}期间未配置{review_suffix}",
         }
     if effective_on is None:
         return {
@@ -301,7 +302,7 @@ def _resolve_one(
             "effective_from": None,
             "effective_to": None,
             "source": "period",
-            "warning": f"缺少装船日，无法选择{label}期间",
+            "warning": f"缺少装船日，无法选择{label}期间{review_suffix}",
         }
     matches = [
         row
@@ -318,7 +319,9 @@ def _resolve_one(
             "effective_from": None,
             "effective_to": None,
             "source": "period",
-            "warning": f"装船日 {effective_on.isoformat()} 未命中{label}期间",
+            "warning": (
+                f"装船日 {effective_on.isoformat()} 未命中{label}期间{review_suffix}"
+            ),
         }
     row = matches[0]
     return {

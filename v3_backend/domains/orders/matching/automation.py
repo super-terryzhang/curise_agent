@@ -9,7 +9,7 @@ from domains.orders.matching.code_first import load_candidate_pool, match_by_cod
 def match_for_import(db, order):
     """Match products inside an already validated country and port scope."""
     try:
-        day = date.fromisoformat(order.delivery_date or "")
+        date.fromisoformat(order.delivery_date or "")
     except ValueError:
         return [{"code": "DELIVERY_DATE_REQUIRED"}]
     if order.port_id is None or order.country_id is None:
@@ -26,7 +26,7 @@ def match_for_import(db, order):
         db,
         country_id=order.country_id,
         port_id=order.port_id,
-        delivery_date=datetime.combine(day, datetime.min.time()),
+        price_date=_loading_datetime(order.loading_date),
     )
     results, _ = match_by_code(order.products or [], pool)
     order.match_results = results
@@ -38,3 +38,11 @@ def match_for_import(db, order):
         "match_rate": round(100 * matched / len(results), 1) if results else 0,
     }
     return []
+
+
+def _loading_datetime(value: str | None) -> datetime | None:
+    try:
+        day = date.fromisoformat(value or "")
+    except ValueError:
+        return None
+    return datetime.combine(day, datetime.min.time())

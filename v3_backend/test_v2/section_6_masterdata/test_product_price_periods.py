@@ -8,7 +8,9 @@ from domains.masterdata.errors import Conflict
 from domains.masterdata.models import Country, Port, Product, ProductPricePeriod, Supplier
 from domains.masterdata.price_periods import attach_effective_prices, create_period
 from domains.masterdata.schemas import ProductPricePeriodCreate
+from domains.orders import anomaly
 from domains.orders.groups.matching import match_arrangement
+from domains.orders.matching.automation import match_for_import
 from domains.orders.models import Order, OrderGroup
 from test_v2.fixtures.helpers import login, make_excel, seed_user
 
@@ -70,7 +72,7 @@ def test_legacy_price_is_usable_with_explicit_warning(db):
 
     assert product._effective_prices["purchase"]["amount"] == 99
     assert product._effective_prices["selling"]["amount"] == 199
-    assert product._effective_prices["purchase"]["warning"] == "采购价期间未配置"
+    assert product._effective_prices["purchase"]["warning"] == "采购价期间未配置，需要复核"
     assert product._effective_prices["selling"]["warning"] == "卖价期间未配置"
 
 
@@ -84,6 +86,32 @@ def test_configured_gap_does_not_fall_back_to_legacy_price(db):
     assert selected["amount"] is None
     assert selected["source"] == "period"
     assert "未命中采购价期间" in selected["warning"]
+    assert "需要复核" in selected["warning"]
+
+
+def test_purchase_period_gap_is_a_non_actionable_warning():
+    findings = anomaly.findings_for_order_row(
+        {
+            "line_id": "line-1",
+            "match_status": "matched",
+            "matched_product": {
+                "id": 1,
+                "supplier_id": 2,
+                "purchase_price_period": {
+                    "source": "period",
+                    "amount": None,
+                    "warning": "装船日 2026-08-01 未命中采购价期间，需要复核",
+                },
+                "selling_price_period": {},
+            },
+        }
+    )
+
+    purchase = next(
+        item for item in findings if item["code"] == "PURCHASE_PRICE_PERIOD_MISSING"
+    )
+    assert purchase["severity"] == "warning"
+    assert anomaly.is_current_actionable_finding(purchase) is False
 
 
 def test_arrangement_matching_selects_both_prices_by_loading_day(db):
@@ -126,6 +154,70 @@ def test_arrangement_matching_selects_both_prices_by_loading_day(db):
     assert matched["contract_price"] == 40
     assert matched["purchase_price_period"]["period_id"] == purchase["id"]
     assert matched["selling_price_period"]["period_id"] == selling["id"]
+
+
+def test_oracle_matching_selects_purchase_price_by_loading_not_delivery_day(db):
+    product, country, port = _product(db)
+    _create(db, product, "purchase", 10, "2026-01-01", "2026-01-31")
+    loading_period = _create(db, product, "purchase", 20, "2026-07-01", "2026-07-31")
+    user = seed_user(db, email="oracle-price-day@test")
+    order = Order(
+        user_id=user.id,
+        filename="oracle.pdf",
+        country_id=country.id,
+        port_id=port.id,
+        delivery_date="2026-01-15",
+        loading_date="2026-07-15",
+        products=[
+            {
+                "line_id": "line-1",
+                "product_code": "PERIOD",
+                "product_name": "Period Product",
+                "quantity": "1",
+                "unit": "CA",
+            }
+        ],
+    )
+    db.add(order)
+    db.commit()
+
+    assert match_for_import(db, order) == []
+    matched = order.match_results[0]["matched_product"]
+    assert matched["price"] == 20
+    assert matched["purchase_price_period"]["period_id"] == loading_period["id"]
+
+
+def test_missing_loading_day_keeps_match_and_requests_price_review(db):
+    product, country, port = _product(db)
+    _create(db, product, "purchase", 10, "2026-01-01", "2026-01-31")
+    user = seed_user(db, email="oracle-price-review@test")
+    order = Order(
+        user_id=user.id,
+        filename="oracle-missing-loading.pdf",
+        country_id=country.id,
+        port_id=port.id,
+        delivery_date="2026-01-15",
+        loading_date=None,
+        products=[
+            {
+                "line_id": "line-1",
+                "product_code": "PERIOD",
+                "product_name": "Period Product",
+                "quantity": "1",
+                "unit": "CA",
+            }
+        ],
+    )
+    db.add(order)
+    db.commit()
+
+    assert match_for_import(db, order) == []
+    result = order.match_results[0]
+    assert result["match_status"] == "matched"
+    purchase = result["matched_product"]["purchase_price_period"]
+    assert purchase["amount"] is None
+    assert "缺少装船日" in purchase["warning"]
+    assert "需要复核" in purchase["warning"]
 
 
 def test_price_period_http_contract(client, db):

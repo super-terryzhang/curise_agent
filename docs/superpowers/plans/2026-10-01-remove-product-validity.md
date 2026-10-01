@@ -44,15 +44,19 @@
 - Modify `v3_backend/domains/orders/matching/service.py`
 - Modify `v3_backend/domains/orders/matching/automation.py`
 - Modify `v3_backend/domains/orders/groups/matching.py`
+- Modify `v3_backend/domains/inquiry/orchestrator.py`
+- Modify `v3_backend/domains/orders/anomaly.py`
 - Modify `v3_backend/test_v2/section_4_orders/test_product_matching.py`
 - Modify `v3_backend/test_v2/section_6_masterdata/test_price_effective_periods.py`
 - Modify `v3_backend/test_v2/section_9_web_api/test_arrangement_matching.py`
+- Modify `v3_backend/test_v2/section_9_web_api/test_arrangement_inquiry_versions.py`
+- Modify anomaly and automation-stage tests under `v3_backend/test_v2/section_4_orders/` and `section_e2e/`
 
 **Steps:**
 1. Add failing tests proving an enabled country/port product remains a match before/after any old date and when purchase periods are absent or unhit.
 2. Add failing tests proving loading date selects the period and a missing loading date yields a review warning.
 3. Remove product-date predicates and pass loading date explicitly through manual, arrangement and Oracle paths.
-4. Run the matching and inquiry-flow tests.
+4. Change anomaly severity and inquiry generation so a matched row with a missing/unhit purchase period is non-actionable and included with a warning, then run the matching and inquiry-flow tests.
 
 **Acceptance:** matched product/supplier IDs remain present; warning text is Chinese; actionable status is “可询价，需复核”; disabled products remain excluded.
 

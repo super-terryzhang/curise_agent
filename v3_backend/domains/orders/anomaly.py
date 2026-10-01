@@ -544,11 +544,16 @@ def _append_price_period_findings(
         if not warning:
             continue
         missing = period.get("source") == "period" and period.get("amount") is None
+        severity = (
+            "warning"
+            if price_type == "purchase"
+            else "error" if missing else "warning"
+        )
         items.append(
             finding(
                 code=f"{price_type.upper()}_PRICE_PERIOD_MISSING",
                 step=7 if price_type == "purchase" else 5,
-                severity="error" if missing else "warning",
+                severity=severity,
                 scope="row",
                 category="price",
                 row=row,

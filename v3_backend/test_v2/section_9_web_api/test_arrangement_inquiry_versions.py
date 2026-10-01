@@ -7,7 +7,7 @@ import pytest
 from openpyxl import Workbook, load_workbook
 
 from domains.inquiry import repository as inquiry_repo
-from domains.inquiry.models import SupplierTemplate
+from domains.inquiry.models import Inquiry, SupplierTemplate
 from domains.inquiry.orchestrator import queue_inquiry_for_group, run_inquiry_for_group
 from domains.masterdata.models import Country, Port, Product, Supplier
 from domains.masterdata.price_periods import create_period
@@ -307,7 +307,7 @@ def test_history_endpoint_returns_newest_first(client, db):
     assert [row["version"] for row in response.json()] == [2, 1]
 
 
-def test_configured_purchase_price_gap_excludes_only_that_line(db):
+def test_configured_purchase_price_gap_includes_line_with_warning(db):
     from datetime import date
 
     user, port, _supplier, group = _scope(db)
@@ -333,6 +333,15 @@ def test_configured_purchase_price_gap_excludes_only_that_line(db):
 
     state = run_inquiry_for_group(group.id, max_workers=1)
 
-    assert state.status == "unmatched"
-    assert state.unmatched_items[0]["inquiry_eligibility"] == "excluded"
-    assert "未命中采购价期间" in state.unmatched_items[0]["match_reason"]
+    assert state.status == "completed"
+    assert state.unmatched_items == []
+    snapshot = db.query(Inquiry).filter_by(id=state.id).one().match_snapshot[0]
+    assert snapshot["match_status"] == "matched"
+    assert snapshot["inquiry_eligibility"] == "included_with_warning"
+    price_warning = next(
+        item
+        for item in snapshot["inquiry_warnings"]
+        if item["code"] == "PURCHASE_PRICE_PERIOD_MISSING"
+    )
+    assert price_warning["severity"] == "warning"
+    assert "未命中采购价期间" in price_warning["message"]

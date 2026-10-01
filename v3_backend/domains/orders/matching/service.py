@@ -62,9 +62,6 @@ def run_matching(order: Order, db: Session) -> dict[str, Any]:
         db,
         country_id=order.country_id,
         port_id=order.port_id,
-        delivery_date=delivery_dt,
-        # Both commercial prices use loading day. Product availability keeps
-        # its pre-existing delivery-date filter above.
         price_date=loading_dt,
     )
     all_results, unmatched = code_first.match_by_code(inputs, pool)
