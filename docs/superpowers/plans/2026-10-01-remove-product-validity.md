@@ -22,8 +22,8 @@
 **Purpose:** Prove safe, loss-aware migration behavior before changing application code.
 
 **Files:**
-- Create `v3_backend/migrations/versions/0033_product_validity_to_purchase_periods.py`
-- Create `v3_backend/migrations/versions/0034_drop_product_validity_columns.py`
+- Create `v3_backend/migrations/versions/0033_product_validity_backfill.py`
+- Create `v3_backend/migrations/versions/0034_drop_product_validity.py`
 - Modify `v3_backend/test_v2/section_1_security/test_session_security.py`
 - Create `v3_backend/test_v2/section_6_masterdata/test_product_validity_migration.py`
 
@@ -33,7 +33,7 @@
 3. Implement 0033 backfill/audit and 0034 drop/downgrade.
 4. Run migration tests and migration-head guard.
 
-**Acceptance:** no existing purchase data is overwritten; only valid complete rows create canonical periods; unsafe original values survive in the audit table; upgrade to 0034 and downgrade to 0032 restore data correctly.
+**Acceptance:** no existing purchase data is overwritten; only valid complete rows create canonical periods; every touched row and every unsafe original value survives in `v3_product_validity_migration_audit`; upgrade to 0034 and downgrade to 0032 restore data correctly.
 
 ## Task 2: Matching independent from product validity
 
@@ -155,4 +155,3 @@
 - Price warnings must not inflate unmatched counts or block inquiry generation.
 - Rollback must remove canonical periods created by the target upload batch.
 - Downgrading 0034 must restore enough old columns for the prior production image to start safely.
-

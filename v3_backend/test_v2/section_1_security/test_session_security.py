@@ -203,6 +203,24 @@ def test_startup_requires_current_migration(engine):
         connection.execute(
             text("UPDATE alembic_version SET version_num = '0032_llm_port_resolution'")
         )
+    with pytest.raises(RuntimeError, match="migration required"):
+        verify_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE alembic_version SET version_num = "
+                "'0033_product_validity_backfill'"
+            )
+        )
+    with pytest.raises(RuntimeError, match="migration required"):
+        verify_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE alembic_version SET version_num = "
+                "'0034_drop_product_validity'"
+            )
+        )
     verify_schema(engine)
 
 

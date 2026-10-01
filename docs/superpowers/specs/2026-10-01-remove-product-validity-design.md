@@ -30,17 +30,17 @@
 
 ### 迁移阶段 A：安全回填
 
-新增迁移 `0033_product_validity_to_purchase_periods`：
+新增迁移 `0033_product_validity_backfill`：
 
-1. 建立 `v3_product_validity_migration_issues` 审计表，保存无法安全转入采购价期间的产品 ID、旧日期、问题代码和记录时间。
+1. 建立 `v3_product_validity_migration_audit` 审计表，为所有被检查或修改的旧数据保存产品 ID、旧日期、迁移前采购价日期、处理结果、问题代码和本次创建的期间 ID；这样安全迁移也能精确降级，异常值不会丢失。
 2. 对不会形成倒置区间的产品，仅用旧 `effective_from/effective_to` 填补为空的 `purchase_price_effective_from/to`。
 3. 当采购价、开始日、结束日齐全且区间有效时，若没有相同或重叠的启用采购价期间，创建规范采购价期间；已有期间绝不覆盖。
 4. 单边日期允许原样迁入兼容字段，但不虚构另一端、也不创建规范期间。
-5. 倒置区间、重叠区间和同区间金额冲突写入审计表，不自动修正。
+5. 倒置区间、重叠区间和同区间金额冲突在审计表中标记为 `review_required`，不自动修正。
 
 ### 迁移阶段 B：物理删除
 
-新应用已经停止读写旧字段并完成生产冒烟后，运行 `0034_drop_product_validity_columns` 删除 `products.effective_from/effective_to`。其 downgrade 会重新建立字段，并优先使用审计表中的原始值、否则使用采购价兼容日期，以保留回退能力。
+新应用已经停止读写旧字段并完成生产冒烟后，运行 `0034_drop_product_validity` 删除 `products.effective_from/effective_to`。其 downgrade 会重新建立字段并使用审计表中的原始值；0033 的 downgrade 会删除本次创建的期间并恢复迁移前采购价日期，以保留精确回退能力。
 
 ## 匹配设计
 
@@ -76,4 +76,3 @@
 - 产品停用仍会阻止匹配；国家与港口筛选不变。
 - 批量上传可为同一产品新增多个不重叠期间，重叠/冲突在预览阶段被完整拦截，回滚无残留。
 - 相关后端测试、前端测试与构建、本地一次完整回归、GitHub CI、迁移往返、生产冒烟和 Oracle Job 均通过。
-
