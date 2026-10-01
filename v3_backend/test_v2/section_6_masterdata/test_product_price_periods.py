@@ -548,6 +548,75 @@ def test_batch_upload_adds_canonical_period_without_replacing_fallback_price(db)
     assert db.get(ProductPricePeriod, added_id) is None
 
 
+def test_exported_product_row_and_period_rows_update_independently(db):
+    from domains.masterdata import price_history
+    from domains.masterdata.upload import (
+        commit_validated_batch,
+        get_workflow_rows,
+        parse_excel,
+        resolve_and_score,
+        rollback_batch,
+    )
+
+    product, country, port = _product(db)
+    price_history.initial(db, product, actor_id=None, source="test")
+    db.commit()
+    created = _create(db, product, "purchase", 10, "2026-01-01", "2026-06-30")
+    db.refresh(product)
+    batch = parse_excel(
+        db,
+        file_bytes=make_excel(
+            [
+                {
+                    "product_id": product.id,
+                    "expected_revision": product.revision,
+                    "product_name": product.product_name_en,
+                    "product_code": product.code,
+                    "country": country.name,
+                    "port": port.name,
+                    "brand": "Updated Brand",
+                },
+                {
+                    "product_id": product.id,
+                    "expected_revision": product.revision,
+                    "product_name": product.product_name_en,
+                    "product_code": product.code,
+                    "country": country.name,
+                    "port": port.name,
+                    "purchase_price_period_id": created["id"],
+                    "price": 12,
+                    "purchase_price_effective_from": "2026-01-01",
+                    "purchase_price_effective_to": "2026-06-30",
+                },
+            ]
+        ),
+        filename="exported-product-and-periods.xlsx",
+        user_id=1,
+    )
+
+    resolved = resolve_and_score(db, batch_id=batch.id, user_id=1)
+    assert resolved.error_rows == 0
+    preview = get_workflow_rows(
+        db, batch_id=batch.id, user_id=1, view="changes", changed_only=True
+    )
+    assert [item["operations"] for item in preview["items"]] == [
+        ["更新产品"],
+        ["更新采购价区间"],
+    ]
+
+    result = commit_validated_batch(db, batch_id=batch.id, user_id=1)
+    assert result["updated"] == 2
+    db.refresh(product)
+    assert product.brand == "Updated Brand"
+    assert float(db.get(ProductPricePeriod, created["id"]).amount) == 12
+
+    rolled_back = rollback_batch(db, batch_id=batch.id, user_id=1)
+    assert rolled_back["skipped"] == 0
+    db.refresh(product)
+    assert product.brand is None
+    assert float(db.get(ProductPricePeriod, created["id"]).amount) == 10
+
+
 def test_batch_upload_rejects_period_update_without_stable_period_id(db):
     from domains.masterdata.upload import parse_excel, resolve_and_score
 

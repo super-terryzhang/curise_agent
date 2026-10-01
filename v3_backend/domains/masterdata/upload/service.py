@@ -807,14 +807,28 @@ def resolve_and_score(db: Session, *, batch_id: int, user_id: int) -> UploadBatc
     for group in identities.values():
         if len(group) > 1:
             # Existing products may legitimately occupy several rows when each
-            # row adds a different complete price interval. Product identity
-            # stays one row; only v3_product_price_periods gains records.
+            # period row carries a different complete interval. An exported
+            # workbook may additionally contain one product-only row so users
+            # can change masterdata once without repeating it on every period.
             signatures = [_price_period_signature(_canonical_fields(sp)) for sp in group]
-            if not all(signatures):
+            product_only_rows = [
+                sp for sp, signature in zip(group, signatures, strict=True)
+                if signature is None
+            ]
+            exported_existing_group = all(
+                sp.match_target_id is not None
+                and _positive_int_or_none(_canonical_fields(sp).get("product_id"))
+                is not None
+                for sp in group
+            )
+            product_row_is_valid = (
+                exported_existing_group and len(product_only_rows) <= 1
+            )
+            if product_only_rows and not product_row_is_valid:
                 for sp in group:
                     validation_by_row.setdefault(sp.id, []).append(
                         "同一批次重复出现同一个产品；"
-                        "多行仅用于导入不同的完整价格期间"
+                        "多行仅允许一个产品资料行及不同的完整价格期间"
                     )
         _validate_group_price_periods(db, group, validation_by_row)
 
