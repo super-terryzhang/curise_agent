@@ -15,11 +15,19 @@ describe("workbench module permissions", () => {
     expect(keys).toContain("ai");
     expect(keys).toContain("finance");
     expect(keys).not.toContain("product-upload");
+    expect(keys).not.toContain("product-update");
     expect(keys).not.toContain("image-upload");
   });
 
   it("shows operational upload tools to employees", () => {
     const keys = visibleWorkbenchModules("employee").map((module) => module.key);
-    expect(keys).toEqual(["product-upload", "image-upload", "ai"]);
+    expect(keys).toEqual(["product-upload", "product-update", "image-upload", "ai"]);
+    expect(
+      WORKBENCH_MODULES.find((module) => module.key === "product-update"),
+    ).toMatchObject({
+      title: "已有产品更新",
+      href: "/dashboard/workbench/product-update",
+      status: "available",
+    });
   });
 });

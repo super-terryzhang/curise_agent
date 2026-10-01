@@ -7,6 +7,23 @@ function excelDate(value: string | null | undefined): Date | null {
   return date ? new Date(`${date}T00:00:00`) : null;
 }
 
+export const PRODUCT_WORKBOOK_HEADERS = [
+  "product_id", "expected_revision", "product_name", "country", "port", "product_code",
+  "product_name_jp", "brand", "category", "supplier", "unit", "unit_size",
+  "pack_size", "country_of_origin", "purchase_price_period_id", "selling_price_period_id", "price",
+  "purchase_price_effective_from", "purchase_price_effective_to",
+  "contract_price", "selling_price_effective_from", "selling_price_effective_to",
+  "currency",
+] as const;
+
+export interface ProductWorkbookOptions {
+  basic: boolean;
+  purchase: boolean;
+  selling: boolean;
+  hideSystemColumns?: boolean;
+  notes?: string[][];
+}
+
 /** Fetch all filtered pages before creating a file; never download partial results. */
 export async function loadProductsForExport(filters: Filters): Promise<ProductItem[]> {
   const rows: ProductItem[] = [];
@@ -30,17 +47,11 @@ export async function loadProductsForExport(filters: Filters): Promise<ProductIt
   return rows;
 }
 
-export async function buildPriceWorkbook(products: ProductItem[]) {
+export async function buildProductWorkbook(
+  products: ProductItem[],
+  options: ProductWorkbookOptions,
+) {
   const XLSX = await import("xlsx");
-  const headers = [
-    "product_id", "expected_revision", "product_name", "country", "port", "product_code",
-    "product_name_jp", "brand", "category", "supplier", "unit", "unit_size",
-    "pack_size", "country_of_origin",
-    "purchase_price_period_id", "selling_price_period_id", "price",
-    "purchase_price_effective_from", "purchase_price_effective_to",
-    "contract_price", "selling_price_effective_from", "selling_price_effective_to",
-    "currency",
-  ];
   const rows = products.flatMap((p) => {
     const identity = [p.id, p.revision, p.product_name_en, p.country_name, p.port_name, p.code];
     const productFields = [
@@ -48,19 +59,29 @@ export async function buildPriceWorkbook(products: ProductItem[]) {
       p.unit_size, p.pack_size, p.country_of_origin,
     ];
     const productRow = [
-      ...identity, ...productFields, null, null, null, null, null, null, null, null,
-      p.currency,
+      ...identity, ...(options.basic ? productFields : productFields.map(() => null)),
+      null, null, null, null, null, null, null, null, p.currency,
     ];
-    const periods = (p.price_periods ?? []).filter((period) => period.status);
+    const periods = (p.price_periods ?? []).filter((period) =>
+      period.status && (period.price_type === "purchase" ? options.purchase : options.selling));
     const blankProductFields = productFields.map(() => null);
     const periodRows = periods.map((period) => period.price_type === "purchase"
       ? [...identity, ...blankProductFields, period.id, null, period.amount, excelDate(period.effective_from), excelDate(period.effective_to), null, null, null, period.currency || p.currency]
       : [...identity, ...blankProductFields, null, period.id, null, null, null, period.amount, excelDate(period.effective_from), excelDate(period.effective_to), period.currency || p.currency]);
     return [productRow, ...periodRows];
   });
-  const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const sheet = XLSX.utils.aoa_to_sheet([[...PRODUCT_WORKBOOK_HEADERS], ...rows]);
   sheet["!cols"] = [12, 14, 32, 18, 20, 20, 24, 18, 18, 22, 12, 16, 18, 22, 22, 20, 16, 18, 18, 16, 18, 18, 12]
-    .map((wch) => ({ wch }));
+    .map((wch, index) => ({
+      wch,
+      hidden: Boolean(
+        (options.hideSystemColumns && [0, 1, 14, 15].includes(index))
+        || (!options.basic && index >= 6 && index <= 13)
+        || (!options.purchase && [14, 16, 17, 18].includes(index))
+        || (!options.selling && [15, 19, 20, 21].includes(index))
+        || (!options.purchase && !options.selling && index === 22),
+      ),
+    }));
   for (let row = 2; row <= rows.length + 1; row++) {
     if (sheet[`F${row}`]) sheet[`F${row}`].z = "@";
     for (const col of ["Q", "T"]) {
@@ -72,7 +93,7 @@ export async function buildPriceWorkbook(products: ProductItem[]) {
   }
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, "产品数据");
-  const notes = XLSX.utils.aoa_to_sheet([
+  const notes = XLSX.utils.aoa_to_sheet(options.notes ?? [
     ["产品价格更新说明"],
     ["范围：导出时当前筛选条件下的全部产品，不限当前页。"],
     ["每个产品先有一行产品资料，后续每个价格区间独占一行；产品资料只在第一行修改。"],
@@ -89,6 +110,14 @@ export async function buildPriceWorkbook(products: ProductItem[]) {
   notes["!cols"] = [{ wch: 100 }];
   XLSX.utils.book_append_sheet(workbook, notes, "使用说明");
   return workbook;
+}
+
+export async function buildPriceWorkbook(products: ProductItem[]) {
+  return buildProductWorkbook(products, {
+    basic: true,
+    purchase: true,
+    selling: true,
+  });
 }
 
 export async function exportProductPrices(filters: Filters): Promise<number> {
