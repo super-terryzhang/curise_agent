@@ -32,7 +32,7 @@ export const WORKBENCH_MODULES: WorkbenchModule[] = [
   {
     key: "product-update",
     title: "已有产品更新",
-    description: "选择已有产品，下载当前数据后批量更新基本信息与价格区间。",
+    description: "选择已有产品，直接批量编辑基本信息，修改或新增价格区间。",
     href: "/dashboard/workbench/product-update",
     icon: FilePenLine,
     roles: ["superadmin", "admin", "employee"],

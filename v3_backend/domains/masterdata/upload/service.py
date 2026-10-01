@@ -26,7 +26,8 @@ Five public stages (called in order, but each idempotent):
 4. `commit_batch(batch_id, user_id)`
    → walks staging rows, applies create/update via savepoints, writes
      a `ProductChangeLog` per field change. One bad row doesn't roll
-     back the whole batch — only that row.
+     back the whole batch — only that row, for legacy Excel workflows.
+     Direct page edits (workflow_version=3) instead save the whole batch atomically.
 
 5. `cancel_batch(batch_id, user_id)`
    → user declined the resolved batch before committing. Marks batch
@@ -840,6 +841,12 @@ def resolve_and_score(db: Session, *, batch_id: int, user_id: int) -> UploadBatc
         counters["error"] += 1
         sp.match_status = "error"
         sp.validation_errors = list(dict.fromkeys(row_errors))
+    if batch.workflow_version == 3:
+        from domains.masterdata.upload.direct_updates import validate_direct_staging
+
+        validate_direct_staging(db, rows)
+        counters["error"] = sum(row.match_status == "error" for row in rows)
+        counters["exact"] = sum(row.match_status == "exact" for row in rows)
     batch.matched_exact = counters["exact"]
     batch.matched_fuzzy = counters["fuzzy"]
     batch.new_rows = counters["new"]
@@ -1262,11 +1269,10 @@ def _field_diff(
     *,
     fk_resolver: _FKResolver | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Return a per-field 4-state classification for ALL 15 fields
-    `_apply_update` is allowed to mutate.
+    """Return per-field classifications for the editable product fields.
 
     Unlike the prior (3-field, changed-only) version, this returns the
-    same 15 fields every time, so the consumer can answer "what's the
+    legacy fields plus requested direct-edit fields, so the consumer can answer "what's the
     state of field X for row Y" without re-reading the staging row.
     `will_write=True` marks the fields that the upcoming commit will
     actually mutate; the caller can filter to those for a concise view.
@@ -1329,7 +1335,22 @@ def _field_diff(
         for key in keys:
             out.pop(key, None)
 
+    for field, value in _direct_basic_values(db, sp).items():
+        before = getattr(target, field)
+        out[field] = {
+            "action": "unchanged" if before == value else "change",
+            "db": _json_safe(before), "excel": _json_safe(value),
+            "will_write": before != value,
+        }
     return out
+
+
+def _direct_basic_values(db: Session, sp: StagingProduct) -> dict[str, Any]:
+    """Only the server-created direct workflow may carry ID-bound basic edits."""
+    batch = db.get(UploadBatch, sp.batch_id)
+    if batch is None or batch.workflow_version != 3:
+        return {}
+    return sp.raw_data.get("__direct_basic", {})
 
 
 def _canonical_period_intents(
@@ -1363,14 +1384,26 @@ def _canonical_period_intents(
 # ─── Stage 4: commit ─────────────────────────────────────────
 
 
+def _ensure_direct_transaction(db: Session) -> None:
+    # Python sqlite3's legacy transaction mode does not begin on SELECT.
+    # Without an explicit outer BEGIN, RELEASE SAVEPOINT can persist a row
+    # even when the subsequent batch-level rollback is called.
+    if db.get_bind().dialect.name == "sqlite":
+        connection = db.connection()
+        if not connection.connection.driver_connection.in_transaction:
+            connection.exec_driver_sql("BEGIN")
+
+
 def commit_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, int]:
-    """Apply changes; per-row savepoints isolate failures."""
+    """Apply changes; Excel isolates rows, direct edits save atomically."""
     batch = _load_owned_batch(db, batch_id, user_id)
     db.refresh(batch, with_for_update=True)
     if batch.status != "resolved":
         raise BatchInWrongState(
             f"commit requires status=resolved, got {batch.status}"
         )
+    if batch.workflow_version == 3:
+        _ensure_direct_transaction(db)
 
     rows = list(
         db.execute(
@@ -1382,6 +1415,10 @@ def commit_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, int]:
     # batch's optimistic revision before applying any of its rows. This makes
     # repeated rows for different periods safe while still detecting edits
     # made after preview.
+    if batch.workflow_version == 3:
+        from domains.masterdata.upload.direct_updates import IDENTITY_FIELDS, lock_identity_writes
+        if any(IDENTITY_FIELDS.intersection(_direct_basic_values(db, row)) for row in rows):
+            lock_identity_writes(db)
     target_ids = sorted(
         {row.match_target_id for row in rows if row.match_target_id is not None}
     )
@@ -1404,6 +1441,16 @@ def commit_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, int]:
         )
     }
     created_in_batch: dict[tuple[Any, ...], Product] = {}
+
+    if batch.workflow_version == 3:
+        from domains.masterdata.upload.direct_updates import validate_direct_staging
+
+        validate_direct_staging(db, rows)
+    if batch.workflow_version == 3 and (
+        stale_target_ids or any(row.match_status == "error" for row in rows)
+    ):
+        db.rollback()
+        raise BatchValidationFailed("产品已变化或仍有问题，请返回编辑并重新检查；本次没有保存")
 
     created = 0
     updated = 0
@@ -1461,6 +1508,11 @@ def commit_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, int]:
                         n = _apply_update(db, target, sp, batch.id, user_id)
                         outcome = "updated" if n > 0 else "skipped"
         except Exception as exc:
+            if batch.workflow_version == 3:
+                db.rollback()
+                raise BatchValidationFailed(
+                    f"第 {sp.source_row_number} 行保存失败，请重新检查；本次全部修改均未保存"
+                ) from exc
             logger.exception("commit row %s failed", sp.id)
             errors += 1
             err_text = f"{type(exc).__name__}: {exc}"
@@ -1739,6 +1791,13 @@ def _apply_update(
         _log(field, current, new_val.isoformat() if new_val else None)
         n += 1
 
+    for field, value in _direct_basic_values(db, sp).items():
+        before = getattr(target, field)
+        if before != value:
+            setattr(target, field, value)
+            _log(field, before, value)
+            n += 1
+
     period_changed = False
     # Canonical price-period rows mutate the child table directly. A retained
     # ID updates exactly that child; a blank ID creates a new non-overlapping
@@ -1862,7 +1921,7 @@ def _apply_update(
     # Exported canonical rows already wrote the child table directly; running
     # compatibility sync here could recreate the child's old bounds and cause
     # an overlap after an interval is moved.
-    if not canonical_period_intents:
+    if not canonical_period_intents and not _direct_basic_values(db, sp):
         sync_compatibility_periods(
             db,
             target,
@@ -2128,6 +2187,8 @@ def _restore_optional_datetime(v: Any) -> datetime | None:
 
 _FIELD_RESTORERS: dict[str, Any] = {
     # Plain strings
+    "product_name_en": _restore_optional_str,
+    "code": _restore_optional_str,
     "unit": _restore_optional_str,
     "pack_size": _restore_optional_str,
     "product_name_jp": _restore_optional_str,
@@ -2166,6 +2227,7 @@ def cancel_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, Any]:
     Idempotent on a batch that's already `cancelled`.
     """
     batch = _load_owned_batch(db, batch_id, user_id)
+    db.refresh(batch, with_for_update=True)
     if batch.status == "cancelled":
         return {"ok": True, "batch_id": batch_id, "status": "cancelled", "already": True}
     if batch.status != "resolved":
@@ -2186,12 +2248,25 @@ def rollback_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, Any
         raise BatchInWrongState(f"rollback 仅用于已提交批次；当前 status={batch.status}，未提交批次请使用 cancel")
     if batch.status == "rolled_back":
         return {"deleted": 0, "restored": 0, "skipped": 0}
+    if batch.workflow_version == 3:
+        _ensure_direct_transaction(db)
     logs = db.scalars(select(ProductChangeLog).where(
         ProductChangeLog.batch_id == batch_id, ProductChangeLog.restored_at.is_(None)
     ).order_by(ProductChangeLog.product_id, ProductChangeLog.id.desc())).all()
     grouped = {}
     for log in logs:
         grouped.setdefault(log.product_id, []).append(log)
+    from domains.masterdata.upload.direct_updates import (
+        IDENTITY_FIELDS,
+        lock_identity_writes,
+        validate_identity_restore,
+    )
+    if any(log.field_name in IDENTITY_FIELDS for log in logs):
+        lock_identity_writes(db)
+    identity_restores = {product_id: {log.field_name: _FIELD_RESTORERS[log.field_name](log.old_value)
+                                     for log in group if log.action == "update" and log.field_name in IDENTITY_FIELDS}
+                         for product_id, group in grouped.items()}
+    identity_restores = {product_id: values for product_id, values in identity_restores.items() if values}
     deleted = restored = skipped = 0
     conflicts = []
     for product_id, group in grouped.items():
@@ -2212,6 +2287,11 @@ def rollback_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, Any
                     log.action in ("period_create", "period_update") for log in group
                 )
                 if not creating:
+                    restore_identity = {log.field_name: _FIELD_RESTORERS[log.field_name](log.old_value)
+                                        for log in group if log.action == "update" and log.field_name in IDENTITY_FIELDS}
+                    if restore_identity:
+                        validate_identity_restore(db, target, restore_identity,
+                                                  identity_restores if batch.workflow_version == 3 else None)
                     for log in group:
                         if log.action == "period_create":
                             continue
@@ -2222,7 +2302,7 @@ def rollback_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, Any
                         if log.action != "update" or log.field_name not in _FIELD_RESTORERS:
                             raise Conflict("日志字段无法完整恢复，请人工核对")
                         setattr(target, log.field_name, _FIELD_RESTORERS[log.field_name](log.old_value))
-                    if not canonical_period_logs:
+                    if not canonical_period_logs and batch.workflow_version != 3:
                         sync_compatibility_periods(
                             db,
                             target,
@@ -2253,6 +2333,11 @@ def rollback_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, Any
         except Exception as exc:
             skipped += len(group)
             conflicts.append({"product_id": product_id, "reason": str(exc)})
+    if batch.workflow_version == 3 and skipped:
+        # Direct updates save as a whole; restore them as a whole as well.
+        # This also makes prospective identity swaps safe if any row fails.
+        db.rollback()
+        return {"deleted": 0, "restored": 0, "skipped": len(logs), "conflicts": conflicts}
     batch.status = "rolled_back" if skipped == 0 else "completed"
     db.commit()
     result = {"deleted": deleted, "restored": restored, "skipped": skipped}
@@ -2265,6 +2350,8 @@ def rollback_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, Any
 
 
 _WORKFLOW_FIELD_LABELS = {
+    "product_name_en": "产品名称",
+    "code": "产品代码",
     "price": "采购价",
     "contract_price": "卖价",
     "purchase_price_effective_from": "采购价开始日期",
@@ -2488,7 +2575,7 @@ def _workflow_fields(
             continue
         before = _fk_name(db, key, info.get("db"))
         after = _fk_name(db, key, info.get("excel"))
-        if key in _FK_DISPLAY_MODELS and info.get("excel") not in (None, ""):
+        if key in _FK_DISPLAY_MODELS and info.get("excel") not in (None, "") and not _direct_basic_values(db, sp):
             after = canonical.get(_FK_DISPLAY_MODELS[key][1], after)
         out.append(
             {
@@ -2635,7 +2722,7 @@ def get_workflow_rows(
                         "expected_revision",
                         "purchase_price_period_id",
                         "selling_price_period_id",
-                        "product_name",
+        "product_name",
                         "product_code",
                         "supplier_code",
                     ) or value in (None, ""):

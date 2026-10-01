@@ -29,8 +29,18 @@ export interface WorkflowBatch {
   current_step: number;
   total_rows: number;
   header_diagnostics: {
-    columns: Array<{ column: number; raw: string; canonical: string | null; status: string }>;
-    unrecognized: Array<{ column: number; raw: string; canonical: null; status: string }>;
+    columns: Array<{
+      column: number;
+      raw: string;
+      canonical: string | null;
+      status: string;
+    }>;
+    unrecognized: Array<{
+      column: number;
+      raw: string;
+      canonical: null;
+      status: string;
+    }>;
     duplicate_canonical: Array<{ canonical: string; columns: number[] }>;
     missing_required: string[];
     blocking_issues: HeaderIssue[];
@@ -107,30 +117,45 @@ export function productUploadTemplateUrl(): string {
   return `${API_BASE}/api/data-upload/template`;
 }
 
-export async function uploadProductWorkbook(file: File): Promise<WorkflowBatch> {
+export async function uploadProductWorkbook(
+  file: File,
+): Promise<WorkflowBatch> {
   const form = new FormData();
   form.append("file", file);
   return parseResponse(
-    await fetchWithAuth(`${API_BASE}/api/data-upload/workbench/products/upload`, {
-      method: "POST",
-      body: form,
-      timeout: 120000,
-    }),
+    await fetchWithAuth(
+      `${API_BASE}/api/data-upload/workbench/products/upload`,
+      {
+        method: "POST",
+        body: form,
+        timeout: 120000,
+      },
+    ),
   );
 }
 
-export async function validateProductBatch(batchId: number): Promise<WorkflowBatch> {
+export async function validateProductBatch(
+  batchId: number,
+): Promise<WorkflowBatch> {
   return parseResponse(
-    await fetchWithAuth(`${API_BASE}/api/data-upload/workbench/batches/${batchId}/validate`, {
-      method: "POST",
-      timeout: 120000,
-    }),
+    await fetchWithAuth(
+      `${API_BASE}/api/data-upload/workbench/batches/${batchId}/validate`,
+      {
+        method: "POST",
+        timeout: 120000,
+      },
+    ),
   );
 }
 
 export async function getProductBatchRows(
   batchId: number,
-  options: { view: "all" | "issues" | "changes"; page: number; pageSize?: number; changedOnly?: boolean },
+  options: {
+    view: "all" | "issues" | "changes";
+    page: number;
+    pageSize?: number;
+    changedOnly?: boolean;
+  },
 ): Promise<WorkflowRowsPage> {
   const params = new URLSearchParams({
     view: options.view,
@@ -176,20 +201,28 @@ export async function loadAllProductBatchRows(
   };
 }
 
-export async function commitProductBatch(batchId: number): Promise<CommitResult> {
+export async function commitProductBatch(
+  batchId: number,
+): Promise<CommitResult> {
   return parseResponse(
-    await fetchWithAuth(`${API_BASE}/api/data-upload/workbench/batches/${batchId}/commit`, {
-      method: "POST",
-      timeout: 120000,
-    }),
+    await fetchWithAuth(
+      `${API_BASE}/api/data-upload/workbench/batches/${batchId}/commit`,
+      {
+        method: "POST",
+        timeout: 120000,
+      },
+    ),
   );
 }
 
 export async function cancelProductBatch(batchId: number): Promise<void> {
   await parseResponse(
-    await fetchWithAuth(`${API_BASE}/api/data-upload/workbench/batches/${batchId}/cancel`, {
-      method: "POST",
-    }),
+    await fetchWithAuth(
+      `${API_BASE}/api/data-upload/workbench/batches/${batchId}/cancel`,
+      {
+        method: "POST",
+      },
+    ),
   );
 }
 
@@ -201,7 +234,9 @@ export async function listProductBatches(page = 1): Promise<WorkflowBatchPage> {
   );
 }
 
-export async function getProductBatchOriginalUrl(batchId: number): Promise<string> {
+export async function getProductBatchOriginalUrl(
+  batchId: number,
+): Promise<string> {
   const result = await parseResponse<{ url: string }>(
     await fetchWithAuth(
       `${API_BASE}/api/data-upload/workbench/batches/${batchId}/original-url`,
@@ -211,10 +246,18 @@ export async function getProductBatchOriginalUrl(batchId: number): Promise<strin
 }
 
 export async function rollbackProductBatch(batchId: number): Promise<void> {
-  await parseResponse(
+  const result = await parseResponse<{
+    skipped: number;
+    conflicts?: Array<{ reason: string }>;
+  }>(
     await fetchWithAuth(
       `${API_BASE}/api/data-upload/workbench/batches/${batchId}/rollback`,
       { method: "POST", timeout: 120000 },
     ),
   );
+  if (result.skipped > 0) {
+    throw new Error(
+      `回滚未完成：${result.conflicts?.map((item) => item.reason).join("；") || "存在后续修改或数据冲突，请人工核对"}`,
+    );
+  }
 }

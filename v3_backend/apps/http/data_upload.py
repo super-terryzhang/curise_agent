@@ -18,8 +18,8 @@ half of historical upload failures.
 
 from __future__ import annotations
 
-import logging
 import hashlib
+import logging
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -29,6 +29,7 @@ from fastapi.responses import FileResponse
 
 from apps.http._deps import DbDep, ProductUploader, Writer
 from domains.masterdata.upload import (
+    DirectUpdateRequest,
     cancel_batch,
     commit_validated_batch,
     get_workflow_batch,
@@ -36,6 +37,7 @@ from domains.masterdata.upload import (
     get_workflow_rows,
     list_workflow_batches,
     parse_excel,
+    prepare_direct_update,
     rollback_batch,
     validate_workflow_batch,
 )
@@ -167,6 +169,17 @@ def download_template() -> FileResponse:
         filename="product_upload_template.xlsx",
         headers={"Cache-Control": "no-cache"},
     )
+
+
+@router.post("/workbench/products/prepare-update", response_model=WorkflowBatch)
+def prepare_product_update(
+    body: DirectUpdateRequest, db: DbDep, user: ProductUploader,
+) -> dict[str, Any]:
+    """Stage direct page edits; the existing confirmation endpoint saves them."""
+    try:
+        return prepare_direct_update(db, body, user_id=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
 
 @router.post("/workbench/products/upload", response_model=WorkflowBatch)
