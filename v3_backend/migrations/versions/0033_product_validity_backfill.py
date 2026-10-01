@@ -8,7 +8,7 @@ Create Date: 2026-10-01
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import sqlalchemy as sa
@@ -105,7 +105,7 @@ def upgrade() -> None:
         .order_by(products.c.id)
     ).mappings()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for row in legacy_rows:
         legacy_from = row["effective_from"]
         legacy_to = row["effective_to"]
@@ -269,4 +269,3 @@ def downgrade() -> None:
             },
         )
     op.drop_table("v3_product_validity_migration_audit")
-

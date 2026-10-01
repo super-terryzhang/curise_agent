@@ -21,8 +21,8 @@ also writes via `db.add` / `db.commit`).
 from domains.masterdata.upload.errors import UploadError
 from domains.masterdata.upload.service import (
     cancel_batch,
-    commit_validated_batch,
     commit_batch,
+    commit_validated_batch,
     get_batch,
     get_workflow_batch,
     get_workflow_file_key,

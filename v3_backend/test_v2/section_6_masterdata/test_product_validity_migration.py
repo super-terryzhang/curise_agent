@@ -18,7 +18,6 @@ from sqlalchemy.engine import make_url
 
 from infrastructure.db.base import Base
 
-
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -276,4 +275,3 @@ def test_product_validity_migration_is_loss_aware_and_reversible():
             assert created_periods == 0
     finally:
         engine.dispose()
-

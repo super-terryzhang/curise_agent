@@ -41,4 +41,3 @@ def downgrade() -> None:
         WHERE a.product_id = p.id
         """
     )
-

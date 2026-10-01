@@ -5,6 +5,7 @@ SQL queries live here; service layer never calls `db.query(...)` directly.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Literal
 
 from sqlalchemy import case, func, or_, select
