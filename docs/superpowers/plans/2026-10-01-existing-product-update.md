@@ -175,4 +175,4 @@
 - Backend reused-contract check: `pytest test_v2/section_6_masterdata/test_upload_workbench_contract.py -q` → `5 passed` (existing deprecation warnings only).
 - Frontend stable-candidate check: `pnpm test` → `44 files / 254 tests passed`; `pnpm exec tsc --noEmit` → passed; `pnpm build` → passed with Next.js 16.2.11 Turbopack and generated `/dashboard/workbench/product-update`.
 - Local synthetic smoke test covers workbench entry → persistent selection → purchase-scoped workbook → validated review → cancel before write. It does not call commit, production, or any external service.
-- Status: local feature branch only; not merged, pushed, deployed, migrated, or written to production data.
+- Release status: merged and pushed as `main@f91b1286f827a6318f31fe2dd56f6e2e044f2587`; GitHub CI `36832247722` succeeded; Vercel production `dpl_dtbFYWsW1pRU9t1C83JtYSsrrb3P` is Ready. No backend, migration, Oracle Job, or production business data changed.

@@ -2,7 +2,7 @@
 
 更新时间：2026-10-01（Asia/Tokyo）
 
-## 2026-10-01 已有产品更新五阶段流程（本地完成，尚未部署）
+## 2026-10-01 已有产品更新五阶段流程已正式上线
 
 - 工作台已新增“已有产品更新”入口，面向 `employee/admin/superadmin`，按照“选择产品 → 选择范围 → 下载与上传 → 程序检查 → 核对并提交”五阶段运行；`finance` 不显示该入口。
 - 用户可用现有产品名/代码、类别、供应商、国家、港口和状态筛选，选择会跨当前筛选和分页保留；更新范围严格限定为基本信息、采购价区间和卖价区间。
@@ -11,8 +11,9 @@
 - 失败结果显示 Excel 行、产品、服务端中文原因和保守修改建议；成功结果按字段显示数据库旧值与 Excel 新值，用户二次确认后才写入。旧“产品数据上传”页面中的已有产品入口已改为跳转到该专用流程。
 - 技术债清理：抽取通用四/五步进度条；集中作用域导出和纯状态机；补齐多页变更聚合、请求失败状态、旧入口文案、只允许所选产品/范围等边界保护；修正 SheetJS 只读表头的 TypeScript 类型问题。
 - 验证证据：相关后端工作台契约 `5 passed`；前端完整回归 `44 files / 254 tests passed`；`pnpm exec tsc --noEmit` 通过；Next.js 16.2.11 Turbopack 生产构建通过并生成 `/dashboard/workbench/product-update` 静态路由。本地合成烟雾测试覆盖入口、选品、采购价作用域文件、验证结果、核对以及提交前取消，未访问生产、未执行提交。
-- 当前实现位于隔离分支 `feature/existing-product-update-20261001`，最新功能提交为 `9a2ff85`。**尚未合并到 main、尚未推送 GitHub、尚未部署生产环境，也没有修改生产数据。**
-- 下一步：用户确认本地交付后，再按独立发布流程合并、推送、运行 GitHub CI、部署前端并做正式账号只读/取消路径验收。
+- 功能已合并并推送到 GitHub `main@f91b1286f827a6318f31fe2dd56f6e2e044f2587`；CI `36832247722` 的 frontend/backend 均成功。正式前端已更新为 Vercel deployment `dpl_dtbFYWsW1pRU9t1C83JtYSsrrb3P`（Production / Ready），绑定 `https://cruise-v3-frontend.vercel.app`。
+- 正式账号只读验收确认新路由、五阶段、筛选器和产品表格正常，并从既有生产后端加载 1549 个产品；本次没有选择产品、下载文件、上传、提交或修改生产数据。后端、Cloud Run、数据库 `0034_drop_product_validity` 和 Oracle Job generation 24 均未改变；回退点为上一前端 deployment `dpl_Agv4fAKqLYKKjDsjPy5npSoSH1je`。
+- 完整发布证据见 [已有产品更新生产核验](DEPLOYMENT_VERIFIED_2026-10-01_EXISTING_PRODUCT_UPDATE.md)。下一步由用户在正式页面选择少量产品，检查作用域文件、程序检查和核对页面；实际提交前仍可取消。
 
 ## 2026-10-01 产品整体有效期退役与批量价格区间已正式上线
 
