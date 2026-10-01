@@ -5,7 +5,6 @@ SQL queries live here; service layer never calls `db.query(...)` directly.
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Any, Literal
 
 from sqlalchemy import case, func, or_, select
@@ -151,14 +150,9 @@ def list_products(
 ) -> tuple[int, list[Product]]:
     """List products with filters + pagination.
 
-    `is_effective` matches the same definition as
-    `_products_service._is_effective` so the filter result agrees with
-    what the StatusBadge would show: True means `status AND (effective_to
-    is NULL OR effective_to >= today)`; False means the negation. If both
-    Python-side compute and this SQL clause diverge, the filter would
-    show rows that the UI badges differently — keep them in lockstep.
+    ``is_effective`` remains as a wire-compatible filter name and now maps
+    directly to the product's explicit status switch.
     """
-    from datetime import date as _date
 
     stmt = select(Product)
     if search:
@@ -173,15 +167,7 @@ def list_products(
     if supplier_id is not None:
         stmt = stmt.where(Product.supplier_id == supplier_id)
     if is_effective is not None:
-        today = _date.today()
-        effective_predicate = (
-            (Product.status.is_(True))
-            & (
-                (Product.effective_to.is_(None))
-                | (Product.effective_to >= today)
-            )
-        )
-        stmt = stmt.where(effective_predicate if is_effective else ~effective_predicate)
+        stmt = stmt.where(Product.status.is_(is_effective))
 
     count_stmt = stmt.with_only_columns(Product.id).order_by(None)
     total = len(db.execute(count_stmt).all())
@@ -238,10 +224,7 @@ def list_image_upload_products(
         .outerjoin(Country, Country.id == Product.country_id)
         .outerjoin(Port, Port.id == Product.port_id)
         .outerjoin(image_stats, image_stats.c.product_id == Product.id)
-        .where(
-            Product.status.is_(True),
-            or_(Product.effective_to.is_(None), Product.effective_to >= date.today()),
-        )
+        .where(Product.status.is_(True))
     )
     if search:
         pattern = f"%{search.strip()}%"

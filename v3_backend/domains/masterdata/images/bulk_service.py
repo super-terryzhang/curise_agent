@@ -225,11 +225,11 @@ def create_preview(
     # code) triple — N+1 would be brutal at ~500 rows. Build the lookup
     # table once.
     triples = {(e.country_name, e.port_name, e.product_code) for e in entries}
-    resolved = _resolve_product_ids(db, triples) if triples else {}
+    resolved, ambiguous = _resolve_product_ids(db, triples) if triples else ({}, set())
 
     counters = {"matched": 0, "unmatched": 0, "error": 0}
     for entry in entries:
-        staging = _build_staging_row(batch.id, entry, resolved)
+        staging = _build_staging_row(batch.id, entry, resolved, ambiguous)
         db.add(staging)
         counters[staging.status if staging.status in counters else "error"] += 1
 
@@ -245,17 +245,15 @@ def create_preview(
 
 def _resolve_product_ids(
     db: Session, triples: set[tuple[str, str, str]]
-) -> dict[tuple[str, str, str], int]:
-    """Map (country_name, port_name, product_code) → product_id.
+) -> tuple[dict[tuple[str, str, str], int], set[tuple[str, str, str]]]:
+    """Resolve only unique (country, port, code) identities.
 
     Performs a single multi-key lookup query keyed by case-insensitive
-    name comparisons. When a triple has multiple matching products
-    (e.g. legacy duplicates), we pick the one with the latest
-    `effective_to` (NULL = open-ended, treated as "latest") — same
-    tiebreaker as the matcher uses elsewhere.
+    name comparisons. Duplicate triples are returned separately so the
+    preview can ask for human resolution instead of guessing a product.
     """
     if not triples:
-        return {}
+        return {}, set()
 
     # Collect unique country / port names so the SQL `IN` clause stays
     # bounded even if the user has many triples sharing names.
@@ -264,7 +262,7 @@ def _resolve_product_ids(
     codes = {t[2] for t in triples if t[2]}
 
     if not (country_names and port_names and codes):
-        return {}
+        return {}, set()
 
     stmt = (
         select(
@@ -272,17 +270,17 @@ def _resolve_product_ids(
             Product.code,
             func.lower(Country.name).label("country_l"),
             func.lower(Port.name).label("port_l"),
-            Product.effective_to,
         )
         .join(Country, Country.id == Product.country_id)
         .join(Port, Port.id == Product.port_id)
         .where(func.lower(Country.name).in_(country_names))
         .where(func.lower(Port.name).in_(port_names))
         .where(Product.code.in_(codes))
+        .where(Product.status.is_(True))
     )
 
-    candidates: dict[tuple[str, str, str], tuple[int, str | None]] = {}
-    for pid, code, country_l, port_l, eff_to in db.execute(stmt).all():
+    candidates: dict[tuple[str, str, str], list[int]] = {}
+    for pid, code, country_l, port_l in db.execute(stmt).all():
         # Find the triple this row maps to. Since we lower-cased the
         # query side, we lower-case the lookup side too.
         for t in triples:
@@ -291,30 +289,19 @@ def _resolve_product_ids(
                 and t[1].lower() == port_l
                 and t[2] == code
             ):
-                prev = candidates.get(t)
-                # Tiebreaker: prefer NULL effective_to (open-ended), then
-                # newest effective_to. eff_to is stored as String here per
-                # the model — lexicographic comparison works because writes
-                # are normalized to YYYY-MM-DD.
-                if (
-                    prev is None
-                    or (eff_to is None and prev[1] is not None)
-                    or (
-                        eff_to is not None
-                        and prev[1] is not None
-                        and eff_to > prev[1]
-                    )
-                ):
-                    candidates[t] = (pid, eff_to)
+                candidates.setdefault(t, []).append(pid)
                 break
 
-    return {t: pid for t, (pid, _) in candidates.items()}
+    resolved = {triple: ids[0] for triple, ids in candidates.items() if len(ids) == 1}
+    ambiguous = {triple for triple, ids in candidates.items() if len(ids) > 1}
+    return resolved, ambiguous
 
 
 def _build_staging_row(
     batch_id: int,
     entry: ParsedEntry,
     resolved: dict[tuple[str, str, str], int],
+    ambiguous: set[tuple[str, str, str]],
 ) -> BulkImageStaging:
     """Translate a parsed ZIP entry into a staging row with status."""
     triple = (entry.country_name, entry.port_name, entry.product_code)
@@ -323,6 +310,12 @@ def _build_staging_row(
     if entry.error:
         status = "error"
         err = entry.error
+    elif triple in ambiguous:
+        status = "unmatched"
+        err = (
+            f"在 ({entry.country_name}, {entry.port_name}) 下，产品代码 "
+            f"{entry.product_code!r} 匹配到多个产品，请先清理重复主数据"
+        )
     elif product_id is None:
         status = "unmatched"
         err = f"未在 ({entry.country_name}, {entry.port_name}) 下找到产品代码 {entry.product_code!r}"

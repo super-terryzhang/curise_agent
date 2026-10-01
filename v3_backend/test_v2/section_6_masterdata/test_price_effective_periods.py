@@ -23,10 +23,6 @@ def test_http_edit_persists_price_periods_without_reusing_product_period(client,
     seed_user(db, email="price-period@example.com", role="admin")
     headers = login(client, "price-period@example.com")
     product = seed_product(db, code="PERIOD-1", name="Period Product", price=100)
-    product.effective_from = datetime(2025, 1, 1)
-    product.effective_to = datetime(2029, 12, 31)
-    db.commit()
-    db.refresh(product)
 
     response = client.patch(
         f"/api/data/products/{product.id}",
@@ -46,9 +42,6 @@ def test_http_edit_persists_price_periods_without_reusing_product_period(client,
     assert body["selling_price_effective_from"].startswith("2026-02-01")
     assert body["selling_price_effective_to"].startswith("2026-12-31")
 
-    db.refresh(product)
-    assert product.effective_from == datetime(2025, 1, 1)
-    assert product.effective_to == datetime(2029, 12, 31)
 
 
 def test_http_rejects_reversed_purchase_or_selling_period(client, db):

@@ -157,9 +157,8 @@ class Product(Base):
     contract_price: Mapped[Decimal | None] = mapped_column(
         Numeric(10, 2), nullable=True
     )
-    # Price periods are intentionally separate from Product.effective_*.
-    # Product.effective_* controls whether the product itself can match;
-    # these four dates describe the validity of each commercial price.
+    # Compatibility projection for the first editable purchase/selling period.
+    # Canonical multi-period history lives in v3_product_price_periods.
     purchase_price_effective_from: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True
     )
@@ -177,8 +176,6 @@ class Product(Base):
     country_of_origin: Mapped[str | None] = mapped_column(String(50), nullable=True)
     brand: Mapped[str | None] = mapped_column(String(100), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    effective_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    effective_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[bool] = mapped_column(Boolean, default=True)
 
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")

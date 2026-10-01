@@ -302,6 +302,28 @@ def test_employee_can_read_one_product_by_id(client, auth_tokens, db):
     assert response.json()["code"] == "DETAIL-1"
     assert "price_periods" in response.json()
     assert response.json()["image_count"] == 0
+    assert "effective_from" not in response.json()
+    assert "effective_to" not in response.json()
+
+
+def test_product_write_rejects_obsolete_validity_fields(client, seed_user):
+    headers = _admin_headers(client, seed_user)
+
+    response = client.post(
+        "/api/data/products",
+        headers=headers,
+        json={
+            "product_name_en": "Old contract",
+            "effective_from": "2026-01-01",
+            "effective_to": "2026-12-31",
+        },
+    )
+
+    assert response.status_code == 422
+    assert {item["loc"][-1] for item in response.json()["detail"]} == {
+        "effective_from",
+        "effective_to",
+    }
 
 
 def test_get_product_by_id_returns_404_for_unknown_product(client, seed_user):

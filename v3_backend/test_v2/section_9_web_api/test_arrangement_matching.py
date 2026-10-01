@@ -1,5 +1,3 @@
-from datetime import datetime
-
 import pytest
 
 from domains.masterdata.models import Country, Port, Product, Supplier
@@ -96,7 +94,6 @@ def test_product_match_is_not_filtered_by_obsolete_product_dates(db):
             unit="CA",
             price=100,
             status=True,
-            effective_to=datetime(2026, 9, 1),
         )
     )
     _order(
