@@ -19,3 +19,14 @@
 ## 发布边界
 
 提交到 GitHub 不等于部署生产。生产发布必须单独执行迁移、后端发布、前端发布与正式环境核验，并更新进度记录。
+
+## Cantonese Song Lesson Builder
+
+Experimental Cantonese song-pronunciation coach:
+
+- source: `cantonese-song-mvp/`
+- live demo: https://terry-cantonese-songlesson-v2.onrender.com
+- feature branch: `cantonese-coach-mvp-20260924`
+
+It accepts pasted Cantonese lyrics, splits them into line-by-line lessons, generates Jyutping and pronunciation audio, supports clickable character audio, and provides per-syllable pronunciation assessment. See `cantonese-song-mvp/README.md` for architecture, validation, limitations, and local setup.
+

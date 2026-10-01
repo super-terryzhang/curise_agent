@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-Hant"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>粵語發音教練 · Tone Lab</title>
+<style>
+:root{--bg:#f3f1ea;--card:#fffdfa;--ink:#171916;--muted:#73766f;--line:#dedbd1;--green:#1c5d4f;--red:#a34237;--amber:#9a6a14;--blue:#245b8a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,-apple-system,BlinkMacSystemFont,"PingFang HK","Noto Sans TC",sans-serif}
+.wrap{max-width:860px;margin:auto;padding:44px 20px 90px}h1{font-size:clamp(42px,8vw,70px);letter-spacing:-.055em;line-height:.95;margin:8px 0 14px}h2{margin:8px 0 10px}
+p{color:var(--muted);line-height:1.6}.ey{font-size:11px;letter-spacing:.16em;color:var(--muted);font-weight:800}.pill{display:inline-block;padding:7px 10px;border:1px solid var(--line);border-radius:999px;font-size:12px;font-weight:800;background:#fff}
+.card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:22px;margin:16px 0;box-shadow:0 14px 40px rgba(20,20,15,.045)}
+label{font-size:13px;font-weight:800;display:block;margin:12px 0 7px}input{width:100%;font:inherit;padding:13px 14px;border:1px solid var(--line);border-radius:12px;background:#fff;font-size:19px}
+button{font:inherit;font-weight:800;padding:12px 15px;border:0;border-radius:12px;background:var(--ink);color:#fff;cursor:pointer}button:disabled{opacity:.35;cursor:not-allowed}
+button.secondary{background:#fff;color:var(--ink);border:1px solid var(--line)}button.green{background:var(--green)}button.red{background:var(--red)}
+.row{display:grid;grid-template-columns:1fr auto;gap:9px}.buttons{display:flex;gap:9px;flex-wrap:wrap;margin-top:16px}
+.syllables{display:flex;gap:7px;flex-wrap:wrap;margin:16px 0}.sy{border:1px solid var(--line);background:#fff;border-radius:11px;padding:8px 10px;text-align:center;min-width:57px;cursor:pointer}.sy.selected{outline:3px solid rgba(28,93,79,.16);border-color:var(--green)}.sy b{display:block;font-size:20px}.sy small{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--green)}
+.status{font-size:13px;color:var(--muted);margin-top:11px;padding:10px 12px;background:#f5f3ed;border-radius:10px}.hidden{display:none}audio{width:100%;margin-top:12px}
+.range{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}.note{font-size:12px;color:var(--muted)}
+.target{display:flex;align-items:baseline;gap:12px;padding:14px 0}.target .char{font-size:54px;font-weight:800}.target code{font-size:22px;color:var(--green)}
+.calgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.cal{padding:14px;border:1px solid var(--line);border-radius:15px;background:#fff}.cal .big{font-size:26px;font-weight:800}.cal code{color:var(--green)}.cal .buttons{margin-top:10px}.cal button{padding:9px 10px;font-size:13px}
+.scoregrid{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:10px;margin-top:14px}.metric{background:#f5f3ed;border-radius:14px;padding:14px}.metric span{display:block;font-size:11px;color:var(--muted)}.metric strong{font-size:28px}.mainScore strong{font-size:52px}
+canvas{width:100%;height:260px;background:#fff;border:1px solid var(--line);border-radius:14px;margin-top:14px}
+.feedback{display:grid;gap:8px;margin-top:12px}.feedback div{padding:10px 12px;border-radius:11px;background:#f5f3ed}.feedback .bad{color:var(--red)}.feedback .good{color:var(--green)}
+.probs{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.prob{font-size:12px;padding:6px 8px;border:1px solid var(--line);border-radius:999px;background:#fff}.prob.top{border-color:var(--blue);color:var(--blue);font-weight:800}
+@media(max-width:650px){.row,.calgrid,.scoregrid{grid-template-columns:1fr}.buttons button{flex:1}.target .char{font-size:44px}}
+</style></head><body><main class="wrap">
+<div class="ey">CANTONESE PRONUNCIATION COACH</div><h1>粵語發音教練</h1>
+<span class="pill">Sherpa-ONNX VITS + Tone Lab</span>
+<p>標準音由固定粵語 VITS 模型生成；Tone Lab 在你的瀏覽器本地分析 F0 音高曲線，不上傳評估錄音。</p>
+
+<section class="card">
+<div class="ey">PHRASE PRACTICE</div><h2>整句練習</h2>
+<label for="text">練習文字</label>
+<div class="row"><input id="text" value="你好嗎" maxlength="120"><button id="analyse" type="button">拆成粵拼</button></div>
+<div id="syllables" class="syllables"></div>
+<label for="speed">發音速度</label><div class="range"><input id="speed" type="range" min="0.7" max="1.25" step="0.05" value="0.9"><b id="speedValue">0.90×</b></div>
+<div class="buttons"><button id="listen" type="button" class="green">▶ 生成並播放標準音</button><button id="record" type="button" class="red">● 整句跟讀</button></div>
+<audio id="standardAudio" controls class="hidden"></audio>
+<audio id="userAudio" controls class="hidden"></audio>
+<div id="status" class="status">正在檢查 VITS 模型…</div>
+</section>
+
+<section class="card">
+<div class="ey">SPEAKER CALIBRATION</div><h2>三點音域校準</h2>
+<p class="note">只需做一次。先聽，再用你自然的聲音分別念「詩 si1」「試 si3」「事 si6」。這三個平調會建立你的高 / 中 / 低音高座標；資料只存在此瀏覽器。</p>
+<div class="calgrid">
+  <div class="cal"><div class="big">詩 <code>si1</code></div><div class="note">Tone 1 · 高平</div><div class="buttons"><button class="secondary calListen" data-text="詩">▶ 聽</button><button class="calRecord" data-tone="1">● 錄校準</button></div><div id="cal1" class="note">未校準</div></div>
+  <div class="cal"><div class="big">試 <code>si3</code></div><div class="note">Tone 3 · 中平</div><div class="buttons"><button class="secondary calListen" data-text="試">▶ 聽</button><button class="calRecord" data-tone="3">● 錄校準</button></div><div id="cal3" class="note">未校準</div></div>
+  <div class="cal"><div class="big">事 <code>si6</code></div><div class="note">Tone 6 · 低平</div><div class="buttons"><button class="secondary calListen" data-text="事">▶ 聽</button><button class="calRecord" data-tone="6">● 錄校準</button></div><div id="cal6" class="note">未校準</div></div>
+</div>
+<div id="calStatus" class="status">完成三個平調後，精細聲調評估才會啟用。</div>
+<div class="buttons"><button id="resetCal" type="button" class="secondary">重設校準</button></div>
+</section>
+
+<section class="card">
+<div class="ey">TONE LAB</div><h2>精細聲調評估</h2>
+<p class="note">點上方任意一個有粵拼的字來選擇目標。這裡不只判「第幾聲」，也量化起點、終點與升降幅度，所以即使仍屬同一聲調，小偏差也會被顯示。</p>
+<div class="target"><div id="targetChar" class="char">—</div><code id="targetJyutping">—</code><span id="targetName" class="pill">未選擇</span></div>
+<div class="buttons"><button id="playTarget" type="button" class="secondary" disabled>▶ 聽單字標準音</button><button id="evalRecord" type="button" class="red" disabled>● 錄音並評估</button></div>
+<div id="evalStatus" class="status">請先完成三點音域校準。</div>
+
+<div id="results" class="hidden">
+  <div class="scoregrid">
+    <div class="metric mainScore"><span>聲調質量</span><strong id="qualityScore">—</strong></div>
+    <div class="metric"><span>分類結果</span><strong id="predTone">—</strong></div>
+    <div class="metric"><span>目標聲調</span><strong id="goalTone">—</strong></div>
+  </div>
+  <div id="probabilities" class="probs"></div>
+  <canvas id="pitchChart" width="760" height="260"></canvas>
+  <div class="scoregrid">
+    <div class="metric"><span>起點偏差</span><strong id="startErr">—</strong></div>
+    <div class="metric"><span>終點偏差</span><strong id="endErr">—</strong></div>
+    <div class="metric"><span>升降幅度偏差</span><strong id="slopeErr">—</strong></div>
+  </div>
+  <div id="feedback" class="feedback"></div>
+</div>
+</section>
+</main>
+<script src="/vendor/cantojpmin_data.js?v=1" defer></script>
+<script src="/vendor/cantojpmin_functions.js?v=1" defer></script>
+<script src="/app.js?v=tonelab-1" defer></script>
+</body></html>
