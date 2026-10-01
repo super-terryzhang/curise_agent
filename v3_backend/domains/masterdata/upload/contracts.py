@@ -90,6 +90,7 @@ class WorkflowRow(BaseModel):
     source_row_number: int
     kind: Literal["error", "create", "update", "skip"]
     identity: RowIdentity
+    operations: list[str] = Field(default_factory=list)
     fields: list[FieldChange]
     issues: list[RowIssue]
     reason: str | None = None

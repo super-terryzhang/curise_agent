@@ -134,7 +134,22 @@
 
 **Acceptance:** runtime search is clean; all focused and full suites pass; generated artifacts are current.
 
-## Task 7: Review, integration and production deployment
+## Task 7: Make all four bulk-upload intents explicit
+
+**Purpose:** Safely distinguish new product, product update, new price period and existing price-period update without guessing.
+
+**Scope:** Upload parser/resolver/preview/commit/rollback, product-price export, workbench row labels and tests.
+
+**Steps:**
+1. Add optional technical identity headers accepted only from exported workbooks: product ID/version and purchase/selling period IDs.
+2. Resolve explicit product IDs before natural keys, validate identity/version, and reject missing/wrong/stale IDs.
+3. Plan period creates and updates separately; validate ownership, type and overlaps before any mutation.
+4. Persist reversible period-update snapshots and restore them during batch rollback.
+5. Export IDs automatically and show explicit row operations in Step 3 while keeping the new-product template simple.
+
+**Acceptance:** All four intents have RED→GREEN tests; changing an existing interval's amount or dates is previewed, committed and rolled back; an ambiguous row is rejected before mutation.
+
+## Task 8: Review, integration and production deployment
 
 **Purpose:** Ship with recoverable database and application transitions.
 

@@ -1,6 +1,6 @@
 """Multiple non-overlapping price intervals selected by loading day."""
 
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
@@ -418,3 +418,203 @@ def test_batch_upload_rejects_overlap_with_existing_period_before_commit(db):
     staged = db.query(StagingProduct).filter_by(batch_id=batch.id).one()
     assert "与数据库现有区间" in " ".join(staged.validation_errors or [])
     assert db.query(ProductPricePeriod).filter_by(product_id=product.id).count() == 1
+
+
+def test_batch_upload_updates_exported_period_id_and_rolls_back(db):
+    from domains.masterdata import price_history
+    from domains.masterdata.upload import (
+        commit_validated_batch,
+        get_workflow_rows,
+        parse_excel,
+        resolve_and_score,
+        rollback_batch,
+    )
+
+    product, country, port = _product(db)
+    price_history.initial(db, product, actor_id=None, source="test")
+    db.commit()
+    created = _create(db, product, "purchase", 10, "2026-01-01", "2026-06-30")
+    product.purchase_price_effective_from = datetime(2026, 1, 1)
+    product.purchase_price_effective_to = datetime(2026, 6, 30)
+    db.commit()
+    db.refresh(product)
+    batch = parse_excel(
+        db,
+        file_bytes=make_excel(
+            [
+                {
+                    "product_id": product.id,
+                    "expected_revision": product.revision,
+                    "product_name": product.product_name_en,
+                    "product_code": product.code,
+                    "country": country.name,
+                    "port": port.name,
+                    "purchase_price_period_id": created["id"],
+                    "price": 12,
+                    "currency": "USD",
+                    "purchase_price_effective_from": "2026-02-01",
+                    "purchase_price_effective_to": "2026-07-31",
+                }
+            ]
+        ),
+        filename="exported-period-update.xlsx",
+        user_id=1,
+    )
+
+    resolved = resolve_and_score(db, batch_id=batch.id, user_id=1)
+    assert resolved.error_rows == 0
+    preview = get_workflow_rows(
+        db, batch_id=batch.id, user_id=1, view="changes", changed_only=True
+    )
+    assert "更新采购价区间" in preview["items"][0]["operations"]
+    assert "更新产品" not in preview["items"][0]["operations"]
+
+    result = commit_validated_batch(db, batch_id=batch.id, user_id=1)
+    assert result["errors"] == 0
+    updated = db.get(ProductPricePeriod, created["id"])
+    assert float(updated.amount) == 12
+    assert updated.effective_from == date(2026, 2, 1)
+    assert updated.effective_to == date(2026, 7, 31)
+    assert updated.currency == "USD"
+    db.refresh(product)
+    assert float(product.price) == 99
+    assert product.currency == "JPY"
+    assert product.purchase_price_effective_from.date() == date(2026, 1, 1)
+    assert product.purchase_price_effective_to.date() == date(2026, 6, 30)
+
+    rolled_back = rollback_batch(db, batch_id=batch.id, user_id=1)
+    assert rolled_back["skipped"] == 0
+    restored = db.get(ProductPricePeriod, created["id"])
+    assert float(restored.amount) == 10
+    assert restored.currency == "JPY"
+    assert restored.effective_from == date(2026, 1, 1)
+    assert restored.effective_to == date(2026, 6, 30)
+
+
+def test_batch_upload_adds_canonical_period_without_replacing_fallback_price(db):
+    from domains.masterdata import price_history
+    from domains.masterdata.upload import (
+        commit_validated_batch,
+        parse_excel,
+        resolve_and_score,
+        rollback_batch,
+    )
+
+    product, country, port = _product(db)
+    price_history.initial(db, product, actor_id=None, source="test")
+    db.commit()
+    original_price_version = product.price_version
+    batch = parse_excel(
+        db,
+        file_bytes=make_excel(
+            [
+                {
+                    "product_id": product.id,
+                    "expected_revision": product.revision,
+                    "product_name": product.product_name_en,
+                    "product_code": product.code,
+                    "country": country.name,
+                    "port": port.name,
+                    "price": 12,
+                    "purchase_price_effective_from": "2026-02-01",
+                    "purchase_price_effective_to": "2026-07-31",
+                }
+            ]
+        ),
+        filename="exported-period-create.xlsx",
+        user_id=1,
+    )
+
+    resolved = resolve_and_score(db, batch_id=batch.id, user_id=1)
+    assert resolved.error_rows == 0
+    result = commit_validated_batch(db, batch_id=batch.id, user_id=1)
+    assert result["errors"] == 0
+
+    db.refresh(product)
+    assert float(product.price) == 99
+    assert product.purchase_price_effective_from is None
+    assert product.purchase_price_effective_to is None
+    assert product.price_version == original_price_version + 1
+    added = db.query(ProductPricePeriod).filter_by(
+        product_id=product.id,
+        price_type="purchase",
+        source_batch_id=batch.id,
+    ).one()
+    assert float(added.amount) == 12
+    added_id = added.id
+
+    rolled_back = rollback_batch(db, batch_id=batch.id, user_id=1)
+    assert rolled_back["skipped"] == 0
+    assert db.get(ProductPricePeriod, added_id) is None
+
+
+def test_batch_upload_rejects_period_update_without_stable_period_id(db):
+    from domains.masterdata.upload import parse_excel, resolve_and_score
+
+    product, country, port = _product(db)
+    _create(db, product, "purchase", 10, "2026-01-01", "2026-06-30")
+    batch = parse_excel(
+        db,
+        file_bytes=make_excel(
+            [
+                {
+                    "product_name": product.product_name_en,
+                    "product_code": product.code,
+                    "country": country.name,
+                    "port": port.name,
+                    "price": 12,
+                    "purchase_price_effective_from": "2026-01-01",
+                    "purchase_price_effective_to": "2026-06-30",
+                }
+            ]
+        ),
+        filename="ambiguous-period-update.xlsx",
+        user_id=1,
+    )
+
+    resolved = resolve_and_score(db, batch_id=batch.id, user_id=1)
+
+    assert resolved.error_rows == 1
+    staged = db.query(StagingProduct).filter_by(batch_id=batch.id).one()
+    assert "price_period_id" in " ".join(staged.validation_errors or [])
+
+
+def test_batch_upload_rejects_wrong_or_stale_export_identity(db):
+    from domains.masterdata.upload import parse_excel, resolve_and_score
+
+    product, country, port = _product(db)
+    other = Product(
+        product_name_en="Other Product",
+        code="OTHER",
+        country_id=country.id,
+        port_id=port.id,
+        status=True,
+    )
+    db.add(other)
+    db.commit()
+    batch = parse_excel(
+        db,
+        file_bytes=make_excel(
+            [
+                {
+                    "product_id": product.id,
+                    "expected_revision": product.revision + 1,
+                    "product_name": other.product_name_en,
+                    "product_code": other.code,
+                    "country": country.name,
+                    "port": port.name,
+                    "price": 12,
+                }
+            ]
+        ),
+        filename="stale-export.xlsx",
+        user_id=1,
+    )
+
+    resolved = resolve_and_score(db, batch_id=batch.id, user_id=1)
+
+    assert resolved.error_rows == 1
+    staged = db.query(StagingProduct).filter_by(batch_id=batch.id).one()
+    messages = " ".join(staged.validation_errors or [])
+    assert "版本" in messages
+    assert "身份" in messages
