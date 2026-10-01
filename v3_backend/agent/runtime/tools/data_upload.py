@@ -6,7 +6,7 @@ User flow:
   3. Agent calls `parse_uploaded_file(batch_id)` → resolves matches, returns stats
   4. Agent calls `preview_upload(batch_id)` → shows the diff
   5. Agent presents summary, then calls `propose_action(action="commit_upload_batch", ...)`
-  6. User clicks "approve" in UI → backend dispatches `commit_batch`
+  6. User clicks "approve" in UI → backend dispatches `commit_validated_batch`
 
 The tool functions are thin wrappers over `domains.masterdata.upload`.
 Commit + rollback are deliberately Tier-2 (propose only) — they're
@@ -65,7 +65,7 @@ def get_upload_template(*, ctx: ToolContext) -> str:  # noqa: ARG001 — ctx req
     body = (
         "📋 **产品上传模板**\n\n"
         f"[📥 下载模板（product_upload_template.xlsx）]({download_url})\n\n"
-        "**模板说明** —— 工作表「产品数据」共 21 列；"
+        "**模板说明** —— 工作表「产品数据」共 19 列；"
         "`product_name`、`country`、`port` 必填，其余按需填写。下面是常用 8 列：\n\n"
         "| 列名 | 必填? | 示例 | 备注 |\n"
         "| --- | --- | --- | --- |\n"
@@ -77,12 +77,11 @@ def get_upload_template(*, ctx: ToolContext) -> str:  # noqa: ARG001 — ctx req
         "| `price` | 可选 | 850.00 | 采购价；直接写数字，不要带 ¥ $ 符号 |\n"
         "| `contract_price` | 可选 | 1050.00 | 卖价，用于对比 PO 单价；空白保留旧值 |\n"
         "| `currency` | 可选 | USD / JPY | ISO 4217 三字母代码 |\n\n"
-        "**完整 21 列说明**请看模板内的「使用说明」工作表。"
+        "**完整 19 列说明**请看模板内的「使用说明」工作表。"
         "其他可选列：`product_name_jp`、`brand`、`category`、"
         "`unit`、`unit_size`、`pack_size`、`country_of_origin`、"
         "`purchase_price_effective_from`、`purchase_price_effective_to`、"
-        "`selling_price_effective_from`、`selling_price_effective_to`、"
-        "`effective_from`、`effective_to`。\n\n"
+        "`selling_price_effective_from`、`selling_price_effective_to`。\n\n"
         "⚠️ **为什么 country + port 必填** —— 同一个产品代码在不同港口是**不同的记录**"
         "（价格、币种、供应商常常不同）。系统按 `(country, port, code/name)` 三元组识别产品；"
         "缺 country 或 port 的行会直接报 row-level 错误，不会被静默匹配到其他港口的记录。\n\n"
@@ -203,7 +202,7 @@ def preview_upload(batch_id: int, limit: int = 50, *, ctx: ToolContext) -> str:
     """Show the diff for an already-resolved batch.
 
     Returns groups: create / update / skip / error. Each `update` row's
-    `fields` dict carries the 4-state schema for ALL 19 mutable fields
+    `fields` dict carries the 4-state schema for ALL 17 mutable fields
     (action ∈ {change, unchanged, keep_db, set_new}, plus db/excel
     values and a `will_write` boolean). `skip` rows also include the
     same `fields` dict so the agent can answer "why was this row
@@ -290,7 +289,7 @@ def inspect_upload_row(
             "product_name_en": {action: "immutable", db, excel, will_write},
             "code":            {action: "immutable", db, excel, will_write},
           },
-          "fields": {                   # 19 mutable fields, 4-state each
+          "fields": {                   # 17 mutable fields, 4-state each
             "price":           {action, db, excel, will_write},
             "unit":            {action, db, excel, will_write},
             "pack_size":       {action, db, excel, will_write},
@@ -303,8 +302,6 @@ def inspect_upload_row(
             "supplier_id":     {...},
             "country_id":      {...},
             "port_id":         {...},
-            "effective_from":  {...},
-            "effective_to":    {...},
             "purchase_price_effective_from": {...},
             "purchase_price_effective_to":   {...},
             "selling_price_effective_from":  {...},
@@ -353,7 +350,7 @@ class BatchActionArgs(BaseModel):
 
 
 def _dispatch_commit_upload_batch(deps, args: BatchActionArgs) -> dict:  # noqa: ANN001
-    return upload_service.commit_batch(
+    return upload_service.commit_validated_batch(
         deps.db, batch_id=args.batch_id, user_id=deps.user_id
     )
 

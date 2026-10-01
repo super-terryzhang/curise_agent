@@ -25,8 +25,6 @@ const FIELD_LABELS: Record<string, string> = {
   brand: "品牌",
   currency: "币种",
   country_of_origin: "原产地",
-  effective_from: "生效起",
-  effective_to: "生效止",
 };
 
 function formatDiffValue(field: string, value: string | number | null): string {
@@ -128,9 +126,6 @@ export function UploadReviewCard({ data, onQuickAction }: UploadReviewCardProps)
           {data.supplier?.name && <span>供应商: {data.supplier.name}</span>}
           {data.country?.name && <span>国家: {data.country.name}</span>}
           {data.port?.name && <span>港口: {data.port.name}</span>}
-          {(data.effective_from || data.effective_to) && (
-            <span>有效期: {data.effective_from || "?"} ~ {data.effective_to || "?"}</span>
-          )}
         </div>
       </div>
 

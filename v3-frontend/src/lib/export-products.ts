@@ -33,34 +33,40 @@ export async function loadProductsForExport(filters: Filters): Promise<ProductIt
 export async function buildPriceWorkbook(products: ProductItem[]) {
   const XLSX = await import("xlsx");
   const headers = [
-    "product_name", "country", "port", "product_code", "price",
+    "product_id", "expected_revision", "product_name", "country", "port", "product_code",
+    "product_name_jp", "brand", "category", "supplier", "unit", "unit_size",
+    "pack_size", "country_of_origin",
+    "purchase_price_period_id", "selling_price_period_id", "price",
     "purchase_price_effective_from", "purchase_price_effective_to",
     "contract_price", "selling_price_effective_from", "selling_price_effective_to",
     "currency",
   ];
   const rows = products.flatMap((p) => {
-    const identity = [p.product_name_en, p.country_name, p.port_name, p.code];
+    const identity = [p.id, p.revision, p.product_name_en, p.country_name, p.port_name, p.code];
+    const productFields = [
+      p.product_name_jp, p.brand, p.category_name, p.supplier_name, p.unit,
+      p.unit_size, p.pack_size, p.country_of_origin,
+    ];
+    const productRow = [
+      ...identity, ...productFields, null, null, null, null, null, null, null, null,
+      p.currency,
+    ];
     const periods = (p.price_periods ?? []).filter((period) => period.status);
-    if (periods.length === 0) {
-      return [[...identity,
-        p.price, excelDate(p.purchase_price_effective_from),
-        excelDate(p.purchase_price_effective_to),
-        p.contract_price, excelDate(p.selling_price_effective_from),
-        excelDate(p.selling_price_effective_to), p.currency]];
-    }
-    return periods.map((period) => period.price_type === "purchase"
-      ? [...identity, period.amount, excelDate(period.effective_from), excelDate(period.effective_to), null, null, null, period.currency || p.currency]
-      : [...identity, null, null, null, period.amount, excelDate(period.effective_from), excelDate(period.effective_to), period.currency || p.currency]);
+    const blankProductFields = productFields.map(() => null);
+    const periodRows = periods.map((period) => period.price_type === "purchase"
+      ? [...identity, ...blankProductFields, period.id, null, period.amount, excelDate(period.effective_from), excelDate(period.effective_to), null, null, null, period.currency || p.currency]
+      : [...identity, ...blankProductFields, null, period.id, null, null, null, period.amount, excelDate(period.effective_from), excelDate(period.effective_to), period.currency || p.currency]);
+    return [productRow, ...periodRows];
   });
   const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-  sheet["!cols"] = [32, 18, 20, 20, 16, 18, 18, 16, 18, 18, 12]
+  sheet["!cols"] = [12, 14, 32, 18, 20, 20, 24, 18, 18, 22, 12, 16, 18, 22, 22, 20, 16, 18, 18, 16, 18, 18, 12]
     .map((wch) => ({ wch }));
   for (let row = 2; row <= rows.length + 1; row++) {
-    if (sheet[`D${row}`]) sheet[`D${row}`].z = "@";
-    for (const col of ["E", "H"]) {
+    if (sheet[`F${row}`]) sheet[`F${row}`].z = "@";
+    for (const col of ["Q", "T"]) {
       if (sheet[`${col}${row}`]) sheet[`${col}${row}`].z = "#,##0.00";
     }
-    for (const col of ["F", "G", "I", "J"]) {
+    for (const col of ["R", "S", "U", "V"]) {
       if (sheet[`${col}${row}`]) sheet[`${col}${row}`].z = "yyyy-mm-dd";
     }
   }
@@ -69,11 +75,14 @@ export async function buildPriceWorkbook(products: ProductItem[]) {
   const notes = XLSX.utils.aoa_to_sheet([
     ["产品价格更新说明"],
     ["范围：导出时当前筛选条件下的全部产品，不限当前页。"],
-    ["price 为采购价；contract_price 为卖价；每个价格区间独占一行，同一产品可以出现多行。"],
+    ["每个产品先有一行产品资料，后续每个价格区间独占一行；产品资料只在第一行修改。"],
+    ["price 为采购价；contract_price 为卖价；同一产品可以有多个互不重叠的价格区间。"],
     ["日期使用 YYYY-MM-DD；空白表示批量更新时保留原值。currency 为产品币种。"],
     ["修改价格后保存为 .xlsx，通过聊天上传、预览并确认提交。"],
+    ["product_id、expected_revision 和两个 price_period_id 由系统导出，请勿手工修改。"],
+    ["price_period_id 为空表示新增区间；保留 ID 表示更新该区间，可修改价格及起止日期。"],
     ["产品名称、采购国家、港口必填；产品代码请保留前导零。"],
-    ["空白保留旧值，0 有效；匹配不到会新增产品，请核对预览。"],
+    ["空白保留旧值，0 有效；已有产品不会因 ID 错误而转为新增，请核对预览。"],
     ["缺少国家或港口的历史产品需先补全身份信息，才能导入。"],
     ["导出不是数据库快照；提交前检查是否有其他人更新了价格。"],
   ]);

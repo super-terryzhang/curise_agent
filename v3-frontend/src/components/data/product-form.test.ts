@@ -38,8 +38,6 @@ const product: ProductItem = {
   category_id: 2,
   supplier_id: 3,
   port_id: 4,
-  effective_from: "2026-01-01T00:00:00",
-  effective_to: "2026-12-31T00:00:00",
   is_effective: true,
 };
 
@@ -78,6 +76,8 @@ describe("product form mapping", () => {
     expect(payload.product_name_en).toBe("NEW PRODUCT");
     expect(JSON.stringify(payload)).not.toContain("product_name_jp");
     expect(JSON.stringify(payload)).not.toContain("expected_revision");
+    expect(payload).not.toHaveProperty("effective_from");
+    expect(payload).not.toHaveProperty("effective_to");
   });
 });
 

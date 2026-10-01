@@ -67,7 +67,7 @@ def _resolved(db, rows: list[dict], user_id: int = 1):
 # ─── 4-state schema completeness ─────────────────────────────
 
 
-def test_field_diff_covers_all_19_mutable_fields(db):
+def test_field_diff_covers_all_17_mutable_fields(db):
     """`_field_diff` must return every field `_apply_update` is allowed to
     mutate. Used by inspect_row + preview_changes. Drift here
     means the agent will silently omit a field from drill-down."""
@@ -84,7 +84,6 @@ def test_field_diff_covers_all_19_mutable_fields(db):
         "product_name_jp", "brand", "unit_size",
         "country_of_origin", "currency",
         "category_id", "supplier_id", "country_id", "port_id",
-        "effective_from", "effective_to",
         "purchase_price_effective_from", "purchase_price_effective_to",
         "selling_price_effective_from", "selling_price_effective_to",
     }

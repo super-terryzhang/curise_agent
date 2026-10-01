@@ -5,10 +5,6 @@ function valueOrPlaceholder(value: string | null | undefined) {
   return value?.trim() || "未填写";
 }
 
-function dateOrPlaceholder(value: string | null | undefined) {
-  return value ? value.slice(0, 10) : "未填写";
-}
-
 function BasicField({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 border-b border-slate-100 py-4">
@@ -42,8 +38,6 @@ export function ProductBasicInfo({ product }: { product: ProductItem }) {
         <BasicField label="包装规格" value={valueOrPlaceholder(product.pack_size)} />
         <BasicField label="原产地" value={valueOrPlaceholder(product.country_of_origin)} />
         <BasicField label="币种" value={valueOrPlaceholder(product.currency)} />
-        <BasicField label="产品有效开始日期" value={dateOrPlaceholder(product.effective_from)} />
-        <BasicField label="产品有效结束日期" value={dateOrPlaceholder(product.effective_to)} />
         <div className="min-w-0 border-b border-slate-100 py-4">
           <dt className="mb-1 text-xs text-muted-foreground">状态</dt>
           <dd>

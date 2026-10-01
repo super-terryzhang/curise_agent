@@ -30,8 +30,6 @@ const product: ProductItem = {
   category_id: 2,
   supplier_id: 3,
   port_id: 4,
-  effective_from: "2026-01-01T00:00:00",
-  effective_to: "2026-12-31T00:00:00",
   is_effective: true,
 };
 
@@ -53,14 +51,14 @@ describe("ProductBasicInfo", () => {
       "40LB",
       "USA",
       "JPY",
-      "2026-01-01",
-      "2026-12-31",
       "有效",
     ]) {
       expect(html).toContain(value);
     }
     expect(html).not.toContain("采购价");
     expect(html).not.toContain("卖价");
+    expect(html).not.toContain("产品有效开始日期");
+    expect(html).not.toContain("产品有效结束日期");
     expect(html).not.toContain(">80<");
     expect(html).not.toContain(">100<");
   });

@@ -279,6 +279,33 @@ def test_parse_unmatched_when_triple_not_in_db(db):
     assert "UNKNOWN" in row.error_message
 
 
+def test_parse_reports_ambiguous_duplicate_product_instead_of_guessing(db):
+    """The removed product expiry date must never be used as an identity tiebreaker."""
+    from domains.masterdata.models import Country, Port
+
+    user = seed_user(db, email="duplicate-image@example.com", role="admin")
+    country = Country(name="Japan")
+    db.add(country)
+    db.flush()
+    port = Port(name="Osaka", country_id=country.id)
+    db.add(port)
+    db.flush()
+    seed_product(db, code="DUP-1", name="First", country_id=country.id, port_id=port.id)
+    seed_product(db, code="DUP-1", name="Second", country_id=country.id, port_id=port.id)
+
+    batch = bulk_service.create_preview(
+        db,
+        user_id=user.id,
+        zip_filename="duplicates.zip",
+        zip_bytes=_make_zip({"products/Japan/Osaka/DUP-1/photo.jpg": _tiny_png()}),
+    )
+
+    row = db.query(BulkImageStaging).filter_by(batch_id=batch.id).one()
+    assert row.status == "unmatched"
+    assert row.product_id is None
+    assert "匹配到多个产品" in row.error_message
+
+
 # ─── E. Bad extension → error entry, not silent drop ─────────
 
 

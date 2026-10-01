@@ -227,9 +227,21 @@ export default function ProductUploadPage() {
                   <div className="mt-2 text-xs text-muted-foreground">仅支持 .xlsx；系统会保存原件并检查文件大小与内容。</div>
                   <Button className="mt-5" disabled={busy}>选择 Excel</Button>
                 </div>
-                <div className="mt-4 flex items-center justify-between rounded-md border bg-muted/20 px-4 py-3 text-xs">
-                  <span className="text-muted-foreground">第一次使用建议先填写标准模板。</span>
-                  <a href={productUploadTemplateUrl()} className="flex items-center gap-1.5 font-medium text-primary hover:underline"><Download className="h-3.5 w-3.5" />下载模板</a>
+                <div className="mt-4 grid gap-px overflow-hidden rounded-md border bg-border text-xs sm:grid-cols-2">
+                  <div className="flex items-center justify-between gap-4 bg-background px-4 py-3">
+                    <div>
+                      <div className="font-medium">上传新产品</div>
+                      <div className="mt-1 text-muted-foreground">使用标准模板，可同时填写多个价格区间。</div>
+                    </div>
+                    <a href={productUploadTemplateUrl()} className="flex shrink-0 items-center gap-1.5 font-medium text-primary hover:underline"><Download className="h-3.5 w-3.5" />下载模板</a>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 bg-background px-4 py-3">
+                    <div>
+                      <div className="font-medium">更新已有产品或价格区间</div>
+                      <div className="mt-1 text-muted-foreground">先导出价格 Excel，修改内容时请保留系统 ID。</div>
+                    </div>
+                    <a href="/dashboard/data?tab=products" className="flex shrink-0 items-center gap-1.5 font-medium text-primary hover:underline">前往导出<ArrowRight className="h-3.5 w-3.5" /></a>
+                  </div>
                 </div>
               </div>
             )}
@@ -309,7 +321,11 @@ function ChangeRow({ row }: { row: WorkflowRow }) {
     <Card className="gap-0 rounded-md py-0 shadow-none">
       <CardHeader className="flex-row items-center justify-between border-b bg-muted/25 px-4 py-3">
         <CardTitle className="text-sm"><span className="mr-2 font-mono text-xs text-muted-foreground">第 {row.source_row_number} 行</span>{row.identity.product_name || "未命名产品"}</CardTitle>
-        <Badge variant={row.kind === "create" ? "default" : "outline"}>{row.kind === "create" ? "新增" : "更新"}</Badge>
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {(row.operations.length ? row.operations : [row.kind === "create" ? "新增产品" : "更新产品"]).map((operation) => (
+            <Badge key={operation} variant={row.kind === "create" ? "default" : "outline"}>{operation}</Badge>
+          ))}
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         <div className="grid grid-cols-[150px_1fr_1fr] border-b bg-muted/20 px-4 py-2 text-[11px] font-medium text-muted-foreground"><span>字段</span><span>当前数据</span><span>Excel 数据</span></div>

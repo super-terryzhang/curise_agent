@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from functools import wraps
 from typing import Any, Literal
@@ -20,8 +20,6 @@ from domains.masterdata.schemas import ProductCreate, ProductUpdate
 from infrastructure.storage import get_storage
 
 _DATE_FIELDS = (
-    "effective_from",
-    "effective_to",
     "purchase_price_effective_from",
     "purchase_price_effective_to",
     "selling_price_effective_from",
@@ -52,28 +50,9 @@ def _validate_price_periods(values: dict[str, datetime | None]) -> None:
             raise BadRequest(f"{label}有效开始日期不能晚于结束日期")
 
 
-def _is_effective(p: Product, *, today: date | None = None) -> bool:
-    """Computed availability flag (v43+).
-
-    `Product.status` is a manual on/off switch (admin set). `is_effective`
-    is the user-visible "is this product actually usable today" answer:
-    requires the manual switch AND (no expiry date OR expiry not yet
-    reached). `today` is parameterised so unit tests can pin time.
-
-    The UI's StatusBadge renders off this rather than `status` so that
-    products past `effective_to` automatically appear as 无效 even
-    though no cron has flipped `status`. Pre-v43 we had no such
-    behaviour at all — expired rows still showed as 有效.
-    """
-    if not p.status:
-        return False
-    if p.effective_to is None:
-        return True
-    cutoff = today or date.today()
-    end = p.effective_to
-    if isinstance(end, datetime):
-        end = end.date()
-    return end >= cutoff
+def _is_effective(p: Product) -> bool:
+    """Compatibility projection: product availability is its status switch."""
+    return bool(p.status)
 
 
 def list_products(
@@ -212,8 +191,6 @@ def create_product(db: Session, body: ProductCreate, *, actor_id: int | None = N
         country_of_origin=body.country_of_origin,
         brand=body.brand,
         currency=body.currency,
-        effective_from=dates["effective_from"],
-        effective_to=dates["effective_to"],
         status=body.status,
     )
     db.add(obj)
@@ -369,13 +346,9 @@ def serialize(
         "country_of_origin": p.country_of_origin,
         "brand": p.brand,
         "currency": p.currency,
-        "effective_from": str(p.effective_from) if p.effective_from else None,
-        "effective_to": str(p.effective_to) if p.effective_to else None,
         "status": p.status,
-        # Computed at read time; UI uses this for the status badge so
-        # expired products (effective_to < today) flip to 无效 without
-        # any cron / migration. `status` stays the source of truth for
-        # the manual admin toggle.
+        # Compatibility key consumed by the current UI query contract.
+        # It now mirrors the only availability source of truth: status.
         "is_effective": _is_effective(p),
         # R5 (2026-06-22): list-page projection for the image column.
         # `thumbnail_url` is a freshly-signed URL to the primary image

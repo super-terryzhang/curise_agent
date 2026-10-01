@@ -1,5 +1,3 @@
-from datetime import datetime
-
 import pytest
 
 from domains.masterdata.models import Country, Port, Product, Supplier
@@ -84,7 +82,7 @@ def test_matches_all_orders_without_merging_equal_skus(db):
     assert len(first.match_results) == len(second.match_results) == 1
 
 
-def test_uses_loading_day_for_product_effective_window(db):
+def test_product_match_is_not_filtered_by_obsolete_product_dates(db):
     user, country, port, supplier, group = _setup_group(db)
     db.add(
         Product(
@@ -96,7 +94,6 @@ def test_uses_loading_day_for_product_effective_window(db):
             unit="CA",
             price=100,
             status=True,
-            effective_from=datetime(2026, 9, 19),
         )
     )
     _order(

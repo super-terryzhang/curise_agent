@@ -21,7 +21,6 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
-import pytest
 from openpyxl import Workbook
 
 from domains.masterdata.models import Category, Country, Port, Product, Supplier
@@ -146,37 +145,23 @@ def test_fk_miss_on_one_row_does_not_block_others(db):
     assert db.query(Product).filter(Product.product_name_en == "Row 2 BAD").count() == 0
 
 
-# ─── C5: 日期多格式 end-to-end ──────────────────────────
+# ─── C5: 退役表头不能被静默忽略 ────────────────────
 
 
-@pytest.mark.parametrize(
-    "raw_date,expected_iso",
-    [
-        ("2026-05-30", "2026-05-30"),
-        ("2026/05/30", "2026-05-30"),
-        ("2026.05.30", "2026-05-30"),
-        ("2026-05-30 12:34:56", "2026-05-30"),
-        ("2026-05-30T00:00:00", "2026-05-30"),
-    ],
-)
-def test_effective_date_accepts_multiple_formats_end_to_end(db, raw_date, expected_iso):
-    """用户故事：日本来源的 Excel 写 2026/05/30，国际来源写 2026-05-30，
-    Excel 导出的有时是带时间的 ISO datetime。三种都要接，结果一样。"""
+def test_retired_product_validity_headers_are_explicitly_rejected(db):
     blob = make_excel(
-        [{"product_name": f"Date Test {raw_date}", "effective_from": raw_date}]
+        [{"product_name": "Old Template", "effective_from": "2026-05-30"}]
     )
-    batch = parse_excel(db, file_bytes=blob, filename="t.xlsx", user_id=1)
-    resolved = resolve_and_score(db, batch_id=batch.id, user_id=1)
-    assert resolved.error_rows == 0
-    commit_batch(db, batch_id=batch.id, user_id=1)
+    batch = parse_excel(db, file_bytes=blob, filename="old.xlsx", user_id=1)
 
-    p = (
-        db.query(Product)
-        .filter(Product.product_name_en == f"Date Test {raw_date}")
-        .one()
+    issues = batch.header_diagnostics["blocking_issues"]
+    assert any(issue["code"] == "retired_header" for issue in issues)
+    assert any(
+        "已停用" in issue["message"]
+        and "purchase_price_effective_from" in issue["message"]
+        and "purchase_price_effective_to" in issue["message"]
+        for issue in issues
     )
-    assert p.effective_from is not None
-    assert p.effective_from.strftime("%Y-%m-%d") == expected_iso
 
 
 # ─── C6: update 行为 ────────────────────────────────────
@@ -259,8 +244,8 @@ def test_update_writes_all_extended_fields_for_existing_product(db):
                 "unit_size": "5KG",
                 "pack_size": "10x5KG",
                 "country_of_origin": "Texas, USA",
-                "effective_from": "2026-01-01",
-                "effective_to": "2026-12-31",
+                "purchase_price_effective_from": "2026-01-01",
+                "purchase_price_effective_to": "2026-12-31",
             }
         ]
     )
@@ -282,8 +267,8 @@ def test_update_writes_all_extended_fields_for_existing_product(db):
     assert p.unit_size == "5KG"
     assert p.pack_size == "10x5KG"
     assert p.country_of_origin == "Texas, USA"
-    assert p.effective_from is not None
-    assert p.effective_to is not None
+    assert p.purchase_price_effective_from is not None
+    assert p.purchase_price_effective_to is not None
 
 
 def test_update_empty_cells_do_not_overwrite_existing_values(db):

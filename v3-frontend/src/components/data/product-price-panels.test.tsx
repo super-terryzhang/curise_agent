@@ -38,8 +38,6 @@ const product = {
   category_id: null,
   supplier_id: null,
   port_id: null,
-  effective_from: null,
-  effective_to: null,
 } satisfies ProductItem;
 
 const periods: ProductPricePeriod[] = [

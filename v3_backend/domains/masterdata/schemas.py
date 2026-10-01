@@ -165,6 +165,8 @@ class SupplierResponse(BaseModel):
 
 
 class ProductCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     @field_validator("price", "contract_price", mode="before")
     @classmethod
     def validate_price(cls, value: Any) -> Any:
@@ -190,12 +192,12 @@ class ProductCreate(BaseModel):
     country_of_origin: str | None = None
     brand: str | None = None
     currency: str | None = None
-    effective_from: str | None = None
-    effective_to: str | None = None
     status: bool = True
 
 
 class ProductUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     expected_revision: int | None = Field(None, ge=1)
 
     @field_validator("price", "contract_price", mode="before")
@@ -222,8 +224,6 @@ class ProductUpdate(BaseModel):
     country_of_origin: str | None = None
     brand: str | None = None
     currency: str | None = None
-    effective_from: str | None = None
-    effective_to: str | None = None
     status: bool | None = None
 
 
@@ -256,8 +256,6 @@ class ProductResponse(BaseModel):
     country_of_origin: str | None = None
     brand: str | None = None
     currency: str | None = None
-    effective_from: str | None = None
-    effective_to: str | None = None
     status: bool = True
     # R5 (2026-06-22): primary image thumbnail signed URL + total count.
     # Populated by the list endpoint via a 1-query join (no N+1). Detail

@@ -23,7 +23,7 @@ from decimal import Decimal
 
 import pytest
 
-from domains.masterdata.models import Product
+from domains.masterdata.models import Product, ProductPricePeriod
 from domains.masterdata.upload import (
     commit_batch,
     parse_excel,
@@ -99,6 +99,36 @@ def test_rollback_restores_updated_fields_to_pre_commit_values(db):
     p_after = db.get(Product, original_id)
     assert float(p_after.price) == 10.0
     assert p_after.unit == "kg"
+
+
+def test_rollback_removes_price_period_created_by_batch(db):
+    p = seed_product(db, code="PERIOD-ROLLBACK", name="Period Rollback", price=10.0)
+    batch = _commit(
+        db,
+        [
+            {
+                "product_code": p.code,
+                "product_name": p.product_name_en,
+                "price": 12.0,
+                "purchase_price_effective_from": "2026-01-01",
+                "purchase_price_effective_to": "2026-06-30",
+            }
+        ],
+    )
+    assert db.query(ProductPricePeriod).filter_by(
+        product_id=p.id, source_batch_id=batch.id
+    ).count() == 1
+
+    result = rollback_batch(db, batch_id=batch.id, user_id=1)
+
+    assert result["skipped"] == 0
+    assert db.query(ProductPricePeriod).filter_by(
+        product_id=p.id, source_batch_id=batch.id
+    ).count() == 0
+    db.refresh(p)
+    assert float(p.price) == 10.0
+    assert p.purchase_price_effective_from is None
+    assert p.purchase_price_effective_to is None
 
 
 def test_rollback_restores_price_to_zero_when_old_value_was_zero(db):

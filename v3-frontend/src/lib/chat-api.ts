@@ -121,8 +121,6 @@ export interface UploadReviewData {
   supplier: { name: string | null; id: number | null };
   country: { name: string | null; id: number | null };
   port: { name: string | null; id: number | null };
-  effective_from: string | null;
-  effective_to: string | null;
   stats: { new: number; update: number; no_change: number; total: number };
   new_items: Array<{
     row: number; name: string; code: string | null;

@@ -332,8 +332,6 @@ def run_inquiry_for_group(
         unavailable: list[dict[str, Any]] = []
         for result in arrangement_match["items"]:
             sid = _supplier_id_of(result)
-            matched_product = result.get("matched_product") or {}
-            purchase_period = matched_product.get("purchase_price_period") or {}
             if result.get("match_status") != "matched":
                 unavailable.append(result)
             elif row_issue := _inquiry_row_issue(result):
@@ -342,13 +340,6 @@ def run_inquiry_for_group(
                 unavailable.append(result)
             elif sid is None:
                 result["match_reason"] = "匹配商品未配置供应商"
-                result["inquiry_eligibility"] = "excluded"
-                unavailable.append(result)
-            elif (
-                purchase_period.get("source") == "period"
-                and purchase_period.get("amount") is None
-            ):
-                result["match_reason"] = purchase_period.get("warning") or "采购价期间无效"
                 result["inquiry_eligibility"] = "excluded"
                 unavailable.append(result)
             else:

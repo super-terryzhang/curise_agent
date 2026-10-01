@@ -341,7 +341,7 @@ def test_code_first_manual_product_outside_pool_stays_unmatched_without_fuzzy_fa
     assert unmatched == []
     assert all_results[0]["match_status"] == "not_matched"
     assert all_results[0]["matched_product"] is None
-    assert all_results[0]["match_reason"] == "人工关联商品不在当前港口或有效期候选范围内"
+    assert all_results[0]["match_reason"] == "人工关联商品不在当前国家或港口候选范围内"
 
 
 def test_code_first_batch_matching_across_many_products():

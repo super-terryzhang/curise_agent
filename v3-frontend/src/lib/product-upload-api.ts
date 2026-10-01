@@ -60,6 +60,7 @@ export interface WorkflowRow {
     product_code: string | null;
     product_name: string | null;
   };
+  operations: string[];
   fields: WorkflowField[];
   issues: Array<{ code: string; field: string | null; message: string }>;
   reason: string | null;

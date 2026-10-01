@@ -58,9 +58,6 @@ def match_arrangement(db: Session, group_id: int) -> dict[str, Any]:
         db,
         country_id=port["country_id"],
         port_id=port_id,
-        # The existing matcher calls this parameter delivery_date; arrangement
-        # matching deliberately uses the confirmed loading day per user rule.
-        delivery_date=effective_at,
         price_date=effective_at,
     )
 

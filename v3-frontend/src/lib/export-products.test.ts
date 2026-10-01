@@ -7,7 +7,7 @@ vi.mock("./data-api", () => ({ listProducts: vi.fn() }));
 vi.mock("xlsx", async () => ({ ...await vi.importActual<typeof XLSX>("xlsx"), writeFile: vi.fn() }));
 
 const product = (id: number): ProductItem => ({
-  id, product_name_en: `Synthetic ${id}`, country_name: "TestCountry", port_name: "TestPort",
+  id, revision: 4, price_version: 2, product_name_en: `Synthetic ${id}`, country_name: "TestCountry", port_name: "TestPort",
   code: String(id).padStart(5, "0"), price: 100.25,
   purchase_price_effective_from: "2026-01-01T00:00:00",
   purchase_price_effective_to: "2026-06-30T00:00:00",
@@ -53,18 +53,18 @@ describe("product price export", () => {
     const reopened = XLSX.read(bytes, { type: "buffer", cellNF: true });
     const sheet = reopened.Sheets["产品数据"];
     expect(XLSX.utils.sheet_to_json(sheet, { header: 1 })[0]).toEqual([
-      "product_name", "country", "port", "product_code", "price",
+      "product_id", "expected_revision", "product_name", "country", "port", "product_code",
+      "product_name_jp", "brand", "category", "supplier", "unit", "unit_size",
+      "pack_size", "country_of_origin",
+      "purchase_price_period_id", "selling_price_period_id", "price",
       "purchase_price_effective_from", "purchase_price_effective_to",
       "contract_price", "selling_price_effective_from", "selling_price_effective_to",
       "currency",
     ]);
-    expect(sheet.D2).toMatchObject({ t: "s", v: "00100", z: "@" });
-    expect(sheet.E2).toMatchObject({ t: "n", v: 100.25 });
-    expect(sheet.F2).toMatchObject({ t: "n", z: "yyyy-mm-dd" });
-    expect(sheet.G2).toMatchObject({ t: "n", z: "yyyy-mm-dd" });
-    expect(sheet.H2).toMatchObject({ t: "n", v: 150.5 });
-    expect(sheet.I2).toMatchObject({ t: "n", z: "yyyy-mm-dd" });
-    expect(sheet.J2).toMatchObject({ t: "n", z: "yyyy-mm-dd" });
+    expect(sheet.A2).toMatchObject({ t: "n", v: 100 });
+    expect(sheet.B2).toMatchObject({ t: "n", v: 4 });
+    expect(sheet.F2).toMatchObject({ t: "s", v: "00100", z: "@" });
+    expect(sheet.W2).toMatchObject({ t: "s", v: "JPY" });
     // Persist only synthetic data for the backend parser round-trip verification.
     if (process.env.PRICING_EXPORT_FIXTURE) {
       const fs = await import("node:fs/promises");
@@ -88,10 +88,14 @@ describe("product price export", () => {
     const workbook = await buildPriceWorkbook([item]);
     const sheet = workbook.Sheets["产品数据"];
     const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
-    expect(rows).toHaveLength(4);
-    expect(sheet.E2.v).toBe(80);
-    expect(sheet.E3.v).toBe(90);
-    expect(sheet.H4.v).toBe(140);
+    expect(rows).toHaveLength(5);
+    expect(sheet.O3.v).toBe(1);
+    expect(sheet.O4.v).toBe(2);
+    expect(sheet.P5.v).toBe(3);
+    expect(sheet.Q3.v).toBe(80);
+    expect(sheet.Q4.v).toBe(90);
+    expect(sheet.T5.v).toBe(140);
+    expect(sheet.G3).toBeUndefined();
   });
 
   it("refuses an empty export", async () => {

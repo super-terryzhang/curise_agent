@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from domains.masterdata import Product
@@ -16,31 +15,26 @@ def load_candidate_pool(
     *,
     country_id: int | None,
     port_id: int | None,
-    delivery_date: datetime | None,
-    price_date: datetime | None = None,
+    price_date: datetime | None,
 ) -> list[Product]:
-    """Return Products in scope for this order — filtered by geo + effective window.
+    """Return enabled Products in the selected country/port scope.
 
     We keep the pool loaded once so both code_first and llm_refine operate on
-    the same snapshot (consistent with v2 semantics).
+    the same snapshot.  Product identity no longer has a date window; the
+    loading day is used only to resolve independent commercial-price periods.
     """
     stmt = db.query(Product).filter(Product.status.is_(True))
     if country_id is not None:
         stmt = stmt.filter(Product.country_id == country_id)
     if port_id is not None:
         stmt = stmt.filter(Product.port_id == port_id)
-    if delivery_date is not None:
-        stmt = stmt.filter(
-            or_(Product.effective_from.is_(None), Product.effective_from <= delivery_date)
-        ).filter(or_(Product.effective_to.is_(None), Product.effective_to >= delivery_date))
     products = list(stmt.all())
     from domains.masterdata import service as masterdata_service
 
-    effective_price_day = (price_date or delivery_date)
     masterdata_service.resolve_effective_product_prices(
         db,
         products,
-        effective_price_day.date() if effective_price_day is not None else None,
+        price_date.date() if price_date is not None else None,
     )
     return products
 
@@ -97,7 +91,7 @@ def match_by_code(
                     {
                         "match_status": "not_matched",
                         "match_score": 0.0,
-                        "match_reason": "人工关联商品不在当前港口或有效期候选范围内",
+                        "match_reason": "人工关联商品不在当前国家或港口候选范围内",
                         "matched_product": None,
                     }
                 )
