@@ -1,6 +1,7 @@
 import {
   Bot,
   Calculator,
+  FilePenLine,
   FileSpreadsheet,
   Images,
   type LucideIcon,
@@ -25,6 +26,15 @@ export const WORKBENCH_MODULES: WorkbenchModule[] = [
     description: "上传 Excel，程序检查后核对新增与变更，再统一提交。",
     href: "/dashboard/workbench/product-upload",
     icon: FileSpreadsheet,
+    roles: ["superadmin", "admin", "employee"],
+    status: "available",
+  },
+  {
+    key: "product-update",
+    title: "已有产品更新",
+    description: "选择已有产品，下载当前数据后批量更新基本信息与价格区间。",
+    href: "/dashboard/workbench/product-update",
+    icon: FilePenLine,
     roles: ["superadmin", "admin", "employee"],
     status: "available",
   },

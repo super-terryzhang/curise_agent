@@ -5,7 +5,6 @@ import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
-  Check,
   CheckCircle2,
   Download,
   Loader2,
@@ -19,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { WorkflowStepBar } from "@/components/workbench/workflow-step-bar";
 import {
   cancelProductBatch,
   commitProductBatch,
@@ -40,34 +40,6 @@ function valueText(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "boolean") return value ? "是" : "否";
   return String(value).replace("T00:00:00", "");
-}
-
-function StepBar({ current }: { current: number }) {
-  return (
-    <div className="grid grid-cols-4 border-b bg-muted/20 px-5 py-4">
-      {STEPS.map((label, index) => {
-        const number = index + 1;
-        const done = number < current;
-        const active = number === current;
-        return (
-          <div key={label} className="flex items-center">
-            <div
-              className={cn(
-                "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold",
-                done && "border-foreground bg-foreground text-background",
-                active && "border-primary bg-primary text-primary-foreground",
-                !done && !active && "bg-background text-muted-foreground",
-              )}
-            >
-              {done ? <Check className="h-3.5 w-3.5" /> : number}
-            </div>
-            <span className={cn("ml-2 text-xs", active ? "font-semibold" : "text-muted-foreground")}>{label}</span>
-            {number < 4 && <div className="mx-3 h-px flex-1 bg-border" />}
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 function Summary({ batch }: { batch: WorkflowBatch }) {
@@ -208,7 +180,7 @@ export default function ProductUploadPage() {
         </div>
 
         <Card className="gap-0 overflow-hidden rounded-md py-0 shadow-sm">
-          <StepBar current={step} />
+          <WorkflowStepBar labels={STEPS} current={step} />
           <CardContent className="p-6">
             {busy && <Progress value={step === 1 ? 35 : step === 2 ? 70 : 90} className="mb-5 h-1" />}
 
