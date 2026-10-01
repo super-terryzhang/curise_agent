@@ -11,7 +11,7 @@
 - 批量上传现已明确覆盖四种意图：标准模板新增产品；导出文件以 `product_id + expected_revision` 更新已有产品；价格区间 ID 为空时新增区间；保留价格区间 ID 时更新该唯一期间。产品页导出的 Excel 自动携带这些技术 ID，并按“每个产品一行资料 + 后续独立价格区间行”组织；上传页明确区分“新产品模板”和“已有数据导出”，用户不需要手工编写 ID或在多个区间行重复修改产品资料。
 - 已有价格区间的金额、币种与日期独立写入区间表，不会覆盖产品备用价格；无 ID 的同日期区间、错误归属、过期产品版本和任何重叠会在写库前拒绝，区间新增与修改均可随批次回滚。
 - 验证证据：最终上传专项 `157 passed, 11 skipped`，匹配→异常→询价连接回归 `85 passed`；后端完整回归发现 1 个旧 Excel 兼容问题（其余 `1879 passed, 102 skipped`），修复后相关回归 `34 passed`；前端完整回归 `226 passed`，TypeScript 与 webpack 生产构建通过；GitHub CI `36809014969` 最终通过。
-- 生产源码与 GitHub main 为 `e3d066e58251dbd853f0dffd2199988eba9ea578`。数据库已按两次备份、0033 回填审计、过渡应用、0034 删列和最终应用顺序升级为 `0034_drop_product_validity`；后端 `cruise-v3-backend-product-validity-20261001` 接收 100% 流量，镜像 digest 为 `sha256:69c0cf31064c7605e8683f7f26332bf70711f7d1ba60fff027fad4dc4445c87f`。
+- 生产源码为 `e3d066e58251dbd853f0dffd2199988eba9ea578`；GitHub main 在该源码之上只追加本发布进度文档。数据库已按两次备份、0033 回填审计、过渡应用、0034 删列和最终应用顺序升级为 `0034_drop_product_validity`；后端 `cruise-v3-backend-product-validity-20261001` 接收 100% 流量，镜像 digest 为 `sha256:69c0cf31064c7605e8683f7f26332bf70711f7d1ba60fff027fad4dc4445c87f`。
 - 前端 `dpl_Agv4fAKqLYKKjDsjPy5npSoSH1je` 为 Production / Ready；Oracle Job generation 24 使用同一镜像，自动 execution `cruise-v3-po-hourly-bt298` 成功。正式健康、CORS、模板下载及关键页面均已只读核验；完整证据见根目录 `DEPLOYMENT_VERIFIED_2026-10-01_PRODUCT_VALIDITY_BULK_UPLOAD.md`。
 - 待用户用正式账号执行一次真实上传：从数据管理导出已有产品价格 Excel，检查更新产品、新增期间和更新已有期间三种操作标签及提交结果。自动化没有向生产产品写入测试数据。
 
