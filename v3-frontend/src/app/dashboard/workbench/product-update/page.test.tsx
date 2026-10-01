@@ -20,16 +20,16 @@ vi.mock("@/lib/data-api", async (importOriginal) => {
 describe("existing product update route", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("renders the approved five-stage workflow without unrelated controls", async () => {
+  it("renders the approved direct four-stage workflow without unrelated controls", async () => {
     const { default: ExistingProductUpdatePage } = await import("./page");
     const html = renderToStaticMarkup(<ExistingProductUpdatePage />);
 
     expect(html).toContain("已有产品更新");
     expect(html).toContain("选择产品");
-    expect(html).toContain("选择范围");
-    expect(html).toContain("下载与上传");
-    expect(html).toContain("程序检查");
-    expect(html).toContain("核对并提交");
+    expect(html).toContain("选择操作");
+    expect(html).toContain("编辑数据");
+    expect(html).toContain("核对并保存");
+    expect(html).not.toContain("下载与上传");
     expect(html).toContain("选择需要更新的产品");
     expect(html).not.toContain("新产品批量导入");
     expect(html).not.toContain("产品图片上传");

@@ -1,11 +1,15 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useReducer, useRef, useState } from "react";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { WorkflowStepBar } from "@/components/workbench/workflow-step-bar";
 import {
@@ -14,34 +18,41 @@ import {
   listPorts,
   listProducts,
   listSuppliers,
-  type CategoryItem,
-  type CountryItem,
-  type PortItem,
   type ProductItem,
-  type SupplierItem,
 } from "@/lib/data-api";
-import { downloadExistingProductUpdateWorkbook } from "@/lib/existing-product-update-workbook";
+import { loadProductsForExport } from "@/lib/export-products";
 import {
-  existingProductUpdateReducer,
-  initialExistingProductUpdateState,
-} from "@/lib/existing-product-update-workflow";
+  buildDirectUpdateRequest,
+  changedRows,
+  createEditRows,
+  matchPeriodTargets,
+  type EditOperation,
+  type EditRow,
+  type EditScope,
+} from "@/lib/product-batch-edit";
+import {
+  completedDirectResult,
+  commitDirectProductUpdate,
+  getDirectProductUpdate,
+  prepareDirectProductUpdate,
+} from "@/lib/product-batch-edit-api";
 import {
   cancelProductBatch,
-  commitProductBatch,
   loadAllProductBatchRows,
-  uploadProductWorkbook,
-  validateProductBatch,
+  type CommitResult,
   type WorkflowBatch,
+  type WorkflowRow,
 } from "@/lib/product-upload-api";
 import { CompletionStep } from "./completion-step";
-import { ProductSelectionStep, type ProductSelectionFilters } from "./product-selection-step";
-import { ReviewStep } from "./review-step";
-import { UpdateScopeStep } from "./update-scope-step";
-import { ValidationStep } from "./validation-step";
-import { WorkbookStep } from "./workbook-step";
+import { DirectReviewStep } from "./direct-review-step";
+import { EditDataStep, type EditMasters } from "./edit-data-step";
+import { OperationStep } from "./operation-step";
+import {
+  ProductSelectionStep,
+  type ProductSelectionFilters,
+} from "./product-selection-step";
 
-const STEPS = ["选择产品", "选择范围", "下载与上传", "程序检查", "核对并提交"] as const;
-const PAGE_SIZE = 20;
+const STEPS = ["选择产品", "选择操作", "编辑数据", "核对并保存"] as const;
 const INITIAL_FILTERS: ProductSelectionFilters = {
   search: "",
   category: "all",
@@ -50,278 +61,389 @@ const INITIAL_FILTERS: ProductSelectionFilters = {
   port: "all",
   status: "all",
 };
-
-function selectedValues(products: Record<number, ProductItem>): ProductItem[] {
-  return Object.values(products).sort((left, right) => left.id - right.id);
+function query(filters: ProductSelectionFilters) {
+  return {
+    search: filters.search || undefined,
+    category_id:
+      filters.category === "all" ? undefined : Number(filters.category),
+    supplier_id:
+      filters.supplier === "all" ? undefined : Number(filters.supplier),
+    country_id: filters.country === "all" ? undefined : Number(filters.country),
+    port_id: filters.port === "all" ? undefined : Number(filters.port),
+    is_effective:
+      filters.status === "all" ? undefined : filters.status === "effective",
+  };
 }
-
 export default function ExistingProductUpdatePage() {
   const router = useRouter();
-  const [workflow, dispatch] = useReducer(existingProductUpdateReducer, undefined, () => initialExistingProductUpdateState());
+  const [stage, setStage] = useState(1);
   const [products, setProducts] = useState<ProductItem[]>([]);
+  const [selected, setSelected] = useState<Record<number, ProductItem>>({});
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
-  const [filters, setFilters] = useState<ProductSelectionFilters>(INITIAL_FILTERS);
+  const [filters, setFilters] = useState(INITIAL_FILTERS);
   const deferredSearch = useDeferredValue(filters.search);
-  const [categories, setCategories] = useState<CategoryItem[]>([]);
-  const [suppliers, setSuppliers] = useState<SupplierItem[]>([]);
-  const [countries, setCountries] = useState<CountryItem[]>([]);
-  const [ports, setPorts] = useState<PortItem[]>([]);
-  const [productsLoading, setProductsLoading] = useState(true);
+  const [masters, setMasters] = useState<EditMasters>({
+    categories: [],
+    suppliers: [],
+    countries: [],
+    ports: [],
+  });
+  const [loading, setLoading] = useState(true);
   const [productsError, setProductsError] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [fileError, setFileError] = useState<string | null>(null);
-  const [downloading, setDownloading] = useState(false);
-  const [validating, setValidating] = useState(false);
-  const [committing, setCommitting] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [selectingAll, setSelectingAll] = useState(false);
+  const [scope, setScope] = useState<EditScope>("basic");
+  const [operation, setOperation] = useState<EditOperation>("edit");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [rows, setRows] = useState<EditRow[]>([]);
+  const [batch, setBatch] = useState<WorkflowBatch | null>(null);
+  const [reviewRows, setReviewRows] = useState<WorkflowRow[]>([]);
+  const [result, setResult] = useState<CommitResult | null>(null);
   const requestSequence = useRef(0);
+  const selectionSequence = useRef(0);
+  const selectedProducts = Object.values(selected).sort((a, b) => a.id - b.id);
 
   useEffect(() => {
     let active = true;
-    Promise.all([listCategories(), listSuppliers(), listCountries(), listPorts()])
-      .then(([nextCategories, nextSuppliers, nextCountries, nextPorts]) => {
-        if (!active) return;
-        setCategories(nextCategories);
-        setSuppliers(nextSuppliers);
-        setCountries(nextCountries);
-        setPorts(nextPorts);
+    Promise.all([
+      listCategories(),
+      listSuppliers(),
+      listCountries(),
+      listPorts(),
+    ])
+      .then(([categories, suppliers, countries, ports]) => {
+        if (active) setMasters({ categories, suppliers, countries, ports });
       })
-      .catch((error) => {
-        if (!active) return;
-        toast.error(error instanceof Error ? error.message : "读取筛选条件失败");
+      .catch((e) => {
+        if (active)
+          toast.error(e instanceof Error ? e.message : "读取筛选条件失败");
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, []);
-
   const loadProducts = useCallback(async () => {
-    const sequence = ++requestSequence.current;
-    setProductsLoading(true);
+    const seq = ++requestSequence.current;
+    setLoading(true);
     setProductsError(null);
     try {
       const response = await listProducts({
-        search: deferredSearch || undefined,
-        category_id: filters.category === "all" ? undefined : Number(filters.category),
-        supplier_id: filters.supplier === "all" ? undefined : Number(filters.supplier),
-        country_id: filters.country === "all" ? undefined : Number(filters.country),
-        port_id: filters.port === "all" ? undefined : Number(filters.port),
-        is_effective: filters.status === "all" ? undefined : filters.status === "effective",
-        limit: PAGE_SIZE,
-        offset: page * PAGE_SIZE,
+        ...query({ ...filters, search: deferredSearch }),
+        limit: 20,
+        offset: page * 20,
       });
-      if (sequence !== requestSequence.current) return;
-      setProducts(response.items);
-      setTotal(response.total);
-    } catch (error) {
-      if (sequence !== requestSequence.current) return;
-      setProductsError(error instanceof Error ? error.message : "读取产品失败");
+      if (seq === requestSequence.current) {
+        setProducts(response.items);
+        setTotal(response.total);
+      }
+    } catch (e) {
+      if (seq === requestSequence.current)
+        setProductsError(e instanceof Error ? e.message : "读取产品失败");
     } finally {
-      if (sequence === requestSequence.current) setProductsLoading(false);
+      if (seq === requestSequence.current) setLoading(false);
     }
-  }, [deferredSearch, filters.category, filters.country, filters.port, filters.status, filters.supplier, page]);
-
+  }, [filters, deferredSearch, page]);
   useEffect(() => {
     void loadProducts();
   }, [loadProducts]);
+  useEffect(
+    () => () => {
+      requestSequence.current++;
+      selectionSequence.current++;
+    },
+    [],
+  );
 
-  const cancelOpenBatch = useCallback(async () => {
-    const batch = workflow.batch;
-    if (!batch || workflow.completed || ["cancelled", "completed", "rolled_back"].includes(batch.status)) return;
+  const selectAll = async () => {
+    const seq = ++selectionSequence.current;
+    setSelectingAll(true);
+    setError(null);
     try {
-      await cancelProductBatch(batch.id);
-    } catch (error) {
-      toast.error(error instanceof Error ? `旧批次取消失败：${error.message}` : "旧批次取消失败");
-    }
-  }, [workflow.batch, workflow.completed]);
-
-  const reset = useCallback(async () => {
-    await cancelOpenBatch();
-    dispatch({ type: "reset" });
-    setPage(0);
-    setFilters(INITIAL_FILTERS);
-    setFile(null);
-    setFileError(null);
-    setConfirmOpen(false);
-  }, [cancelOpenBatch]);
-
-  const handleDownload = async () => {
-    setDownloading(true);
-    setFileError(null);
-    try {
-      const count = await downloadExistingProductUpdateWorkbook(selectedValues(workflow.selectedProducts), workflow.scope);
-      toast.success(`已生成 ${count} 个产品的更新文件`);
-    } catch (error) {
-      setFileError(error instanceof Error ? error.message : "更新文件生成失败");
+      const all = await loadProductsForExport(query(filters));
+      if (seq === selectionSequence.current) {
+        setSelected(Object.fromEntries(all.map((p) => [p.id, p])));
+        toast.success("已选择筛选结果全部 " + all.length + " 个产品");
+      }
+    } catch (e) {
+      if (seq === selectionSequence.current)
+        setError(
+          e instanceof Error ? e.message : "读取全部产品失败，原选择保持不变",
+        );
     } finally {
-      setDownloading(false);
+      if (seq === selectionSequence.current) setSelectingAll(false);
     }
   };
-
-  const handleFileChange = (nextFile: File | null) => {
-    if (nextFile && !nextFile.name.toLowerCase().endsWith(".xlsx")) {
-      setFile(null);
-      setFileError("已有产品更新只接受 .xlsx 文件");
+  const selectProducts = (items: ProductItem[], checked: boolean) => {
+    selectionSequence.current++;
+    setSelectingAll(false);
+    setSelected((previous) => {
+      const next = { ...previous };
+      for (const p of items) {
+        if (checked) next[p.id] = p;
+        else delete next[p.id];
+      }
+      return next;
+    });
+  };
+  const cancelBatch = async () => {
+    if (batch && !result) {
+      const latest = await getDirectProductUpdate(batch.id);
+      if (latest.status === "completed") {
+        setResult(completedDirectResult(latest));
+        return false;
+      }
+      if (latest.status === "resolved") {
+        try {
+          await cancelProductBatch(batch.id);
+        } catch (error) {
+          const after = await getDirectProductUpdate(batch.id);
+          if (after.status === "completed") {
+            setResult(completedDirectResult(after));
+            return false;
+          }
+          throw error;
+        }
+      }
+      setBatch(null);
+    }
+    return true;
+  };
+  const prepare = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const request = buildDirectUpdateRequest(
+        selectedProducts,
+        scope,
+        operation,
+        rows,
+      );
+      if (!(await cancelBatch())) return;
+      const prepared = await prepareDirectProductUpdate(request);
+      setBatch(prepared);
+      const response = await loadAllProductBatchRows(prepared.id, "all", true);
+      const pending = changedRows(rows, operation);
+      setReviewRows(
+        response.items.map((row) => ({
+          ...row,
+          source_row_number:
+            rows.findIndex(
+              (item) => item.key === pending[row.source_row_number - 1]?.key,
+            ) + 1,
+        })),
+      );
+      setStage(4);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "检查失败，编辑内容已保留");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const save = async () => {
+    if (!batch?.can_continue || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = await commitDirectProductUpdate(batch.id);
+      if (saved.errors || saved.created)
+        throw new Error("保存结果与更新范围不一致，请检查处理记录");
+      setResult(saved);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存失败，编辑内容已保留");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const returnToEdit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (await cancelBatch()) setStage(3);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "取消旧检查失败，请重试");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const leave = async () => {
+    if (busy) return;
+    if (
+      stage >= 3 &&
+      !result &&
+      changedRows(rows, operation).length &&
+      !window.confirm("离开后，本次尚未保存的编辑内容将丢失。确定返回工作台？")
+    )
       return;
-    }
-    setFile(nextFile);
-    setFileError(null);
-  };
-
-  const validateFile = async () => {
-    if (!file) return;
-    setValidating(true);
-    setFileError(null);
-    dispatch({ type: "upload_started" });
-    let uploadedBatch: WorkflowBatch | null = null;
+    setBusy(true);
     try {
-      await cancelOpenBatch();
-      const uploaded = await uploadProductWorkbook(file);
-      uploadedBatch = uploaded;
-      const checked = await validateProductBatch(uploaded.id);
-      const view = checked.can_continue ? "changes" : "issues";
-      const rows = await loadAllProductBatchRows(checked.id, view, true);
-      dispatch({
-        type: checked.can_continue ? "validation_succeeded" : "validation_failed",
-        batch: checked,
-        rows: rows.items,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "文件检查失败";
-      dispatch({ type: "validation_request_failed", error: message, batch: uploadedBatch });
-    } finally {
-      setValidating(false);
+      await cancelBatch();
+      router.push("/dashboard/workbench");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "取消批次失败");
+      setBusy(false);
     }
   };
-
-  const retryValidation = async () => {
-    if (!workflow.batch) return;
-    setValidating(true);
-    try {
-      const checked = await validateProductBatch(workflow.batch.id);
-      const view = checked.can_continue ? "changes" : "issues";
-      const rows = await loadAllProductBatchRows(checked.id, view, true);
-      dispatch({
-        type: checked.can_continue ? "validation_succeeded" : "validation_failed",
-        batch: checked,
-        rows: rows.items,
-      });
-    } catch (error) {
-      dispatch({ type: "validation_request_failed", error: error instanceof Error ? error.message : "重新检查失败" });
-    } finally {
-      setValidating(false);
-    }
-  };
-
-  const commit = async () => {
-    if (!workflow.batch) return;
-    setCommitting(true);
-    try {
-      const result = await commitProductBatch(workflow.batch.id);
-      dispatch({ type: "commit_succeeded", result });
-      setConfirmOpen(false);
-    } catch (error) {
-      dispatch({ type: "commit_failed", error: error instanceof Error ? error.message : "提交失败" });
-      setConfirmOpen(false);
-    } finally {
-      setCommitting(false);
-    }
-  };
-
+  useEffect(() => {
+    if (stage < 3 || result || !changedRows(rows, operation).length) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [stage, result, rows, operation]);
   return (
     <div className="h-full overflow-y-auto bg-muted/20">
-      <div className="mx-auto max-w-7xl px-6 py-6">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <button className="mb-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => router.push("/dashboard/workbench")}>
-              <ArrowLeft className="size-3.5" />返回工作台
-            </button>
-            <h1 className="text-lg font-semibold">已有产品更新</h1>
-            <p className="mt-1 text-xs text-muted-foreground">先从数据库选择产品，再下载带系统标识的文件；检查和核对完成前不会写入数据。</p>
-          </div>
-          {(workflow.stage > 1 || Object.keys(workflow.selectedProducts).length > 0) && (
-            <Button size="sm" variant="outline" disabled={validating || committing} onClick={() => void reset()}><RefreshCw />重新开始</Button>
-          )}
+      <div className="mx-auto max-w-[1600px] px-6 py-6">
+        <div className="mb-4">
+          <button
+            className="mb-2 flex items-center gap-1 text-xs text-muted-foreground"
+            disabled={busy}
+            onClick={() => void leave()}
+          >
+            <ArrowLeft className="size-3.5" />
+            返回工作台
+          </button>
+          <h1 className="text-lg font-semibold">已有产品更新</h1>
+          <p className="mt-1 text-xs text-muted-foreground">
+            直接在页面修改基本信息和价格区间，检查并核对后保存。
+          </p>
         </div>
-
         <Card className="gap-0 overflow-hidden rounded-md py-0 shadow-sm">
-          <WorkflowStepBar labels={STEPS} current={workflow.stage} />
+          <WorkflowStepBar labels={STEPS} current={stage} />
           <CardContent className="p-6">
-            {workflow.stage === 1 && (
-              <ProductSelectionStep
-                products={products}
-                total={total}
-                page={page}
-                pageSize={PAGE_SIZE}
-                selectedProducts={workflow.selectedProducts}
-                filters={filters}
-                categories={categories}
-                suppliers={suppliers}
-                countries={countries}
-                ports={ports}
-                loading={productsLoading}
-                error={productsError}
-                onFiltersChange={(nextFilters) => { setFilters(nextFilters); setPage(0); }}
-                onSelectProduct={(product, selected) => dispatch({ type: "select_product", product, selected })}
-                onSelectVisible={(visibleProducts, selected) => visibleProducts.forEach((product) => dispatch({ type: "select_product", product, selected }))}
-                onClearSelection={() => dispatch({ type: "clear_products" })}
-                onPageChange={setPage}
-                onRetry={() => void loadProducts()}
-                onNext={() => dispatch({ type: "continue_products" })}
-              />
+            {error && (
+              <div
+                role="alert"
+                className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+              >
+                {error}
+              </div>
             )}
-
-            {workflow.stage === 2 && (
-              <UpdateScopeStep
-                selectedCount={Object.keys(workflow.selectedProducts).length}
-                scope={workflow.scope}
-                onScopeChange={(scope) => dispatch({ type: "set_scope", scope })}
-                onBack={() => dispatch({ type: "go_back", stage: 1 })}
-                onNext={() => dispatch({ type: "continue_scope" })}
+            {result ? (
+              <CompletionStep
+                result={result}
+                onReset={() => {
+                  setResult(null);
+                  setBatch(null);
+                  setRows([]);
+                  setSelected({});
+                  setError(null);
+                  setStage(1);
+                  void loadProducts();
+                }}
               />
-            )}
-
-            {workflow.stage === 3 && (
-              <WorkbookStep
-                selectedCount={Object.keys(workflow.selectedProducts).length}
-                scope={workflow.scope}
-                fileName={file?.name ?? null}
-                downloading={downloading}
-                validating={validating}
-                error={fileError || workflow.error}
-                onDownload={() => void handleDownload()}
-                onFileChange={handleFileChange}
-                onBack={() => dispatch({ type: "go_back", stage: 2 })}
-                onValidate={() => void validateFile()}
-              />
-            )}
-
-            {workflow.stage === 4 && (
-              <ValidationStep
-                batch={workflow.batch}
-                rows={workflow.rows}
-                validating={validating}
-                error={workflow.error}
-                onBack={() => dispatch({ type: "go_back", stage: 3 })}
-                onRetry={() => void retryValidation()}
-                onContinue={() => dispatch({ type: "go_back", stage: 5 })}
-              />
-            )}
-
-            {workflow.stage === 5 && workflow.completed && workflow.result && (
-              <CompletionStep result={workflow.result} onReset={() => void reset()} />
-            )}
-
-            {workflow.stage === 5 && !workflow.completed && workflow.batch && (
-              <ReviewStep
-                batch={workflow.batch}
-                rows={workflow.rows}
-                committing={committing}
-                error={workflow.error}
-                confirmOpen={confirmOpen}
-                onConfirmOpenChange={setConfirmOpen}
-                onBack={() => dispatch({ type: "go_back", stage: 4 })}
-                onCommit={() => void commit()}
-              />
+            ) : (
+              <fieldset disabled={busy} className="min-w-0">
+                {stage === 1 && (
+                  <ProductSelectionStep
+                    products={products}
+                    total={total}
+                    page={page}
+                    pageSize={20}
+                    selectedProducts={selected}
+                    filters={filters}
+                    {...masters}
+                    loading={loading}
+                    error={productsError}
+                    onFiltersChange={(next) => {
+                      selectionSequence.current++;
+                      setSelectingAll(false);
+                      setFilters(next);
+                      setPage(0);
+                      setError(null);
+                    }}
+                    onSelectProduct={(p, checked) =>
+                      selectProducts([p], checked)
+                    }
+                    onSelectVisible={selectProducts}
+                    onClearSelection={() => {
+                      selectionSequence.current++;
+                      setSelectingAll(false);
+                      setSelected({});
+                    }}
+                    onPageChange={setPage}
+                    onRetry={() => void loadProducts()}
+                    onSelectAllFiltered={() => void selectAll()}
+                    selectingAll={selectingAll}
+                    onNext={() => {
+                      setError(null);
+                      setStage(2);
+                    }}
+                  />
+                )}
+                {stage === 2 && (
+                  <OperationStep
+                    products={selectedProducts}
+                    scope={scope}
+                    operation={operation}
+                    from={from}
+                    to={to}
+                    onChange={(s, o, f, t) => {
+                      setScope(s);
+                      setOperation(o);
+                      setFrom(f);
+                      setTo(t);
+                    }}
+                    onBack={() => setStage(1)}
+                    onNext={() => {
+                      const targets =
+                        scope === "basic"
+                          ? []
+                          : matchPeriodTargets(
+                              selectedProducts,
+                              scope,
+                              from,
+                              to,
+                            ).targets;
+                      setRows(
+                        createEditRows(
+                          selectedProducts,
+                          scope,
+                          operation,
+                          targets,
+                        ),
+                      );
+                      setError(null);
+                      setStage(3);
+                    }}
+                  />
+                )}
+                {stage === 3 && (
+                  <EditDataStep
+                    rows={rows}
+                    scope={scope}
+                    operation={operation}
+                    masters={masters}
+                    busy={busy}
+                    onRowsChange={setRows}
+                    onBack={() => {
+                      if (
+                        !changedRows(rows, operation).length ||
+                        window.confirm(
+                          "返回后会重新生成编辑表格，本次填写将丢失。确定返回？",
+                        )
+                      ) {
+                        setError(null);
+                        setStage(2);
+                      }
+                    }}
+                    onCheck={() => void prepare()}
+                  />
+                )}
+                {stage === 4 && batch && (
+                  <DirectReviewStep
+                    batch={batch}
+                    rows={reviewRows}
+                    busy={busy}
+                    onBack={() => void returnToEdit()}
+                    onSave={() => void save()}
+                  />
+                )}
+              </fieldset>
             )}
           </CardContent>
         </Card>

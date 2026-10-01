@@ -18,6 +18,7 @@ as before. RULE-2 status: this module is whitelisted in
 also writes via `db.add` / `db.commit`).
 """
 
+from domains.masterdata.upload.direct_updates import DirectUpdateRequest, prepare_direct_update
 from domains.masterdata.upload.errors import UploadError
 from domains.masterdata.upload.service import (
     cancel_batch,
@@ -39,6 +40,8 @@ from domains.masterdata.upload.service import (
 )
 
 __all__ = [
+    "DirectUpdateRequest",
+    "prepare_direct_update",
     "UploadError",
     "cancel_batch",
     "commit_validated_batch",
