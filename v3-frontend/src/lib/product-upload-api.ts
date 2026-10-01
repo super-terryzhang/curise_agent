@@ -145,6 +145,37 @@ export async function getProductBatchRows(
   );
 }
 
+export async function loadAllProductBatchRows(
+  batchId: number,
+  view: "all" | "issues" | "changes",
+  changedOnly = true,
+): Promise<WorkflowRowsPage> {
+  const first = await getProductBatchRows(batchId, {
+    view,
+    page: 1,
+    pageSize: 200,
+    changedOnly,
+  });
+  const items = [...first.items];
+  for (let page = 2; page <= first.total_pages; page += 1) {
+    const next = await getProductBatchRows(batchId, {
+      view,
+      page,
+      pageSize: 200,
+      changedOnly,
+    });
+    items.push(...next.items);
+  }
+  return {
+    ...first,
+    items,
+    page: 1,
+    page_size: Math.max(items.length, 1),
+    total_items: items.length,
+    total_pages: 1,
+  };
+}
+
 export async function commitProductBatch(batchId: number): Promise<CommitResult> {
   return parseResponse(
     await fetchWithAuth(`${API_BASE}/api/data-upload/workbench/batches/${batchId}/commit`, {
