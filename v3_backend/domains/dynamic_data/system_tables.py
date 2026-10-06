@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from domains.masterdata import Category, Country, Port, Product, Supplier
@@ -68,9 +68,7 @@ SUPPLIER_FIELDS = (
     SystemField(
         "suppliers.default_payment_method", "默认付款方式", "text", "default_payment_method"
     ),
-    SystemField(
-        "suppliers.default_payment_terms", "默认付款条件", "text", "default_payment_terms"
-    ),
+    SystemField("suppliers.default_payment_terms", "默认付款条件", "text", "default_payment_terms"),
     SystemField("suppliers.status", "状态", "boolean", "status"),
 )
 
@@ -221,31 +219,18 @@ def require_source_row(
     return row
 
 
-def visible_source_ids(
-    db: Session,
-    table: DataTable,
-    source_record_ids: set[str],
-    *,
-    actor: Actor | None,
-) -> set[str]:
-    """Resolve visible IDs in one bounded query; malformed detached anchors stay hidden."""
+def visible_source_id_statement(table: DataTable, *, actor: Actor | None):
+    """Return an actor-scoped source-ID query for joins and bounded pagination."""
     checked_actor = _require_actor(actor)
     adapter = _adapter(table)
-    parsed = []
-    for source_record_id in source_record_ids:
-        try:
-            parsed.append(_parse_source_id(source_record_id))
-        except NotFound:
-            continue
-    if not parsed:
-        return set()
-    rows = db.scalars(
-        _visible_statement(adapter, checked_actor).where(adapter.model.id.in_(parsed))
+    return _visible_statement(adapter, checked_actor).with_only_columns(
+        cast(adapter.model.id, String).label("source_record_id")
     )
-    return {str(row.id) for row in rows}
 
 
-def _relation_labels(db: Session, adapter: SystemTableAdapter, rows: list[Any]) -> dict[str, dict[int, str]]:
+def _relation_labels(
+    db: Session, adapter: SystemTableAdapter, rows: list[Any]
+) -> dict[str, dict[int, str]]:
     labels: dict[str, dict[int, str]] = {}
     relations = {
         field.relation: field.attribute
@@ -261,7 +246,13 @@ def _relation_labels(db: Session, adapter: SystemTableAdapter, rows: list[Any]) 
     for relation, attribute in relations.items():
         ids = {getattr(row, attribute) for row in rows if getattr(row, attribute) is not None}
         labels[relation] = (
-            dict(db.execute(select(models[relation].id, models[relation].name).where(models[relation].id.in_(ids))).all())
+            dict(
+                db.execute(
+                    select(models[relation].id, models[relation].name).where(
+                        models[relation].id.in_(ids)
+                    )
+                ).all()
+            )
             if ids
             else {}
         )
@@ -335,9 +326,7 @@ def list_system_records(
     checked_actor = _require_actor(actor)
     adapter = _adapter(table)
     if query.status != "active" or query.filters or query.sort_field_id:
-        raise ValidationError(
-            "UNSUPPORTED_SYSTEM_QUERY", "系统数据表当前只支持关键词搜索和分页"
-        )
+        raise ValidationError("UNSUPPORTED_SYSTEM_QUERY", "系统数据表当前只支持关键词搜索和分页")
     statement = _with_search(_visible_statement(adapter, checked_actor), adapter, query.q)
     total = int(db.scalar(select(func.count()).select_from(statement.subquery())) or 0)
     rows = list(
@@ -351,8 +340,7 @@ def list_system_records(
     anchors = _anchors(db, table.id, rows)
     return Page(
         items=[
-            _record_response(table, adapter, row, labels, anchors.get(str(row.id)))
-            for row in rows
+            _record_response(table, adapter, row, labels, anchors.get(str(row.id))) for row in rows
         ],
         total=total,
         page=query.page,

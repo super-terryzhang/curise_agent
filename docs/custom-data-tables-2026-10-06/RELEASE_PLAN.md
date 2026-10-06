@@ -1,13 +1,24 @@
-# 自定义数据表受控发布与回退
+# 统一数据表受控发布与回退
 
-状态：仅本地代码及演练，本轮没有生产迁移或部署。迁移为 0034_drop_product_validity → 0035_custom_data_tables，只增六个独立表。
+状态：仅本地候选和演练；未合并、推送、迁移生产或部署。生产基线仍为 `0034_drop_product_validity`，目标为 `0036_unified_data_tables`。
 
-1. 获得发布授权后核对 main、运行镜像 digest、数据库 head、Vercel 和 Oracle Job；本地验收不能代替生产核对。完成数据库备份后才能运行迁移。
-2. 同一源码先发布过渡配置：CUSTOM_DATA_TABLES_ENABLED=false，SCHEMA_RELEASE_TRANSITION=custom_data_tables_0034_0035。后端和 scripts/scan_oracle_pos.py 的 verify_schema 只接受 0034/0035，不接受其他 head；健康、鉴权、旧产品及扫描需核验。
-3. 在专用发布步骤执行 alembic upgrade 0035_custom_data_tables；验证六表、UUID/JSONB、复合外键、唯一约束、旧表/旧行保持。不要用应用启动隐式迁移。
-4. 发布最终配置：CUSTOM_DATA_TABLES_ENABLED=true，SCHEMA_RELEASE_TRANSITION 留空，恢复精确 head。后端和 Oracle Job 同镜像，最后发布前端；生产只读核验入口、表/历史读取、角色、旧业务与扫描调度。
-5. 记录源码、CI、镜像 digest、revision、前端 deployment、Job generation 和数据库 head。生产写入验收需明确授权的测试表；无授权则仅只读冒烟与用户自测。
+## 发布顺序
 
-回退：关闭新模块并回到指定过渡配置，保留六表及用户资料。禁止自动 downgrade 或物理删除表。下一迁移不得继续复用此桥接名称；不把允许旧head永久留在最终服务。
+1. 获得单独发布授权后，重新核对 GitHub main、运行镜像 digest、Cloud Run、Oracle Job、Vercel 和生产数据库 head；创建新的按需备份并确认成功。
+2. 用同一候选源码发布过渡配置：`CUSTOM_DATA_TABLES_ENABLED=false`、`SCHEMA_RELEASE_TRANSITION=unified_data_tables_0034_0036`。该模式只允许数据库处于 0034、0035 或 0036，并且新入口保持关闭；先验证健康、鉴权、旧产品/订单接口和扫描 Job。
+3. 在独立发布步骤运行 `alembic upgrade head`，按顺序执行 0035 和 0036。0035 只增六张动态数据表；0036 增加系统表元数据和来源锚点，并写入产品、供应商、订单三条目录配置，不复制或修改核心业务行。
+4. 验证数据库 head 精确为 0036、原六张动态表数据逐行保留、系统目录恰好三条、核心产品/供应商/订单数量与抽样内容未改变，并检查约束和索引。
+5. 后端与 Oracle Job 使用同一镜像，清空 `SCHEMA_RELEASE_TRANSITION` 并启用 `CUSTOM_DATA_TABLES_ENABLED=true`；严格启动只接受精确 0036。最后发布前端，避免页面先于后端开放。
+6. 生产先做只读验收：统一目录、系统字段、搜索、业务链接、角色权限、旧用户表、旧产品/订单路径和首次正常扫描。任何扩展字段写入都需另获明确授权，不能用真实核心字段做测试。
+7. 记录源码提交、CI、备份 ID、镜像 digest、Cloud Run revision、Oracle Job generation、Vercel deployment、数据库 head、只读证据和用户验收结果。
 
-本地演练：独立 PostgreSQL17，127.0.0.1:55447/cruise_data_tables_test；测试每项使用随机 owned schema，未配置环境变量显式 skip，必须另报未验证。CI 指向既有 127.0.0.1:5432/cruise_migration_test，同样 schema 隔离。
+## 回退
+
+- 应用异常时，先把 `CUSTOM_DATA_TABLES_ENABLED=false`，并恢复允许 0034—0036 的同名过渡配置；保留动态表及用户资料，不自动 downgrade、不删表。
+- 若迁移前验证失败，停止迁移并回退候选应用；若迁移中失败，依赖 PostgreSQL 事务回滚并核对 head，不能继续启用模块。
+- 若迁移后旧业务异常，保持 0036 数据库不动，回退到理解 0036 且模块关闭的兼容镜像；禁止直接发布只认识 0034 的旧镜像。
+- 下一次迁移不得复用本桥接名称，最终稳定版本不得长期保留过渡模式。
+
+## 本地演练结果
+
+隔离 schema `custom_demo_20261006` 已实际从 0035 升到 0036；两张用户表和九个扩展字段保留，三张系统目录加入。生产构建和本地服务返回 200，合成员工只看见本人订单；这只证明发布方案可执行，不代表生产已经迁移或上线。

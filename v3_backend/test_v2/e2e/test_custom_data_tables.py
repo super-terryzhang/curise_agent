@@ -2,13 +2,22 @@
 
 from datetime import date
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
-from domains.masterdata.models import Product, ProductPricePeriod
+from domains.dynamic_data.models import DataTable
+from domains.identity.models import User
+from domains.masterdata.models import Product, ProductPricePeriod, Supplier
 from domains.orders.models import Order
 from infrastructure.config import settings
+from infrastructure.security import hash_password
+
+SYSTEM_TABLE_IDS = {
+    "products": UUID("025588dd-ae63-5607-9e78-1179a500ed6e"),
+    "suppliers": UUID("480cc5e5-5882-58d1-a227-e8ee734c866f"),
+    "orders": UUID("0bc67ecc-ccd3-53b5-8327-74f4b482b7b4"),
+}
 
 
 def test_custom_table_complete_user_workflow_preserves_business(client, db, seed_user, monkeypatch):
@@ -185,3 +194,164 @@ def test_custom_table_complete_user_workflow_preserves_business(client, db, seed
     assert fetched["id"] == row["id"] and fetched["values"][keys["number"]] == "2.5"
     assert fetched["revision"] == 5 and fetched["status"] == "active"
     assert business() == before
+
+
+def test_unified_system_tables_extend_core_rows_without_changing_business_data(
+    client, db, seed_user, monkeypatch
+):
+    monkeypatch.setattr(settings, "CUSTOM_DATA_TABLES_ENABLED", True)
+    employee = User(
+        email="unified-employee@example.test",
+        hashed_password=hash_password("password123"),
+        full_name="Unified Employee",
+        role="employee",
+        is_active=True,
+    )
+    db.add(employee)
+    db.flush()
+    supplier = Supplier(name="验收供应商", email="supplier@example.test", status=True)
+    db.add(supplier)
+    db.flush()
+    product = Product(
+        product_name_en="Unified Product",
+        code="UNIFIED-001",
+        supplier_id=supplier.id,
+        price=Decimal("10.00"),
+        contract_price=Decimal("20.00"),
+    )
+    own_order = Order(
+        user_id=employee.id,
+        filename="own.pdf",
+        po_number="UNIFIED-OWN",
+        products=[],
+        match_results=[],
+        status="ready",
+    )
+    foreign_order = Order(
+        user_id=seed_user.id,
+        filename="foreign.pdf",
+        po_number="UNIFIED-FOREIGN",
+        products=[],
+        match_results=[],
+        status="ready",
+    )
+    db.add_all([product, own_order, foreign_order])
+    for key, name in (("products", "产品"), ("suppliers", "供应商"), ("orders", "订单")):
+        db.add(
+            DataTable(
+                id=SYSTEM_TABLE_IDS[key],
+                name=name,
+                description=f"{name}核心数据与扩展字段",
+                table_kind="system",
+                system_key=key,
+                status="active",
+                schema_version=1,
+                created_by=0,
+                updated_by=0,
+            )
+        )
+    db.commit()
+
+    def core_rows():
+        db.expire_all()
+        return {
+            model.__tablename__: [
+                dict(row) for row in db.execute(select(model.__table__)).mappings()
+            ]
+            for model in (Product, Supplier, Order)
+        }
+
+    before = core_rows()
+
+    def login(email):
+        response = client.post("/api/auth/login", json={"email": email, "password": "password123"})
+        assert response.status_code == 200, response.text
+        return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+    def call(headers, method, path, body=None, expected=200):
+        response = client.request(method, "/api/data-tables" + path, headers=headers, json=body)
+        assert response.status_code == expected, response.text
+        return response.json()
+
+    admin_headers = login(seed_user.email)
+    sources = {
+        "products": str(product.id),
+        "suppliers": str(supplier.id),
+        "orders": str(foreign_order.id),
+    }
+    expected_core = {
+        "products": "Unified Product",
+        "suppliers": "验收供应商",
+        "orders": "UNIFIED-FOREIGN",
+    }
+    for key, source_id in sources.items():
+        table_id = str(SYSTEM_TABLE_IDS[key])
+        extension_id = str(uuid4())
+        field = call(
+            admin_headers,
+            "POST",
+            f"/{table_id}/fields",
+            {
+                "id": extension_id,
+                "label": "内部备注",
+                "field_type": "text",
+                "expected_schema_version": 1,
+            },
+        )
+        assert field["source"] == "extension" and field["locked"] is False
+        saved = call(
+            admin_headers,
+            "PATCH",
+            f"/{table_id}/records/{source_id}",
+            {
+                "request_id": str(uuid4()),
+                "source_record_id": source_id,
+                "expected_revision": 0,
+                "schema_version": 2,
+                "values": {extension_id: f"{key}-checked"},
+            },
+        )
+        assert saved["id"] == source_id
+        assert saved["revision"] == 1
+        assert saved["values"][extension_id] == f"{key}-checked"
+        assert expected_core[key] in saved["display_label"]
+        refreshed = call(admin_headers, "GET", f"/{table_id}/records/{source_id}")
+        assert refreshed["values"][extension_id] == f"{key}-checked"
+        history = call(
+            admin_headers,
+            "GET",
+            f"/{table_id}/changes?entity_type=record&record_id={source_id}",
+        )
+        assert history["total"] == 1
+        assert history["items"][0]["record_id"] == source_id
+
+    employee_headers = login(employee.email)
+    orders_id = str(SYSTEM_TABLE_IDS["orders"])
+    employee_page = call(employee_headers, "GET", f"/{orders_id}/records")
+    assert [row["id"] for row in employee_page["items"]] == [str(own_order.id)]
+    call(
+        employee_headers,
+        "GET",
+        f"/{orders_id}/records/{foreign_order.id}",
+        expected=404,
+    )
+    hidden_history = call(
+        employee_headers,
+        "GET",
+        f"/{orders_id}/changes?entity_type=record&record_id={foreign_order.id}",
+    )
+    assert hidden_history["total"] == 0
+    call(
+        employee_headers,
+        "PATCH",
+        f"/{orders_id}/records/{foreign_order.id}",
+        {
+            "request_id": str(uuid4()),
+            "source_record_id": str(foreign_order.id),
+            "expected_revision": 1,
+            "schema_version": 2,
+            "values": {},
+        },
+        expected=404,
+    )
+    assert core_rows() == before

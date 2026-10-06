@@ -14,4 +14,4 @@ def require_admin(actor: Actor) -> None:
 
 def require_writer(actor: Actor) -> None:
     if actor.role not in WRITERS:
-        raise Forbidden("RECORD_FORBIDDEN", "当前角色没有自定义数据表访问权限")
+        raise Forbidden("RECORD_FORBIDDEN", "当前角色没有数据表管理访问权限")

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from domains.document.models import Document, DocumentFolder
 from domains.dynamic_data import service as s
@@ -88,9 +88,7 @@ def test_system_structure_is_locked_but_extensions_remain_configurable(data_db):
     db = data_db
     install_core_schema(db)
     table = system_table(db, PRODUCTS_ID, "products", "产品")
-    user_table = s.create_table(
-        db, TableCreate(id=uuid4(), name="人工检查表"), actor=ADMIN
-    )
+    user_table = s.create_table(db, TableCreate(id=uuid4(), name="人工检查表"), actor=ADMIN)
 
     with pytest.raises(ValidationError):
         s.update_table(
@@ -209,6 +207,56 @@ def test_first_save_retry_revision_validation_and_history(data_db):
             ),
             actor=ADMIN,
         )
+
+
+def test_system_history_applies_visibility_and_pagination_in_sql(data_db):
+    db = data_db
+    install_core_schema(db)
+    table = system_table(db, PRODUCTS_ID, "products", "产品")
+    products = [Product(product_name_en=f"PRODUCT {index}") for index in range(5)]
+    db.add_all(products)
+    db.commit()
+    field = extension_field(db, table.id)
+    for product in products:
+        s.save_system_record(
+            db,
+            table.id,
+            SystemRecordUpdate(
+                request_id=uuid4(),
+                source_record_id=str(product.id),
+                expected_revision=0,
+                schema_version=2,
+                values={str(field.id): "已核对"},
+            ),
+            actor=ADMIN,
+        )
+
+    statements = []
+
+    def capture(_conn, _cursor, statement, *_args):
+        statements.append(statement)
+
+    event.listen(db.bind, "before_cursor_execute", capture)
+    try:
+        page = s.list_changes(
+            db,
+            table.id,
+            ChangeQuery(entity_type="record", page=2, page_size=2),
+            actor=ADMIN,
+        )
+    finally:
+        event.remove(db.bind, "before_cursor_execute", capture)
+
+    assert page.total == 5
+    assert len(page.items) == 2
+    assert all(item.record_id in {str(product.id) for product in products} for item in page.items)
+    history_queries = [
+        statement
+        for statement in statements
+        if "FROM v3_data_changes" in statement and "count(" not in statement.lower()
+    ]
+    assert history_queries
+    assert all("LIMIT" in statement.upper() for statement in history_queries)
 
 
 def test_order_visibility_and_deleted_source_hide_anchor_and_history(data_db):
