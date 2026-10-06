@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .errors import Conflict, NotFound, ValidationError
-from .models import DataChange, DataField, DataRecord, DataTable
+from .models import DataChange, DataField, DataLink, DataRecord, DataTable
 
 
 @contextmanager
@@ -74,6 +74,7 @@ def table_fields(db: Session, table_id: UUID) -> list[DataField]:
     return list(
         db.scalars(
             select(DataField)
+            .execution_options(populate_existing=True)
             .where(DataField.table_id == table_id)
             .order_by(DataField.sort_order, DataField.id)
         )
@@ -88,3 +89,21 @@ def creation_change(db: Session, entity_type: str, entity_id: UUID) -> DataChang
             DataChange.creation_request.is_not(None),
         )
     )
+
+
+def require_record(db: Session, table_id: UUID, record_id: UUID) -> DataRecord:
+    record = db.get(DataRecord, record_id)
+    if record is None or record.table_id != table_id:
+        raise NotFound("RECORD_NOT_FOUND", "记录不存在于此数据表")
+    return record
+
+
+def get_record_values(db: Session, record: DataRecord) -> dict:
+    values = dict(record.values)
+    for link in db.scalars(
+        select(DataLink).where(
+            DataLink.table_id == record.table_id, DataLink.record_id == record.id
+        )
+    ):
+        values[str(link.field_id)] = str(link.target_record_id)
+    return values
