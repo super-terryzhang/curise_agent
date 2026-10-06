@@ -8,33 +8,60 @@ import { TableList } from "./table-list";
 import * as api from "@/lib/data-tables-api";
 import { table } from "@/test/data-tables-fixtures";
 vi.mock("@/lib/data-tables-api");
-vi.mock("@/lib/auth",()=>({getUser:()=>({role:"admin"})}));
-beforeEach(()=>{vi.resetAllMocks(); vi.mocked(api.listTables).mockResolvedValue({items:[],page:1,page_size:50,total:0});});
-it("user creates a named table from the actual form",async()=>{
+vi.mock("@/lib/auth", () => ({ getUser: () => ({ role: "admin" }) }));
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.mocked(api.listTables).mockResolvedValue({
+    items: [],
+    page: 1,
+    page_size: 50,
+    total: 0,
+  });
+});
+it("user creates a named table from the actual form", async () => {
   vi.mocked(api.createTable).mockResolvedValue(table);
-  render(<TableList/>); const user=userEvent.setup();
-  await user.click(await screen.findByRole("button",{name:"新建表"}));
-  await user.type(screen.getByLabelText("表名"),"检验记录");
-  await user.click(screen.getByRole("button",{name:"保存"}));
-  await waitFor(()=>expect(api.createTable).toHaveBeenCalledWith(expect.objectContaining({name:"检验记录"})));
+  render(<TableList />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "新建表" }));
+  await user.type(screen.getByLabelText("表名"), "检验记录");
+  await user.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() =>
+    expect(api.createTable).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "检验记录" }),
+    ),
+  );
 });
-it("server field error retains the form rather than silently closing",async()=>{
+it("server field error retains the form rather than silently closing", async () => {
   vi.mocked(api.createTable).mockRejectedValue(new Error("名称不合法"));
-  render(<TableList/>); const user=userEvent.setup();
-  await user.click(await screen.findByRole("button",{name:"新建表"}));
-  await user.type(screen.getByLabelText("表名"),"保留输入");
-  await user.click(screen.getByRole("button",{name:"保存"}));
-  expect(await screen.findByRole("alert")).toHaveProperty("textContent",expect.stringContaining("名称不合法"));
-  expect((screen.getByLabelText("表名") as HTMLInputElement).value).toBe("保留输入");
+  render(<TableList />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "新建表" }));
+  await user.type(screen.getByLabelText("表名"), "保留输入");
+  await user.click(screen.getByRole("button", { name: "保存" }));
+  expect(await screen.findByRole("alert")).toHaveProperty(
+    "textContent",
+    expect.stringContaining("名称不合法"),
+  );
+  expect((screen.getByLabelText("表名") as HTMLInputElement).value).toBe(
+    "保留输入",
+  );
 });
-it("a corrected input after definitive rejection is submitted instead of the old request",async()=>{
-  vi.mocked(api.createTable).mockRejectedValueOnce(new Error("名称不合法")).mockResolvedValueOnce(table);
-  render(<TableList/>); const user=userEvent.setup();
-  await user.click(await screen.findByRole("button",{name:"新建表"}));
-  await user.type(screen.getByLabelText("表名"),"原输入");
-  await user.click(screen.getByRole("button",{name:"保存"}));
+it("a corrected input after definitive rejection is submitted instead of the old request", async () => {
+  vi.mocked(api.createTable)
+    .mockRejectedValueOnce(new Error("名称不合法"))
+    .mockResolvedValueOnce(table);
+  render(<TableList />);
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "新建表" }));
+  await user.type(screen.getByLabelText("表名"), "原输入");
+  await user.click(screen.getByRole("button", { name: "保存" }));
   await screen.findByRole("alert");
-  await user.clear(screen.getByLabelText("表名"));await user.type(screen.getByLabelText("表名"),"修正输入");
-  await user.click(screen.getByRole("button",{name:"保存"}));
-  await waitFor(()=>expect(api.createTable).toHaveBeenLastCalledWith(expect.objectContaining({name:"修正输入"})));
+  await user.clear(screen.getByLabelText("表名"));
+  await user.type(screen.getByLabelText("表名"), "修正输入");
+  await user.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() =>
+    expect(api.createTable).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: "修正输入" }),
+    ),
+  );
 });

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .errors import Conflict, ValidationError
 from .history import append_change
-from .models import DataLink, DataRecord, DataUniqueValue, utc_now
+from .models import DataLink, DataRecord, DataTable, DataUniqueValue, utc_now
 from .permissions import require_writer
 from .repository import (
     creation_change,
@@ -24,11 +24,48 @@ from .structures import check_version
 from .validation import normalize_record, unique_value
 
 
-def record_response(db: Session, record: DataRecord, values: dict | None = None) -> RecordResponse:
+def link_labels(db: Session, links: list[DataLink]) -> dict:
+    if not links:
+        return {}
+    targets = {
+        r.id: r
+        for r in db.scalars(
+            select(DataRecord).where(DataRecord.id.in_({link.target_record_id for link in links}))
+        )
+    }
+    tables = {
+        t.id: t
+        for t in db.scalars(
+            select(DataTable).where(DataTable.id.in_({link.target_table_id for link in links}))
+        )
+    }
+    labels = {}
+    for link in links:
+        target, table = targets[link.target_record_id], tables[link.target_table_id]
+        value = target.values.get(str(table.display_field_id)) if table.display_field_id else None
+        labels.setdefault(link.record_id, {})[str(link.field_id)] = {
+            "record_id": str(target.id),
+            "table_id": str(table.id),
+            "table_name": table.name,
+            "display_label": value
+            if isinstance(value, str) and value.strip()
+            else f"记录 {target.id}",
+            "status": target.status,
+        }
+    return labels
+
+
+def record_response(
+    db: Session, record: DataRecord, values: dict | None = None, labels: dict | None = None
+) -> RecordResponse:
     actual = get_record_values(db, record) if values is None else values
     table = require_table(db, record.table_id, active=False)
     display = actual.get(str(table.display_field_id)) if table.display_field_id else None
     label = display if isinstance(display, str) and display.strip() else f"记录 {record.id}"
+    if labels is None:
+        labels = link_labels(
+            db, list(db.scalars(select(DataLink).where(DataLink.record_id == record.id)))
+        ).get(record.id, {})
     return RecordResponse(
         id=record.id,
         table_id=record.table_id,
@@ -41,6 +78,7 @@ def record_response(db: Session, record: DataRecord, values: dict | None = None)
         created_by=record.created_by,
         updated_by=record.updated_by,
         display_label=label,
+        linked_labels=labels,
     )
 
 

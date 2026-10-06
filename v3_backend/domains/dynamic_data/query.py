@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .errors import ValidationError
 from .models import DataChange, DataField, DataLink, DataRecord, DataTable
-from .records import record_response
+from .records import link_labels, record_response
 from .repository import require_field, require_record, require_table, table_fields
 from .schemas import (
     ChangeQuery,
@@ -196,13 +196,20 @@ def _record_page(db, table, statement, page, page_size):
     total = db.scalar(select(func.count()).select_from(statement.order_by(None).subquery()))
     rows = list(db.scalars(statement.offset((page - 1) * page_size).limit(page_size)))
     values = {r.id: dict(r.values) for r in rows}
+    links = []
     if rows:
-        for link in db.scalars(
-            select(DataLink).where(DataLink.table_id == table.id, DataLink.record_id.in_(values))
-        ):
+        links = list(
+            db.scalars(
+                select(DataLink).where(
+                    DataLink.table_id == table.id, DataLink.record_id.in_(values)
+                )
+            )
+        )
+        for link in links:
             values[link.record_id][str(link.field_id)] = str(link.target_record_id)
+    labels = link_labels(db, links)
     return Page(
-        items=[record_response(db, r, values[r.id]) for r in rows],
+        items=[record_response(db, r, values[r.id], labels.get(r.id, {})) for r in rows],
         total=total,
         page=page,
         page_size=page_size,

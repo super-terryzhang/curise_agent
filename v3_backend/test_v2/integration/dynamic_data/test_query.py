@@ -19,6 +19,53 @@ from domains.dynamic_data.schemas import (
 A = Actor(id=1, role="admin")
 
 
+def test_link_page_includes_batched_current_target_labels(data_db):
+    db = data_db
+    target, name = setup(db)
+    s.update_table(
+        db, target.id, TableUpdate(expected_schema_version=2, display_field_id=name.id), actor=A
+    )
+    dest = s.create_record(
+        db,
+        target.id,
+        RecordCreate(id=uuid4(), schema_version=3, values={str(name.id): "真实目标名称"}),
+        actor=A,
+    )
+    source = s.create_table(db, TableCreate(id=uuid4(), name="来源"), actor=A)
+    link = s.create_field(
+        db,
+        source.id,
+        FieldCreate(
+            id=uuid4(),
+            label="关联",
+            field_type="link",
+            target_table_id=target.id,
+            expected_schema_version=1,
+        ),
+        actor=A,
+    )
+    for _ in range(10):
+        s.create_record(
+            db,
+            source.id,
+            RecordCreate(id=uuid4(), schema_version=2, values={str(link.id): str(dest.id)}),
+            actor=A,
+        )
+    statements = []
+
+    def count(*args):
+        statements.append(args[2])
+
+    event.listen(db.bind, "before_cursor_execute", count)
+    try:
+        page = s.list_records(db, source.id, RecordQuery())
+    finally:
+        event.remove(db.bind, "before_cursor_execute", count)
+    assert page.items[0].linked_labels[str(link.id)]["display_label"] == "真实目标名称"
+    assert page.items[0].linked_labels[str(link.id)]["record_id"] == str(dest.id)
+    assert len(statements) <= 8
+
+
 def setup(db, kind="text"):
     t = s.create_table(db, TableCreate(id=uuid4(), name="查询"), actor=A)
     f = s.create_field(

@@ -149,6 +149,7 @@ class RecordResponse(Contract):
     created_by: int
     updated_by: int
     display_label: str
+    linked_labels: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 class ChangeResponse(Contract):
