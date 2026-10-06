@@ -107,7 +107,7 @@ it("shows relation labels and deep links without recursively fetching every cell
   );
   const link = await screen.findByRole("link", { name: /真实客户/ });
   expect(link.getAttribute("href")).toBe(
-    "/dashboard/settings/data-tables/target-table?tab=records&record=target",
+    "/dashboard/data-tables/target-table?tab=records&record=target",
   );
   expect(screen.getByText(/已归档/)).toBeTruthy();
   expect(api.getRecord).not.toHaveBeenCalled();

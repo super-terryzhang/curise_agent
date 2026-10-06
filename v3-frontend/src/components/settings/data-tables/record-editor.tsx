@@ -17,6 +17,7 @@ import {
   buildRecordValues,
   fieldIssues,
 } from "@/lib/data-tables-view";
+import { DATA_TABLES_PATH } from "@/lib/dashboard-routes";
 import { ValueControl } from "./value-control";
 import { ErrorNotice } from "./shared";
 
@@ -278,7 +279,7 @@ export function RecordEditor({
                     请先前往字段配置页
                     <a
                       className="ml-1 underline"
-                      href={`/dashboard/settings/data-tables/${table.id}?tab=fields`}
+                      href={`${DATA_TABLES_PATH}/${table.id}?tab=fields`}
                     >
                       新增字段
                     </a>

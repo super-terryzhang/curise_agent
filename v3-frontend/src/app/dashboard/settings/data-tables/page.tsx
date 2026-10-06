@@ -1,4 +1,5 @@
-import { TableList } from "@/components/settings/data-tables/table-list";
-export default function DataTablesPage() {
-  return <TableList />;
+import { LegacyDataTablesRedirect } from "@/components/settings/data-tables/legacy-data-tables-redirect";
+
+export default function LegacyDataTablesPage() {
+  return <LegacyDataTablesRedirect />;
 }

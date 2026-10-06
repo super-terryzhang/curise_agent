@@ -17,6 +17,7 @@ import {
   canManageStructure,
   formatTime,
 } from "@/lib/data-tables-view";
+import { DATA_TABLES_PATH } from "@/lib/dashboard-routes";
 import { CELL, SELECT_CLASS, ErrorNotice, Pager } from "./shared";
 
 export function TableList() {
@@ -285,7 +286,7 @@ export function TableList() {
                       <td className={CELL}>
                         <a
                           className="underline"
-                          href={`/dashboard/settings/data-tables/${t.id}`}
+                          href={`${DATA_TABLES_PATH}/${t.id}`}
                         >
                           {t.name}
                         </a>
@@ -305,7 +306,7 @@ export function TableList() {
                         <div className="flex gap-2">
                           <a
                             className="underline"
-                            href={`/dashboard/settings/data-tables/${t.id}`}
+                            href={`${DATA_TABLES_PATH}/${t.id}`}
                           >
                             打开
                           </a>

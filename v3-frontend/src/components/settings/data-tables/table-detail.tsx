@@ -10,6 +10,7 @@ import {
   DataTablesApiError,
 } from "@/lib/data-tables-api";
 import type { DataTable, DataField } from "@/lib/data-tables-types";
+import { DATA_TABLES_PATH } from "@/lib/dashboard-routes";
 import { FieldsPanel } from "./fields-panel";
 import { ErrorNotice } from "./shared";
 import { RecordsPanel } from "./records-panel";
@@ -59,7 +60,7 @@ export function TableDetail({
     <div className="h-full overflow-auto p-6 space-y-5">
       <a
         className="text-xs underline text-muted-foreground"
-        href="/dashboard/settings/data-tables"
+        href={DATA_TABLES_PATH}
       >
         返回数据表管理
       </a>
@@ -100,7 +101,7 @@ export function TableDetail({
                     asChild
                   >
                     <a
-                      href={`/dashboard/settings/data-tables/${tableId}?tab=${v}`}
+                      href={`${DATA_TABLES_PATH}/${tableId}?tab=${v}`}
                       aria-current={activeTab === v ? "page" : undefined}
                     >
                       {l}

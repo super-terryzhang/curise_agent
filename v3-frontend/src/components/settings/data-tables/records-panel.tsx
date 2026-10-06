@@ -14,6 +14,7 @@ import type {
   Value,
 } from "@/lib/data-tables-types";
 import { canManageRecords, displayValue } from "@/lib/data-tables-view";
+import { DATA_TABLES_PATH } from "@/lib/dashboard-routes";
 import { RecordEditor } from "./record-editor";
 import { ValueControl } from "./value-control";
 import { CELL, SELECT_CLASS, ErrorNotice, Pager } from "./shared";
@@ -395,7 +396,7 @@ export function RecordsPanel({
                             <>
                               <a
                                 className="underline"
-                                href={`/dashboard/settings/data-tables/${r.linked_labels[f.id].table_id}?tab=records&record=${r.linked_labels[f.id].record_id}`}
+                                href={`${DATA_TABLES_PATH}/${r.linked_labels[f.id].table_id}?tab=records&record=${r.linked_labels[f.id].record_id}`}
                               >
                                 {r.linked_labels[f.id].display_label}
                               </a>

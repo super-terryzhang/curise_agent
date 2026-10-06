@@ -1,6 +1,7 @@
 "use client";
 import { Button } from "@/components/ui/button";
 import { DataTablesApiError } from "@/lib/data-tables-api";
+import { DATA_TABLES_PATH } from "@/lib/dashboard-routes";
 export const SELECT_CLASS =
   "h-9 rounded-md border bg-background px-3 text-sm min-w-0";
 export const CELL = "px-3 py-3 text-left align-top border-b";
@@ -27,7 +28,7 @@ export function ErrorNotice({ error }: { error: unknown }) {
               ·{" "}
               <a
                 className="underline"
-                href={`/dashboard/settings/data-tables/${i.table_id}?tab=records&record=${i.record_id}`}
+                href={`${DATA_TABLES_PATH}/${i.table_id}?tab=records&record=${i.record_id}`}
               >
                 查看受影响记录 {i.record_id}
               </a>

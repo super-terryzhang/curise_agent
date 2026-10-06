@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { searchLinkTargets } from "@/lib/data-tables-api";
 import type { DataRecord, Page, LinkedLabel } from "@/lib/data-tables-types";
+import { DATA_TABLES_PATH } from "@/lib/dashboard-routes";
 import { ErrorNotice, Pager } from "./shared";
 
 export function LinkedRecordPicker({
@@ -67,7 +68,7 @@ export function LinkedRecordPicker({
           {current && (
             <a
               className="underline ml-2"
-              href={`/dashboard/settings/data-tables/${current.table_id}?tab=records&record=${value}`}
+              href={`${DATA_TABLES_PATH}/${current.table_id}?tab=records&record=${value}`}
               target="_blank"
               rel="noreferrer"
             >

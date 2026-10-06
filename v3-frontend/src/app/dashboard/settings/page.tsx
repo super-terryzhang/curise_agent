@@ -11,6 +11,7 @@ import AIConfigTab from "./AIConfigTab";
 import DeliveryLocationTab from "./DeliveryLocationTab";
 import CompanyConfigTab from "./CompanyConfigTab";
 import { Button } from "@/components/ui/button";
+import { DATA_TABLES_PATH } from "@/lib/dashboard-routes";
 
 export default function SettingsPage() {
   return (
@@ -19,7 +20,7 @@ export default function SettingsPage() {
         <PageHeader
           title="设置中心"
           description="管理字段定义、订单格式、供应商模板、业务配置和 AI 配置"
-          action={<Button variant="outline" asChild><a href="/dashboard/settings/data-tables">数据表管理</a></Button>}
+          action={<Button variant="outline" asChild><a href={DATA_TABLES_PATH}>数据表管理</a></Button>}
         />
       </div>
 
