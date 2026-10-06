@@ -7,8 +7,8 @@
 ## 执行清单
 
 1. 存储、请求契约和新迁移：完成本地 ORM/契约验收；真实迁移留 Task 7。
-2. 八类型校验：开始执行。
-3. 表和字段管理：待执行。
+2. 八类型校验：完成针对性验证。
+3. 表和字段管理：开始执行。
 4. 记录、关联、唯一值和历史原子保存：待执行。
 5. 归档恢复及查询：待执行。
 6. 受保护接口：待执行。
@@ -32,3 +32,10 @@
 - 新模型专项 + 既有 release_maintenance：13 passed；Ruff 和架构检查通过；本地 Alembic 仅 `0035_custom_data_tables (head)`。
 - 命令从工作树 v3_backend 执行：主目录 `.venv/bin/python -m pytest test_v2/integration/dynamic_data/test_models.py test_v2/section_1_security/test_release_maintenance.py -q`；解释器绝对路径 `/Users/yichuanzhang/Desktop/curise_system_2/curise_agent/v3_backend/.venv/bin/python`。
 - ORM create_all 不是生产迁移证明；尚未连接任何 PostgreSQL 或生产库。既有 Starlette/passlib 弃用告警不在本轮扩展修复。
+
+## Task 2 证据
+
+- 首轮 26 项反例在 validation 模块尚不存在时失败；实现后 26 passed，再补八类型正常值和聚合必填错误，合计 33 项。
+- 使用纯校验模块统一规则；Decimal 十进制字符串不经过 float，巨大正负指数在格式化前拒绝；false 和 0 保留，日期与带时区时间分别处理。
+- 缺失保持、null 清空、仅创建时默认值、停用选项仅原值保留、归档字段不能显式修改；唯一文本上限 200、字段/选项 100、行 64 KiB。
+- 新模型与全部类型测试合并运行 39 passed；Ruff 通过。数字查询、唯一占位事务和数据库关联状态尚由后续任务验证，未宣称已具备接口或页面。
