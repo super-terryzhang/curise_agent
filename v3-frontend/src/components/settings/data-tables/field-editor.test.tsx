@@ -35,7 +35,7 @@ it("choosing number shows precision and saves string default with schema version
     ),
   );
 });
-it("existing rows prohibit changing field type in the editor", () => {
+it("existing rows show the field type as read-only instead of a broken-looking selector", () => {
   render(
     <FieldEditor
       table={{ ...table, record_count: 1 }}
@@ -44,10 +44,15 @@ it("existing rows prohibit changing field type in the editor", () => {
       onCancel={vi.fn()}
     />,
   );
-  expect(
-    (screen.getByLabelText("字段类型") as HTMLSelectElement).disabled,
-  ).toBe(true);
-  expect(screen.getByText(/已有记录.*新建字段/)).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "字段类型" })).toBeNull();
+  expect(screen.getByText("当前类型：文本")).toBeTruthy();
+  expect(screen.getByText(/此表已有数据.*新增字段/)).toBeTruthy();
+});
+it("explains the text length limit in user-facing language", () => {
+  render(<FieldEditor table={table} onSaved={vi.fn()} onCancel={vi.fn()} />);
+  expect(screen.getByLabelText("最多可输入")).toBeTruthy();
+  expect(screen.getByText("个字符")).toBeTruthy();
+  expect(screen.getByText(/填写 100.*最多输入 100 个字符/)).toBeTruthy();
 });
 it("field corrections after a validation rejection are used on next save", async () => {
   vi.mocked(api.createField)

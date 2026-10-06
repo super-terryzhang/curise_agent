@@ -143,25 +143,31 @@ export function FieldEditor({
             onChange={(e) => setLabel(e.target.value)}
           />
         </label>
-        <label className="block text-sm space-y-1">
-          字段类型
-          <select
-            className={SELECT_CLASS + " block w-full"}
-            value={kind}
-            disabled={frozen}
-            onChange={(e) => changeKind(e.target.value as FieldType)}
-          >
-            {Object.entries(TYPE_LABELS).map(([v, l]) => (
-              <option key={v} value={v}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
-        {frozen && (
-          <p className="text-xs text-muted-foreground">
-            已有记录，不可直接改变类型或关联目标；请新建字段并整理数据。归档记录也受后端保护。
-          </p>
+        {frozen ? (
+          <div className="space-y-1">
+            <p className="text-sm">字段类型</p>
+            <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm text-foreground">
+              当前类型：{TYPE_LABELS[kind]}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              此表已有数据，字段类型不能直接修改；如需其他类型，请新增字段。
+            </p>
+          </div>
+        ) : (
+          <label className="block text-sm space-y-1">
+            字段类型
+            <select
+              className={SELECT_CLASS + " block w-full"}
+              value={kind}
+              onChange={(e) => changeKind(e.target.value as FieldType)}
+            >
+              {Object.entries(TYPE_LABELS).map(([v, l]) => (
+                <option key={v} value={v}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
         <div className="flex gap-5 text-sm">
           <label>
@@ -187,18 +193,28 @@ export function FieldEditor({
           设置必填或唯一将检查现有数据；不会自动填充旧记录。默认值只用于新记录。
         </p>
         {kind === "text" && (
-          <div className="flex gap-4">
-            <label className="text-sm">
-              最长字符
-              <Input
-                type="number"
-                min={1}
-                max={4096}
-                value={maxLength}
-                onChange={(e) => setMaxLength(e.target.value)}
-              />
-            </label>
-            <label className="text-sm">
+          <div className="flex items-start gap-4">
+            <div className="space-y-1">
+              <label className="block text-sm" htmlFor={`${id}-max-length`}>
+                最多可输入
+              </label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id={`${id}-max-length`}
+                  className="w-32"
+                  type="number"
+                  min={1}
+                  max={4096}
+                  value={maxLength}
+                  onChange={(e) => setMaxLength(e.target.value)}
+                />
+                <span className="text-sm text-muted-foreground">个字符</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                例如填写 100，表示每条内容最多输入 100 个字符。
+              </p>
+            </div>
+            <label className="mt-7 text-sm">
               <input
                 type="checkbox"
                 checked={multiline}
