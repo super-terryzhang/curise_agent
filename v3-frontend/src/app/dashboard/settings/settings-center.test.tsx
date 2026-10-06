@@ -4,7 +4,8 @@ import "@/test/setup-dom";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 
-import { SettingsCenter, normalizeSettingsSection } from "./settings-center";
+import { SettingsCenter } from "./settings-center";
+import { normalizeSettingsSection } from "./settings-section";
 
 const settingsApi = vi.hoisted(() => ({
   getCompanyConfig: vi.fn(),

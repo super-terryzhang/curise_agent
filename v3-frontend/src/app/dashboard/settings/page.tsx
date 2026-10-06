@@ -1,7 +1,5 @@
-import {
-  normalizeSettingsSection,
-  SettingsCenter,
-} from "./settings-center";
+import { SettingsCenter } from "./settings-center";
+import { normalizeSettingsSection } from "./settings-section";
 
 export default async function SettingsPage({
   searchParams,

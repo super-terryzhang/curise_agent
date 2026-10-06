@@ -102,12 +102,6 @@ const SETTINGS_GROUPS: SettingsGroup[] = [
 
 const SETTINGS_ENTRIES = SETTINGS_GROUPS.flatMap((group) => group.entries);
 
-export function normalizeSettingsSection(
-  section: string | string[] | undefined,
-): string | undefined {
-  return typeof section === "string" ? section : undefined;
-}
-
 export function SettingsCenter({ section }: { section?: string }) {
   const selected = SETTINGS_ENTRIES.find((entry) => entry.id === section);
 
