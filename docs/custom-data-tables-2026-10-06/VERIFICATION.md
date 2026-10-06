@@ -31,7 +31,7 @@
 专项命令：`python -m pytest test_v2/e2e/test_custom_data_tables.py test_v2/unit/dynamic_data test_v2/integration/dynamic_data -q`。
 最终完整命令：`python -m pytest -q`；同时配置新模块隔离测试库和另一个专用旧迁移测试库。
 
-104 跳过项来自既有真实 LLM 慢评测、旧鉴权和批量编辑专用 PostgreSQL 未配置、受控 PDF/Excel fixture 未接入工作树及旧 `/tmp/pdftest` 样本缺失；没有新增宽泛 skip。本轮新模块 103 项未跳过。完整回归后通过忽略的符号链接复用原 `curise_agent/test-orders`（原文件不移动、不修改、不会入 Git），仅补跑之前缺 fixture 的相关离线组，15项全部通过，不重复全量；其中14项对应全量中的样本跳过项，其余为该文件既有普通回归。完整回归结果仍原样保留，不混算成一次全量全通过。
+104 跳过项来自既有真实 LLM 慢评测、旧鉴权和批量编辑专用 PostgreSQL 未配置、受控 PDF/Excel fixture 未接入工作树及旧 `/tmp/pdftest` 样本缺失；没有新增宽泛 skip。本轮新模块 103 项未跳过。完整回归后通过忽略的符号链接复用原 `curise_agent/test-orders`（原文件不移动、不修改、不会入 Git），仅补跑之前缺 fixture 的相关离线组，15项全部通过，不重复全量。完整回归结果仍原样保留，不混算成一次全量全通过。
 
 ## 审查与修复
 
