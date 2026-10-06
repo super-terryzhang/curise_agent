@@ -1,9 +1,14 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import func, select
 
-from domains.dynamic_data.models import DataChange
+from domains.dynamic_data.models import DataChange, DataRecord, DataTable
+from domains.masterdata.models import Product
+from domains.orders.models import Order
+
+PRODUCTS_ID = UUID("025588dd-ae63-5607-9e78-1179a500ed6e")
+ORDERS_ID = UUID("0bc67ecc-ccd3-53b5-8327-74f4b482b7b4")
 
 
 @pytest.fixture
@@ -205,6 +210,119 @@ def test_record_update_reorder_archive_and_history_api(client, headers):
     assert changes.status_code == 200
     assert changes.json()["total"] == 4
     assert all("creation_request" not in item for item in changes.json()["items"])
+
+
+def test_system_table_http_reads_and_saves_extensions_without_core_writes(
+    client, headers, db
+):
+    db.add(
+        DataTable(
+            id=PRODUCTS_ID,
+            name="产品",
+            table_kind="system",
+            system_key="products",
+            created_by=0,
+            updated_by=0,
+        )
+    )
+    product = Product(product_name_en="HTTP APPLE", code="HTTP-P-1")
+    db.add(product)
+    db.commit()
+    prefix = f"/api/data-tables/{PRODUCTS_ID}"
+    extension_id = str(uuid4())
+    field = client.post(
+        prefix + "/fields",
+        headers=headers,
+        json={
+            "id": extension_id,
+            "label": "内部备注",
+            "field_type": "text",
+            "expected_schema_version": 1,
+        },
+    )
+    assert field.status_code == 200, field.text
+
+    catalog = client.get("/api/data-tables", headers=headers).json()
+    assert any(row["system_key"] == "products" for row in catalog["items"])
+    listed = client.get(prefix + "/records", headers=headers, params={"q": "APPLE"})
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["items"][0]["id"] == str(product.id)
+    detail = client.get(prefix + f"/records/{product.id}", headers=headers)
+    assert detail.status_code == 200
+    core_id = next(
+        row["id"]
+        for row in client.get(prefix + "/fields", headers=headers).json()
+        if row["source"] == "core"
+    )
+    request_id = str(uuid4())
+    saved = client.patch(
+        prefix + f"/records/{product.id}",
+        headers=headers,
+        json={
+            "request_id": request_id,
+            "source_record_id": str(product.id),
+            "expected_revision": 0,
+            "schema_version": 2,
+            "values": {extension_id: "已复核"},
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["id"] == str(product.id)
+    assert saved.json()["values"][extension_id] == "已复核"
+    assert db.scalar(select(func.count()).select_from(DataRecord)) == 1
+    assert db.get(Product, product.id).product_name_en == "HTTP APPLE"
+
+    mismatch = client.patch(
+        prefix + f"/records/{product.id}",
+        headers=headers,
+        json={
+            "request_id": str(uuid4()),
+            "source_record_id": str(product.id + 1),
+            "expected_revision": 1,
+            "schema_version": 2,
+            "values": {},
+        },
+    )
+    assert mismatch.status_code == 422
+    core_write = client.patch(
+        prefix + f"/records/{product.id}",
+        headers=headers,
+        json={
+            "request_id": str(uuid4()),
+            "source_record_id": str(product.id),
+            "expected_revision": 1,
+            "schema_version": 2,
+            "values": {core_id: "覆盖核心字段"},
+        },
+    )
+    assert core_write.status_code == 422
+    assert (
+        client.get(prefix + "/records/%25%27%20OR%201%3D1", headers=headers).status_code
+        == 404
+    )
+
+
+def test_order_system_http_preserves_actor_visibility(client, headers, db, seed_user):
+    db.add(
+        DataTable(
+            id=ORDERS_ID,
+            name="订单",
+            table_kind="system",
+            system_key="orders",
+            created_by=0,
+            updated_by=0,
+        )
+    )
+    own = Order(user_id=seed_user.id, filename="own.pdf", po_number="PO-OWN")
+    other = Order(user_id=999, filename="other.pdf", po_number="PO-OTHER")
+    db.add_all([own, other])
+    seed_user.role = "employee"
+    db.commit()
+    prefix = f"/api/data-tables/{ORDERS_ID}/records"
+    listed = client.get(prefix, headers=headers)
+    assert listed.status_code == 200
+    assert [row["id"] for row in listed.json()["items"]] == [str(own.id)]
+    assert client.get(prefix + f"/{other.id}", headers=headers).status_code == 404
 
 
 def test_unexpected_errors_do_not_log_private_values(client, headers, monkeypatch, caplog):

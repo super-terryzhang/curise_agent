@@ -120,7 +120,7 @@ class Settings(BaseSettings):
 
     # ─── Feature flags ─────────────────────────────────────────
     CUSTOM_DATA_TABLES_ENABLED: bool = False
-    SCHEMA_RELEASE_TRANSITION: Literal["", "custom_data_tables_0034_0035"] = ""
+    SCHEMA_RELEASE_TRANSITION: Literal["", "unified_data_tables_0034_0036"] = ""
     # When true (default), POST /documents/{id}/create-order returns as
     # soon as the Order row exists (status="matching") and the Gemini
     # matching pipeline runs in the background via AsyncioRunner. The

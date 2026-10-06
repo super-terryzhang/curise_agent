@@ -47,7 +47,7 @@ def main():
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "migrations"))
     command.stamp(config, "0034_drop_product_validity")
-    command.upgrade(config, "0035_custom_data_tables")
+    command.upgrade(config, "0036_unified_data_tables")
     with Session(engine) as db:
         db.add(
             User(

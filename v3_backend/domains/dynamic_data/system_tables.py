@@ -9,8 +9,8 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from domains.masterdata.models import Category, Country, Port, Product, Supplier
-from domains.orders.models import Order
+from domains.masterdata import Category, Country, Port, Product, Supplier
+from domains.orders import Order
 
 from .errors import Forbidden, NotFound, ValidationError
 from .models import DataRecord, DataTable

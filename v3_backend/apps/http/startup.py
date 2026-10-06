@@ -26,10 +26,15 @@ def verify_schema(engine) -> None:
         ) from None
     if settings.SCHEMA_RELEASE_TRANSITION:
         if (
-            settings.SCHEMA_RELEASE_TRANSITION != "custom_data_tables_0034_0035"
+            settings.SCHEMA_RELEASE_TRANSITION != "unified_data_tables_0034_0036"
             or settings.CUSTOM_DATA_TABLES_ENABLED
-            or expected != {"0035_custom_data_tables"}
-            or current not in ({"0034_drop_product_validity"}, {"0035_custom_data_tables"})
+            or expected != {"0036_unified_data_tables"}
+            or current
+            not in (
+                {"0034_drop_product_validity"},
+                {"0035_custom_data_tables"},
+                {"0036_unified_data_tables"},
+            )
         ):
             raise RuntimeError("Invalid schema release transition or database head")
         return

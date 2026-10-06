@@ -12,7 +12,13 @@ from pydantic import ValidationError as PydanticValidationError
 
 from apps.http._deps import Admin, DbDep, Writer
 from domains.dynamic_data import service
-from domains.dynamic_data.errors import Conflict, DataTableError, Forbidden, NotFound
+from domains.dynamic_data.errors import (
+    Conflict,
+    DataTableError,
+    Forbidden,
+    NotFound,
+    ValidationError,
+)
 from domains.dynamic_data.schemas import (
     Actor,
     ChangeQuery,
@@ -28,6 +34,7 @@ from domains.dynamic_data.schemas import (
     RecordResponse,
     RecordUpdate,
     SchemaAction,
+    SystemRecordUpdate,
     TableCreate,
     TableResponse,
     TableUpdate,
@@ -46,7 +53,7 @@ class DataTablesRoute(APIRoute):
                 if not settings.CUSTOM_DATA_TABLES_ENABLED:
                     raise HTTPException(
                         503,
-                        detail="自定义数据表暂未启用，请联系管理员",
+                        detail="数据表管理暂未启用，请联系管理员",
                         headers={"Cache-Control": "no-store", "Retry-After": "120"},
                     )
                 return await original(request)
@@ -134,7 +141,9 @@ def list_tables(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
 ):
-    return service.list_tables(db, status=status, page=page, page_size=page_size)
+    return service.list_tables(
+        db, status=status, page=page, page_size=page_size, actor=actor(user)
+    )
 
 
 @router.post("", response_model=TableResponse)
@@ -144,7 +153,7 @@ def create_table(body: TableCreate, db: DbDep, user: Admin):
 
 @router.get("/{table_id}", response_model=TableResponse)
 def get_table(table_id: UUID, db: DbDep, user: Writer):
-    return service.get_table(db, table_id)
+    return service.get_table(db, table_id, actor=actor(user))
 
 
 @router.patch("/{table_id}", response_model=TableResponse)
@@ -183,6 +192,7 @@ def list_records(
     sort_field_id: UUID | None = None,
     sort_direction: Literal["asc", "desc"] = "asc",
     filters: str = Query("[]", max_length=65536),
+    q: str | None = Query(None, max_length=200),
 ):
     try:
         parsed = json.loads(filters)
@@ -197,8 +207,9 @@ def list_records(
         sort_field_id=sort_field_id,
         sort_direction=sort_direction,
         filters=parsed,
+        q=q,
     )
-    return service.list_records(db, table_id, query)
+    return service.list_records(db, table_id, query, actor=actor(user))
 
 
 @router.post("/{table_id}/records", response_model=RecordResponse)
@@ -207,13 +218,33 @@ def create_record(table_id: UUID, body: RecordCreate, db: DbDep, user: Writer):
 
 
 @router.get("/{table_id}/records/{record_id}", response_model=RecordResponse)
-def get_record(table_id: UUID, record_id: UUID, db: DbDep, user: Writer):
-    return service.get_record(db, table_id, record_id)
+def get_record(table_id: UUID, record_id: str, db: DbDep, user: Writer):
+    return service.get_record(db, table_id, record_id, actor=actor(user))
 
 
 @router.patch("/{table_id}/records/{record_id}", response_model=RecordResponse)
-def update_record(table_id: UUID, record_id: UUID, body: RecordUpdate, db: DbDep, user: Writer):
-    return service.update_record(db, table_id, record_id, body, actor=actor(user))
+def update_record(
+    table_id: UUID,
+    record_id: str,
+    body: RecordUpdate | SystemRecordUpdate,
+    db: DbDep,
+    user: Writer,
+):
+    current_actor = actor(user)
+    table = service.get_table(db, table_id, actor=current_actor)
+    if table.table_kind == "system":
+        if not isinstance(body, SystemRecordUpdate):
+            raise ValidationError("INVALID_SYSTEM_UPDATE", "请提交系统记录扩展信息")
+        if body.source_record_id != record_id:
+            raise ValidationError("SOURCE_ID_MISMATCH", "路径记录编号与提交内容不一致")
+        return service.save_system_record(db, table_id, body, actor=current_actor)
+    if not isinstance(body, RecordUpdate):
+        raise ValidationError("INVALID_RECORD_UPDATE", "普通数据表更新内容不合法")
+    try:
+        user_record_id = UUID(record_id)
+    except ValueError as exc:
+        raise NotFound("RECORD_NOT_FOUND", "记录不存在于此数据表") from exc
+    return service.update_record(db, table_id, user_record_id, body, actor=current_actor)
 
 
 @router.get("/{table_id}/fields/{field_id}/targets", response_model=Page[RecordResponse])
@@ -237,12 +268,13 @@ def changes(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     entity_type: Literal["table", "field", "record"] | None = None,
-    record_id: UUID | None = None,
+    record_id: str | None = None,
 ):
     return service.list_changes(
         db,
         table_id,
         ChangeQuery(page=page, page_size=page_size, entity_type=entity_type, record_id=record_id),
+        actor=actor(user),
     )
 
 
@@ -267,10 +299,18 @@ def restore_field(table_id: UUID, field_id: UUID, body: SchemaAction, db: DbDep,
 
 
 @router.post("/{table_id}/records/{record_id}/archive", response_model=RecordResponse)
-def archive_record(table_id: UUID, record_id: UUID, body: RecordAction, db: DbDep, user: Writer):
-    return service.set_record_status(db, table_id, record_id, body, active=False, actor=actor(user))
+def archive_record(table_id: UUID, record_id: str, body: RecordAction, db: DbDep, user: Writer):
+    try:
+        parsed = UUID(record_id)
+    except ValueError as exc:
+        raise NotFound("RECORD_NOT_FOUND", "记录不存在于此数据表") from exc
+    return service.set_record_status(db, table_id, parsed, body, active=False, actor=actor(user))
 
 
 @router.post("/{table_id}/records/{record_id}/restore", response_model=RecordResponse)
-def restore_record(table_id: UUID, record_id: UUID, body: RecordAction, db: DbDep, user: Writer):
-    return service.set_record_status(db, table_id, record_id, body, active=True, actor=actor(user))
+def restore_record(table_id: UUID, record_id: str, body: RecordAction, db: DbDep, user: Writer):
+    try:
+        parsed = UUID(record_id)
+    except ValueError as exc:
+        raise NotFound("RECORD_NOT_FOUND", "记录不存在于此数据表") from exc
+    return service.set_record_status(db, table_id, parsed, body, active=True, actor=actor(user))
