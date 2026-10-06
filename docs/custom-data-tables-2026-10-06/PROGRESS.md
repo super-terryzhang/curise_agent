@@ -6,6 +6,17 @@
 
 独立分支 `feature/custom-data-tables-20261006` 已完成计划 Task 1—7 的本地实现和验证。**尚未合并 main、推送 GitHub、运行 GitHub CI、迁移生产或部署；生产仍保持 0034。**
 
+## 2026-10-06 设置中心信息架构优化（本地完成）
+
+- 用户已选择方案 A：设置中心从横向六标签改为“订单与询价／公司与系统”两组分类首页；进入单项后继续复用原设置组件和保存逻辑。
+- “数据表管理”已从设置中心拆为 `/dashboard/data-tables` 一级导航，`superadmin/admin/employee/finance` 使用同一名称和入口；设置中心仍只对管理员开放。
+- 路由判断改为完整边界匹配，`/dashboard/data-tables` 不再误命中 `/dashboard/data`；旧 `/dashboard/settings/data-tables` 列表和详情链接保留查询参数并跳转到新地址。
+- 功能提交：`0ef26bc`（导航与权限）、`6452107`（正式路由与旧链接兼容）、`fc54e1a`（方案 A 设置首页）。
+- 聚焦验证：12 files / 51 tests passed；完整前端回归：57 files / 301 tests passed；Next.js 16.2.11 生产构建成功并列出新旧数据表路由与动态设置路由。
+- 首次构建在受限沙箱中因 Turbopack 无权绑定临时端口失败；相同源码在获准的沙箱外重新运行后完成编译、TypeScript、19 个静态页面生成和路由收集，属于验证环境限制，不是应用构建错误。
+- 技术债务边界：旧 URL 常量与兼容页面暂时保留；数据表 React 组件仍位于现有 `components/settings/data-tables` 内部目录，避免本轮扩大为无用户收益的文件搬迁，用户界面与正式 URL 已消除“自定义数据表”概念。
+- **本轮仍未合并 main、推送 GitHub、运行 GitHub CI 或部署生产；本地服务需要重启或重新构建后才能看到新页面。**
+
 ## 统一迭代完成内容
 
 1. 0036 新增 `table_kind/system_key/source_record_id` 和固定系统目录；0035 的用户表、字段、记录、关联和历史均原样保留。
