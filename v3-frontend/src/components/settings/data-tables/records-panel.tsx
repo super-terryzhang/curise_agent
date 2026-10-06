@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { getUser } from "@/lib/auth";
 import * as api from "@/lib/data-tables-api";
 import type {
@@ -48,7 +49,8 @@ export function RecordsPanel({
   recordId?: string | null;
 }) {
   const active = fields.filter((f) => f.status === "active"),
-    writable = canManageRecords(getUser()?.role) && table.status === "active";
+    writable = canManageRecords(getUser()?.role) && table.status === "active",
+    system = table.table_kind === "system";
   const [status, setStatus] = useState<Status>("active"),
     [page, setPage] = useState(1),
     [sort, setSort] = useState(""),
@@ -57,6 +59,8 @@ export function RecordsPanel({
     [operator, setOperator] = useState<RecordFilter["operator"]>("eq"),
     [filterValue, setFilterValue] = useState<Value>(null),
     [filters, setFilters] = useState<RecordFilter[]>([]);
+  const [searchDraft, setSearchDraft] = useState(""),
+    [search, setSearch] = useState("");
   const [data, setData] = useState<Page<DataRecord>>(),
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false),
@@ -69,20 +73,25 @@ export function RecordsPanel({
     setLoading(true);
     setError(null);
     try {
-      const d = await api.listRecords(table.id, {
-        page,
-        status,
-        sort_field_id: sort || undefined,
-        sort_direction: direction,
-        filters,
-      });
+      const d = await api.listRecords(
+        table.id,
+        system
+          ? { page, q: search || undefined }
+          : {
+              page,
+              status,
+              sort_field_id: sort || undefined,
+              sort_direction: direction,
+              filters,
+            },
+      );
       if (n === sequence.current) setData(d);
     } catch (e) {
       if (n === sequence.current) setError(e);
     } finally {
       if (n === sequence.current) setLoading(false);
     }
-  }, [table.id, page, status, sort, direction, filters]);
+  }, [table.id, system, page, status, sort, direction, filters, search]);
   useEffect(() => {
     void load();
     return () => {
@@ -143,6 +152,30 @@ export function RecordsPanel({
         />
       )}
       <div className="flex flex-wrap gap-3 items-center">
+        {system ? (
+          <>
+            <label className="text-sm flex items-center gap-2">
+              搜索核心信息
+              <Input
+                className="w-72"
+                value={searchDraft}
+                disabled={!!editor}
+                onChange={(e) => setSearchDraft(e.target.value)}
+              />
+            </label>
+            <Button
+              variant="outline"
+              disabled={loading || busy || !!editor}
+              onClick={() => {
+                setSearch(searchDraft.trim());
+                setPage(1);
+              }}
+            >
+              搜索
+            </Button>
+          </>
+        ) : (
+          <>
         <label className="text-sm">
           状态{" "}
           <select
@@ -195,6 +228,8 @@ export function RecordsPanel({
           <option value="asc">升序</option>
           <option value="desc">降序</option>
         </select>
+          </>
+        )}
         <Button
           variant="outline"
           disabled={loading || busy}
@@ -202,7 +237,7 @@ export function RecordsPanel({
         >
           刷新记录
         </Button>
-        {writable && (
+        {writable && !system && (
           <Button
             disabled={busy || !!editor || !active.length}
             onClick={() => setEditor("new")}
@@ -211,7 +246,7 @@ export function RecordsPanel({
           </Button>
         )}
       </div>
-      <div className="border rounded-md p-3 space-y-2">
+      {!system && <div className="border rounded-md p-3 space-y-2">
         <div className="flex flex-wrap gap-2 items-center">
           <select
             className={SELECT_CLASS}
@@ -296,8 +331,8 @@ export function RecordsPanel({
             />
           </div>
         )}
-      </div>
-      {confirmation && (
+      </div>}
+      {!system && confirmation && (
         <div
           role="dialog"
           aria-label="确认记录状态"
@@ -379,6 +414,11 @@ export function RecordsPanel({
                       ))}
                       <td className={CELL}>
                         <div className="flex gap-2">
+                          {system && r.business_url && (
+                            <a className="underline" href={r.business_url}>
+                              打开业务页面
+                            </a>
+                          )}
                           <Button
                             size="xs"
                             variant="outline"
@@ -389,7 +429,7 @@ export function RecordsPanel({
                               ? "编辑"
                               : "查看"}
                           </Button>
-                          {writable && (
+                          {writable && !system && (
                             <Button
                               size="xs"
                               variant="outline"

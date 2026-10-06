@@ -9,9 +9,11 @@ import type {
   DataRecord,
   Values,
   RecordCreate,
+  SystemRecordUpdate,
 } from "@/lib/data-tables-types";
 import {
   canManageRecords,
+  canManageStructure,
   buildRecordValues,
   fieldIssues,
 } from "@/lib/data-tables-view";
@@ -43,6 +45,7 @@ export function RecordEditor({
   // Capture the editing contract; parent refresh must not silently replace a draft.
   const [contract, setContract] = useState({ table, fields, record });
   const [id] = useState(() => record?.id || crypto.randomUUID());
+  const [requestId] = useState(() => crypto.randomUUID());
   const [draft, setDraft] = useState<Values>(() => initial(fields, record)),
     [error, setError] = useState<unknown>(),
     [busy, setBusy] = useState(false);
@@ -50,7 +53,13 @@ export function RecordEditor({
       null,
     ),
     [check, setCheck] = useState<DataRecord | null>(null);
-  const pending = useRef<RecordCreate | null>(null);
+  const pending = useRef<RecordCreate | SystemRecordUpdate | null>(null);
+  const system = contract.table.table_kind === "system";
+  const coreFields = contract.fields.filter((field) => field.locked);
+  const extensionFields = contract.fields.filter((field) => !field.locked);
+  const activeEditableFields = (system ? extensionFields : contract.fields).filter(
+    (field) => field.status === "active",
+  );
   const dirty =
     JSON.stringify(draft) !==
     JSON.stringify(initial(contract.fields, contract.record));
@@ -58,6 +67,7 @@ export function RecordEditor({
     canManageRecords(getUser()?.role) &&
     contract.table.status === "active" &&
     (!contract.record || contract.record.status === "active");
+  const admin = canManageStructure(getUser()?.role);
   const uncertain = error instanceof api.DataTablesApiError && error.uncertain;
   const conflict =
     error instanceof api.DataTablesApiError && error.status === 409;
@@ -78,7 +88,26 @@ export function RecordEditor({
     setBusy(true);
     setError(null);
     try {
-      if (contract.record)
+      if (system) {
+        if (!contract.record)
+          throw new Error("系统数据必须从现有业务记录打开");
+        pending.current ||= {
+          request_id: requestId,
+          source_record_id: id,
+          expected_revision: contract.record.revision,
+          schema_version: contract.table.schema_version,
+          values: buildRecordValues(
+            extensionFields,
+            draft,
+            contract.record.values,
+          ),
+        } satisfies SystemRecordUpdate;
+        await api.saveSystemRecord(
+          table.id,
+          id,
+          pending.current as SystemRecordUpdate,
+        );
+      } else if (contract.record)
         await api.updateRecord(table.id, id, {
           expected_revision: contract.record.revision,
           schema_version: contract.table.schema_version,
@@ -94,7 +123,7 @@ export function RecordEditor({
           schema_version: contract.table.schema_version,
           values: buildRecordValues(contract.fields, draft),
         };
-        await api.createRecord(table.id, pending.current);
+        await api.createRecord(table.id, pending.current as RecordCreate);
       }
       onSaved();
     } catch (e) {
@@ -148,6 +177,42 @@ export function RecordEditor({
       setBusy(false);
     }
   }
+  function renderField(f: DataField, core = false) {
+    const controlField = core ? { ...f, label: `${f.label}（只读）` } : f;
+    return (
+      <div className="space-y-1 min-w-0" key={f.id}>
+        {core ? (
+          <p className="text-sm font-medium">
+            {controlField.label}
+            {f.required ? " *" : ""}
+          </p>
+        ) : (
+          <label htmlFor={`value-${f.id}`} className="text-sm font-medium">
+            {controlField.label}
+            {f.required ? " *" : ""}
+            {f.status === "archived" ? "（归档，只读）" : ""}
+          </label>
+        )}
+        <ValueControl
+          field={controlField}
+          value={draft[f.id]}
+          disabled={
+            core || !writable || f.status === "archived" || uncertain
+          }
+          initialLabel={contract.record?.linked_labels?.[f.id]}
+          onChange={(v) => setDraft((old) => ({ ...old, [f.id]: v }))}
+        />
+        {issues[f.id]?.map((message, index) => (
+          <p key={index} className="text-xs text-destructive">
+            {message}
+          </p>
+        ))}
+        {f.field_type === "datetime" && (
+          <p className="text-xs text-muted-foreground">按日本时间填写</p>
+        )}
+      </div>
+    );
+  }
   return (
     <form
       className="border rounded-lg p-4 space-y-4 max-w-4xl"
@@ -163,6 +228,11 @@ export function RecordEditor({
         记录编号：{id} · 结构版本 {contract.table.schema_version}
         {contract.record && ` · 记录版本 ${contract.record.revision}`}
       </p>
+      {system && contract.record?.business_url && (
+        <a className="text-sm underline" href={contract.record.business_url}>
+          打开业务页面
+        </a>
+      )}
       <ErrorNotice error={error} />
       {newer && (
         <p role="alert" className="text-sm text-destructive">
@@ -180,36 +250,56 @@ export function RecordEditor({
           </pre>
         </div>
       )}
-      <fieldset
-        disabled={busy || uncertain}
-        className="grid gap-4 md:grid-cols-2"
-      >
-        {contract.fields.map((f) => (
-          <div className="space-y-1 min-w-0" key={f.id}>
-            <label htmlFor={`value-${f.id}`} className="text-sm font-medium">
-              {f.label}
-              {f.required ? " *" : ""}
-              {f.status === "archived" ? "（归档，只读）" : ""}
-            </label>
-            <ValueControl
-              field={f}
-              value={draft[f.id]}
-              disabled={!writable || f.status === "archived" || uncertain}
-              initialLabel={contract.record?.linked_labels?.[f.id]}
-              onChange={(v) => setDraft((old) => ({ ...old, [f.id]: v }))}
-            />
-            {issues[f.id]?.map((m, n) => (
-              <p key={n} className="text-xs text-destructive">
-                {m}
+      {system ? (
+        <>
+          <section className="space-y-3">
+            <h3 className="text-sm font-medium">核心信息</h3>
+            <fieldset
+              disabled
+              className="grid gap-4 rounded-md border bg-muted/20 p-3 md:grid-cols-2"
+            >
+              {coreFields.map((field) => renderField(field, true))}
+            </fieldset>
+          </section>
+          <section className="space-y-3">
+            <h3 className="text-sm font-medium">扩展信息</h3>
+            {extensionFields.length ? (
+              <fieldset
+                disabled={busy || uncertain}
+                className="grid gap-4 md:grid-cols-2"
+              >
+                {extensionFields.map((field) => renderField(field))}
+              </fieldset>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                尚未配置扩展字段。
+                {admin ? (
+                  <>
+                    请先前往字段配置页
+                    <a
+                      className="ml-1 underline"
+                      href={`/dashboard/settings/data-tables/${table.id}?tab=fields`}
+                    >
+                      新增字段
+                    </a>
+                    。
+                  </>
+                ) : (
+                  "当前仅可查看核心信息；扩展字段由管理员配置。"
+                )}
               </p>
-            ))}
-            {f.field_type === "datetime" && (
-              <p className="text-xs text-muted-foreground">按日本时间填写</p>
             )}
-          </div>
-        ))}
-      </fieldset>
-      {!contract.fields.some((f) => f.status === "active") && (
+          </section>
+        </>
+      ) : (
+        <fieldset
+          disabled={busy || uncertain}
+          className="grid gap-4 md:grid-cols-2"
+        >
+          {contract.fields.map((field) => renderField(field))}
+        </fieldset>
+      )}
+      {!system && !contract.fields.some((f) => f.status === "active") && (
         <p className="text-sm">没有启用字段，请先配置字段。</p>
       )}
       {(conflict || newer || uncertain) && (
@@ -264,18 +354,22 @@ export function RecordEditor({
         </div>
       )}
       <div className="flex gap-2">
-        {writable && (
+        {writable && activeEditableFields.length > 0 && (
           <Button
             type="submit"
             disabled={
               busy ||
               conflict ||
               newer ||
-              (uncertain && !!contract.record) ||
-              !contract.fields.some((f) => f.status === "active")
+              (uncertain && !!contract.record && !system) ||
+              !activeEditableFields.length
             }
           >
-            {uncertain ? "使用原请求核对／重试" : "保存记录"}
+            {uncertain
+              ? "使用原请求核对／重试"
+              : system
+                ? "保存扩展信息"
+                : "保存记录"}
           </Button>
         )}
         <Button

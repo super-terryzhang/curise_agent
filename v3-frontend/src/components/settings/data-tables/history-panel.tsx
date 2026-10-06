@@ -90,7 +90,13 @@ function changes(h: DataChange) {
       });
   return rows;
 }
-export function HistoryPanel({ tableId }: { tableId: string }) {
+export function HistoryPanel({
+  tableId,
+  system = false,
+}: {
+  tableId: string;
+  system?: boolean;
+}) {
   const [page, setPage] = useState(1),
     [entity, setEntity] = useState(""),
     [data, setData] = useState<Page<DataChange>>(),
@@ -121,7 +127,9 @@ export function HistoryPanel({ tableId }: { tableId: string }) {
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        历史只读，使用修改时的字段、选项与关联名称；不会因后来改名而改写。
+        {system
+          ? "历史只记录扩展信息的修改；核心业务字段仍由原业务页面及其流程负责。"
+          : "历史只读，使用修改时的字段、选项与关联名称；不会因后来改名而改写。"}
       </p>
       <ErrorNotice error={error} />
       <div className="flex gap-2">

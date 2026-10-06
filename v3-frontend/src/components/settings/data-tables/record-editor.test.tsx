@@ -6,11 +6,18 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { RecordEditor } from "./record-editor";
 import * as api from "@/lib/data-tables-api";
-import { table, field, record } from "@/test/data-tables-fixtures";
+import {
+  coreField,
+  systemTable,
+  table,
+  field,
+  record,
+} from "@/test/data-tables-fixtures";
 vi.mock("@/lib/data-tables-api", async (original) => ({
   ...(await original<typeof api>()),
   createRecord: vi.fn(),
   updateRecord: vi.fn(),
+  saveSystemRecord: vi.fn(),
   searchLinkTargets: vi.fn(),
   getRecord: vi.fn(),
   getTable: vi.fn(),
@@ -54,6 +61,118 @@ it("explicit reload after a schema conflict allows editing even when parent has 
     (screen.getByRole("button", { name: "保存记录" }) as HTMLButtonElement)
       .disabled,
   ).toBe(false);
+});
+it("system editor keeps core values read-only and submits extension values only", async () => {
+  const extension = {
+    ...field("extension"),
+    table_id: systemTable.id,
+    label: "内部备注",
+  };
+  const systemRecord = {
+    ...record,
+    id: "7",
+    table_id: systemTable.id,
+    revision: 0,
+    values: { [coreField.id]: "P-007" },
+    business_url: "/dashboard/data/products/7",
+    created_by: null,
+    updated_by: null,
+  };
+  vi.mocked(api.saveSystemRecord).mockResolvedValue(systemRecord);
+  render(
+    <RecordEditor
+      table={systemTable}
+      fields={[coreField, extension]}
+      record={systemRecord}
+      onSaved={vi.fn()}
+      onCancel={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("核心信息")).toBeTruthy();
+  expect(screen.getByText("扩展信息")).toBeTruthy();
+  expect(screen.getByText("产品代码（只读）")).toBeTruthy();
+  expect(screen.getByText("P-007")).toBeTruthy();
+  expect(screen.queryByRole("textbox", { name: "产品代码（只读）" })).toBeNull();
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("内部备注"), "已核对");
+  await user.click(screen.getByRole("button", { name: "保存扩展信息" }));
+  await waitFor(() => expect(api.saveSystemRecord).toHaveBeenCalledOnce());
+  expect(api.saveSystemRecord).toHaveBeenCalledWith(
+    systemTable.id,
+    "7",
+    expect.objectContaining({
+      source_record_id: "7",
+      expected_revision: 0,
+      values: { extension: "已核对" },
+    }),
+  );
+  expect(
+    (screen.getByRole("link", { name: "打开业务页面" }) as HTMLAnchorElement)
+      .href,
+  ).toContain("/dashboard/data/products/7");
+});
+it("system table without extensions explains how an administrator can continue", () => {
+  render(
+    <RecordEditor
+      table={systemTable}
+      fields={[coreField]}
+      record={{
+        ...record,
+        id: "7",
+        table_id: systemTable.id,
+        revision: 0,
+        values: { [coreField.id]: "P-007" },
+      }}
+      onSaved={vi.fn()}
+      onCancel={vi.fn()}
+    />,
+  );
+  expect(screen.getByText(/尚未配置扩展字段/)).toBeTruthy();
+  expect(screen.getByRole("link", { name: "新增字段" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "保存扩展信息" })).toBeNull();
+});
+it("system first-save retry keeps one request id and the original body", async () => {
+  const extension = {
+    ...field("extension"),
+    table_id: systemTable.id,
+    label: "内部备注",
+  };
+  const systemRecord = {
+    ...record,
+    id: "7",
+    table_id: systemTable.id,
+    revision: 0,
+    values: { [coreField.id]: "P-007" },
+  };
+  vi.mocked(api.saveSystemRecord)
+    .mockRejectedValueOnce(
+      new api.DataTablesApiError(
+        0,
+        "NETWORK_ERROR",
+        "保存结果无法确认",
+        [],
+        true,
+      ),
+    )
+    .mockResolvedValueOnce(systemRecord);
+  render(
+    <RecordEditor
+      table={systemTable}
+      fields={[coreField, extension]}
+      record={systemRecord}
+      onSaved={vi.fn()}
+      onCancel={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("内部备注"), "原请求");
+  await user.click(screen.getByRole("button", { name: "保存扩展信息" }));
+  await user.click(
+    await screen.findByRole("button", { name: "使用原请求核对／重试" }),
+  );
+  const calls = vi.mocked(api.saveSystemRecord).mock.calls;
+  expect(calls).toHaveLength(2);
+  expect(calls[1][2]).toEqual(calls[0][2]);
 });
 it("eight dynamic controls save UUID options, decimal zero and boolean false", async () => {
   const kinds = [

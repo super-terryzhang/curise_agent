@@ -42,3 +42,13 @@ it("history uses the saved field labels and old/new values, always read-only", a
   expect(screen.getByRole("cell", { name: "新值" })).toBeTruthy();
   expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
 });
+it("system history states that only extension changes are recorded", async () => {
+  vi.mocked(api.listChanges).mockResolvedValue({
+    items: [],
+    total: 0,
+    page: 1,
+    page_size: 50,
+  });
+  render(<HistoryPanel tableId="t" system />);
+  expect(screen.getByText(/只记录扩展信息的修改/)).toBeTruthy();
+});

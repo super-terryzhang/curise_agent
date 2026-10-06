@@ -10,6 +10,7 @@ import type {
   DataRecord,
   RecordCreate,
   RecordUpdate,
+  SystemRecordUpdate,
   RecordAction,
   RecordQuery,
   DataChange,
@@ -114,6 +115,11 @@ export const createRecord = (t: string, b: RecordCreate) =>
   request<DataRecord>(`/${t}/records`, "POST", b);
 export const updateRecord = (t: string, r: string, b: RecordUpdate) =>
   request<DataRecord>(`/${t}/records/${r}`, "PATCH", b);
+export const saveSystemRecord = (
+  t: string,
+  r: string,
+  b: SystemRecordUpdate,
+) => request<DataRecord>(`/${t}/records/${r}`, "PATCH", b);
 export const archiveTable = (t: string, b: SchemaAction) =>
   request<DataTable>(`/${t}/archive`, "POST", b);
 export const restoreTable = (t: string, b: SchemaAction) =>

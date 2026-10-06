@@ -83,6 +83,13 @@ export interface RecordAction {
 export interface RecordUpdate extends RecordAction {
   values: Values;
 }
+export interface SystemRecordUpdate {
+  request_id: string;
+  source_record_id: string;
+  expected_revision: number;
+  schema_version: number;
+  values: Values;
+}
 export interface LinkedLabel {
   record_id: string;
   table_id: string;

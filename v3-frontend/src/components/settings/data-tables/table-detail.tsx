@@ -122,7 +122,10 @@ export function TableDetail({
                   onChanged={() => void load()}
                 />
               ) : (
-                <HistoryPanel tableId={tableId} />
+                <HistoryPanel
+                  tableId={tableId}
+                  system={snapshot.table.table_kind === "system"}
+                />
               )}
             </>
           ) : (

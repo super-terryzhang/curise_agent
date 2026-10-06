@@ -6,7 +6,13 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { RecordsPanel } from "./records-panel";
 import * as api from "@/lib/data-tables-api";
-import { table, field, record } from "@/test/data-tables-fixtures";
+import {
+  coreField,
+  systemTable,
+  table,
+  field,
+  record,
+} from "@/test/data-tables-fixtures";
 vi.mock("@/lib/data-tables-api");
 vi.mock("@/lib/auth", () => ({ getUser: () => ({ role: "employee" }) }));
 it("pages server data and edits a chosen row", async () => {
@@ -29,6 +35,47 @@ it("pages server data and edits a chosen row", async () => {
   expect((screen.getByLabelText("名称") as HTMLInputElement).value).toBe(
     "原值",
   );
+});
+it("system records use keyword search and server business links without archive controls", async () => {
+  vi.mocked(api.listRecords).mockResolvedValue({
+    items: [
+      {
+        ...record,
+        id: "7",
+        table_id: systemTable.id,
+        values: { [coreField.id]: "P-007" },
+        business_url: "/dashboard/data/products/7",
+      },
+    ],
+    total: 1,
+    page: 1,
+    page_size: 50,
+  });
+  render(
+    <RecordsPanel
+      table={systemTable}
+      fields={[coreField]}
+      onChanged={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("搜索核心信息"), "P-007");
+  await user.click(screen.getByRole("button", { name: "搜索" }));
+  await waitFor(() =>
+    expect(api.listRecords).toHaveBeenLastCalledWith(
+      systemTable.id,
+      expect.objectContaining({ q: "P-007" }),
+    ),
+  );
+  expect(screen.queryByLabelText("排序方向")).toBeNull();
+  expect(screen.queryByLabelText("筛选字段")).toBeNull();
+  expect(screen.queryByRole("button", { name: "新增记录" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "归档" })).toBeNull();
+  expect(
+    (await screen.findByRole("link", { name: "打开业务页面" })).getAttribute(
+      "href",
+    ),
+  ).toBe("/dashboard/data/products/7");
 });
 it("shows relation labels and deep links without recursively fetching every cell", async () => {
   vi.mocked(api.listRecords).mockResolvedValue({
