@@ -1,6 +1,6 @@
 # 自定义数据表与设置页面 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans for native task-by-task implementation. 用户尚未选择执行方式；不得启动实现或自行派发子代理。若用户选择分工，先按 superpowers:subagent-driven-development 的要求执行。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans for native task-by-task implementation. 用户已回复“继续”批准主代理原生执行；不逐任务等待确认，不自行派发实现子代理，最终按技能要求一次独立代码复核。
 
 **Goal:** 交付设置中心可操作的自定义数据表页面，支持建表、配置列、录入编辑、关联、校验及修改历史。
 
@@ -191,6 +191,6 @@ FieldType 固定为 text、number、date、datetime、single_select、multi_sele
 
 计划自审覆盖表创建与编辑、八类型、唯一值、关联、字段排序和状态、记录新增与修改和状态、服务端筛选、历史、角色、重试、并发、页面和发布。第一版“不包含”功能均无实现任务；本轮不等待或修复其他 PO 缺陷来冒充范围完成。
 
-当前仅设计及计划完成，所有执行 checkbox 未勾选。用户审阅计划并选择主代理原生执行或分工执行后，再进入实现。
+用户已审阅计划并批准主代理原生执行；逐项状态和验证证据以 `docs/custom-data-tables-2026-10-06/PROGRESS.md` 为准，生产合并、推送和部署仍另行授权。
 
 2026-10-06 官方 npm 元数据核对：本机 Node v22.20.0，CI Node 22；最新 jsdom 30.1.2 要求至少 Node 22.22.2，因此选用 engines>=18 的 [jsdom 26.1.0](https://registry.npmjs.org/jsdom/26.1.0)。[Testing Library React 16.3.3](https://registry.npmjs.org/@testing-library/react/16.3.3) 支持 React 19，并需 [DOM 10.4.2](https://registry.npmjs.org/@testing-library/dom/10.4.2)；[user-event 14.6.7](https://registry.npmjs.org/@testing-library/user-event/14.6.7) 与上述 DOM 主版本兼容。此核对只读包元数据，没有安装依赖；测试安装和实际运行仍是 Task 9 验收。

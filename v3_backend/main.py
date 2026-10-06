@@ -13,6 +13,8 @@ import re
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import domains.dynamic_data.models  # noqa: F401, E402
+
 # Register LINE domain models so create_all picks them up in tests + so
 # Alembic's online migrations have them in scope. No side effects.
 import domains.line.models  # noqa: F401, E402
