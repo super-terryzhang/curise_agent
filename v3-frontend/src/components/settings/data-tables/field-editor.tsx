@@ -161,11 +161,13 @@ export function FieldEditor({
               value={kind}
               onChange={(e) => changeKind(e.target.value as FieldType)}
             >
-              {Object.entries(TYPE_LABELS).map(([v, l]) => (
+              {Object.entries(TYPE_LABELS)
+                .filter(([v]) => table.table_kind === "user" || v !== "link")
+                .map(([v, l]) => (
                 <option key={v} value={v}>
                   {l}
                 </option>
-              ))}
+                ))}
             </select>
           </label>
         )}
@@ -307,11 +309,11 @@ export function FieldEditor({
                 disabled={frozen}
                 onChange={(e) => setTarget(e.target.value)}
               >
-                <option value="">请选择启用的自定义表</option>
+                <option value="">请选择启用的数据表</option>
                 {target && !tables.some((t) => t.id === target) && (
                   <option value={target}>当前目标 · {target}</option>
                 )}
-                {tables.map((t) => (
+                {tables.filter((t) => t.table_kind === "user").map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.name} · {t.id}
                   </option>

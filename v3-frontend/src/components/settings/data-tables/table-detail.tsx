@@ -61,10 +61,10 @@ export function TableDetail({
         className="text-xs underline text-muted-foreground"
         href="/dashboard/settings/data-tables"
       >
-        返回自定义数据表
+        返回数据表管理
       </a>
       <PageHeader
-        title={snapshot?.table.name || "自定义数据表"}
+        title={snapshot?.table.name || "数据表"}
         description={
           snapshot?.table.description || "配置字段、维护记录并查看历史。"
         }
@@ -82,7 +82,7 @@ export function TableDetail({
           "此表已归档，只读；请从列表恢复后编辑。"}
       </p>
       {!allowed ? (
-        <p className="text-sm">当前角色无权访问自定义数据表。</p>
+        <p className="text-sm">当前角色无权访问数据表管理。</p>
       ) : (
         <>
           <ErrorNotice error={error} />

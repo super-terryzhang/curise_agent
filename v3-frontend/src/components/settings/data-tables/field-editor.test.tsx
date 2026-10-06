@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { FieldEditor } from "./field-editor";
 import * as api from "@/lib/data-tables-api";
-import { table, field } from "@/test/data-tables-fixtures";
+import { systemTable, table, field } from "@/test/data-tables-fixtures";
 vi.mock("@/lib/data-tables-api", async (original) => ({
   ...(await original<typeof api>()),
   createField: vi.fn(),
@@ -34,6 +34,20 @@ it("choosing number shows precision and saves string default with schema version
       }),
     ),
   );
+});
+it("system table extensions omit the unsupported link type", () => {
+  render(
+    <FieldEditor
+      table={systemTable}
+      onSaved={vi.fn()}
+      onCancel={vi.fn()}
+    />,
+  );
+  const options = Array.from(
+    (screen.getByLabelText("字段类型") as HTMLSelectElement).options,
+  ).map((option) => option.textContent);
+  expect(options).not.toContain("关联记录");
+  expect(options).toContain("文本");
 });
 it("existing rows show the field type as read-only instead of a broken-looking selector", () => {
   render(

@@ -116,8 +116,8 @@ export function TableList() {
   if (!allowed)
     return (
       <div className="p-6">
-        <PageHeader title="自定义数据表" />
-        <p className="mt-4 text-sm">当前角色无权访问自定义数据表。</p>
+        <PageHeader title="数据表管理" />
+        <p className="mt-4 text-sm">当前角色无权访问数据表管理。</p>
       </div>
     );
   return (
@@ -129,8 +129,8 @@ export function TableList() {
         返回设置中心
       </a>
       <PageHeader
-        title="自定义数据表"
-        description="创建业务表、配置列并维护记录；公司授权角色共享访问。"
+        title="数据表管理"
+        description="查看产品、供应商、订单及业务数据表，并维护可扩展字段。"
         action={
           admin &&
           !disabled && (
@@ -143,13 +143,13 @@ export function TableList() {
                 setForm({ id: crypto.randomUUID(), name: "", description: "" });
               }}
             >
-              新建表
+              新建数据表
             </Button>
           )
         }
       />
       <p className="text-xs text-muted-foreground">
-        独立于订单提取字段；不会改变产品、价格、PO 匹配或询价逻辑。
+        核心业务字段保持原有流程；此处可为数据表增加和维护扩展信息。
       </p>
       <ErrorNotice error={error} />
       {form && !disabled && (
@@ -309,7 +309,7 @@ export function TableList() {
                           >
                             打开
                           </a>
-                          {admin && (
+                          {admin && t.table_kind === "user" && (
                             <>
                               <Button
                                 size="xs"

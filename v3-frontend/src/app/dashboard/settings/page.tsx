@@ -19,7 +19,7 @@ export default function SettingsPage() {
         <PageHeader
           title="设置中心"
           description="管理字段定义、订单格式、供应商模板、业务配置和 AI 配置"
-          action={<Button variant="outline" asChild><a href="/dashboard/settings/data-tables">自定义数据表</a></Button>}
+          action={<Button variant="outline" asChild><a href="/dashboard/settings/data-tables">数据表管理</a></Button>}
         />
       </div>
 
@@ -34,7 +34,7 @@ export default function SettingsPage() {
         </TabsList>
 
         <TabsContent value="fields" className="flex-1 overflow-y-auto py-6">
-          <p className="text-xs text-muted-foreground mb-4">此处配置订单提取字段与模板；独立业务表请进入“自定义数据表”。</p>
+          <p className="text-xs text-muted-foreground mb-4">此处配置订单提取字段与模板；产品、供应商、订单及其他业务表请进入“数据表管理”。</p>
           <FieldSchemaTab />
         </TabsContent>
         <TabsContent value="orders" className="flex-1 overflow-y-auto py-6">

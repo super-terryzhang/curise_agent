@@ -34,6 +34,9 @@ export interface FieldDefinition {
 }
 export interface DataField extends FieldDefinition {
   table_id: string;
+  source: "core" | "extension";
+  locked: boolean;
+  system_key: string | null;
   status: Status;
   sort_order: number;
   schema_version: number;
@@ -46,13 +49,15 @@ export interface TableCreate {
   description?: string | null;
 }
 export interface DataTable extends TableCreate {
+  table_kind: "user" | "system";
+  system_key: "products" | "suppliers" | "orders" | null;
   status: Status;
   schema_version: number;
   display_field_id: string | null;
   created_at: string;
   updated_at: string;
-  created_by: number;
-  updated_by: number;
+  created_by: number | null;
+  updated_by: number | null;
   field_count: number;
   record_count: number;
 }
@@ -91,9 +96,10 @@ export interface DataRecord extends RecordCreate {
   status: Status;
   created_at: string;
   updated_at: string;
-  created_by: number;
-  updated_by: number;
+  created_by: number | null;
+  updated_by: number | null;
   display_label: string;
+  business_url?: string | null;
   linked_labels?: Record<string, LinkedLabel>;
 }
 export interface Page<T> {
@@ -122,6 +128,7 @@ export interface RecordQuery {
   sort_field_id?: string;
   sort_direction?: "asc" | "desc";
   filters?: RecordFilter[];
+  q?: string;
 }
 export interface DataChange {
   id: string;

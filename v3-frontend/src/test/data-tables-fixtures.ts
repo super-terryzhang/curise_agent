@@ -8,6 +8,8 @@ export const table: DataTable = {
   id: "00000000-0000-4000-8000-000000000001",
   name: "检验记录",
   description: null,
+  table_kind: "user",
+  system_key: null,
   status: "active",
   schema_version: 2,
   display_field_id: null,
@@ -23,6 +25,9 @@ export function field(id = "f", kind: FieldType = "text"): DataField {
     id,
     table_id: table.id,
     label: "名称",
+    source: "extension",
+    locked: false,
+    system_key: null,
     field_type: kind,
     required: false,
     unique: false,
@@ -36,6 +41,23 @@ export function field(id = "f", kind: FieldType = "text"): DataField {
     updated_at: table.updated_at,
   };
 }
+export const systemTable: DataTable = {
+  ...table,
+  id: "025588dd-ae63-5607-9e78-1179a500ed6e",
+  name: "产品",
+  table_kind: "system",
+  system_key: "products",
+  created_by: 0,
+  updated_by: 0,
+};
+export const coreField: DataField = {
+  ...field("025588dd-ae63-5607-9e78-1179a500ed70"),
+  table_id: systemTable.id,
+  label: "产品代码",
+  source: "core",
+  locked: true,
+  system_key: "code",
+};
 export const record: DataRecord = {
   id: "00000000-0000-4000-8000-000000000003",
   table_id: table.id,
