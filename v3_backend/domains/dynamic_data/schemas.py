@@ -154,7 +154,7 @@ class FieldResponse(FieldDefinition):
 
 
 class RecordResponse(Contract):
-    id: UUID
+    id: UUID | str
     table_id: UUID
     values: dict[str, Any]
     revision: int
@@ -162,9 +162,10 @@ class RecordResponse(Contract):
     status: Status
     created_at: datetime
     updated_at: datetime
-    created_by: int
-    updated_by: int
+    created_by: int | None
+    updated_by: int | None
     display_label: str
+    business_url: str | None = None
     linked_labels: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
@@ -218,6 +219,7 @@ class RecordQuery(Contract):
     sort_field_id: UUID | None = None
     sort_direction: Literal["asc", "desc"] = "asc"
     filters: list[RecordFilter] = Field(default_factory=list, max_length=10)
+    q: str | None = Field(default=None, max_length=200)
 
 
 class ChangeQuery(Contract):

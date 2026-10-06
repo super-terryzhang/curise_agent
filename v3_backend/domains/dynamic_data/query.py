@@ -6,11 +6,12 @@ from sqlalchemy import DateTime, Numeric, String, case, cast, exists, func, lite
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
-from .errors import ValidationError
+from .errors import NotFound, ValidationError
 from .models import DataChange, DataField, DataLink, DataRecord, DataTable
 from .records import link_labels, record_response
 from .repository import require_field, require_record, require_table, table_fields
 from .schemas import (
+    Actor,
     ChangeQuery,
     ChangeResponse,
     FieldResponse,
@@ -18,6 +19,13 @@ from .schemas import (
     RecordQuery,
     RecordResponse,
     TableResponse,
+)
+from .system_tables import (
+    core_field_count,
+    count_system_records,
+    get_system_record,
+    list_system_records,
+    system_fields,
 )
 from .validation import normalize_value
 
@@ -45,11 +53,15 @@ def _counts(db, table_ids):
     return fields, records
 
 
-def list_tables(db: Session, *, status: str, page: int, page_size: int) -> Page[TableResponse]:
+def list_tables(
+    db: Session, *, status: str, page: int, page_size: int, actor: Actor | None = None
+) -> Page[TableResponse]:
     _page(page, page_size)
     if status not in {"active", "archived"}:
         raise ValidationError("INVALID_STATUS", "请选择启用或归档状态")
     query = select(DataTable).where(DataTable.status == status)
+    if status == "archived":
+        query = query.where(DataTable.table_kind == "user")
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     tables = list(
         db.scalars(
@@ -59,6 +71,10 @@ def list_tables(db: Session, *, status: str, page: int, page_size: int) -> Page[
         )
     )
     fc, rc = _counts(db, [t.id for t in tables]) if tables else ({}, {})
+    for table in tables:
+        if table.table_kind == "system":
+            fc[table.id] = fc.get(table.id, 0) + core_field_count(table)
+            rc[table.id] = count_system_records(db, table, actor=actor)
     return Page(
         items=[
             TableResponse.model_validate(t).model_copy(
@@ -72,26 +88,39 @@ def list_tables(db: Session, *, status: str, page: int, page_size: int) -> Page[
     )
 
 
-def get_table(db: Session, table_id: UUID) -> TableResponse:
+def get_table(db: Session, table_id: UUID, *, actor: Actor | None = None) -> TableResponse:
     table = require_table(db, table_id, active=False)
     fc, rc = _counts(db, [table_id])
+    if table.table_kind == "system":
+        fc[table_id] = fc.get(table_id, 0) + core_field_count(table)
+        rc[table_id] = count_system_records(db, table, actor=actor)
     return TableResponse.model_validate(table).model_copy(
         update={"field_count": fc.get(table_id, 0), "record_count": rc.get(table_id, 0)}
     )
 
 
 def list_fields(db: Session, table_id: UUID, *, include_archived: bool) -> list[FieldResponse]:
-    require_table(db, table_id, active=False)
-    return [
+    table = require_table(db, table_id, active=False)
+    core = system_fields(table) if table.table_kind == "system" else []
+    extensions = [
         FieldResponse.model_validate(f)
         for f in table_fields(db, table_id)
         if include_archived or f.status == "active"
     ]
+    return core + extensions
 
 
-def get_record(db: Session, table_id: UUID, record_id: UUID) -> RecordResponse:
-    require_table(db, table_id, active=False)
-    return record_response(db, require_record(db, table_id, record_id))
+def get_record(
+    db: Session, table_id: UUID, record_id: UUID | str, *, actor: Actor | None = None
+) -> RecordResponse:
+    table = require_table(db, table_id, active=False)
+    if table.table_kind == "system":
+        return get_system_record(db, table, record_id, actor=actor)
+    try:
+        user_record_id = UUID(str(record_id))
+    except ValueError as exc:
+        raise NotFound("RECORD_NOT_FOUND", "记录不存在于此数据表") from exc
+    return record_response(db, require_record(db, table_id, user_record_id))
 
 
 def _scalar(db, field):
@@ -216,8 +245,14 @@ def _record_page(db, table, statement, page, page_size):
     )
 
 
-def list_records(db: Session, table_id: UUID, query: RecordQuery) -> Page[RecordResponse]:
+def list_records(
+    db: Session, table_id: UUID, query: RecordQuery, *, actor: Actor | None = None
+) -> Page[RecordResponse]:
     table = require_table(db, table_id, active=False)
+    if table.table_kind == "system":
+        return list_system_records(db, table, query, actor=actor)
+    if query.q:
+        raise ValidationError("UNSUPPORTED_USER_QUERY", "普通数据表请使用字段筛选")
     fields = {
         f.id: FieldResponse.model_validate(f)
         for f in table_fields(db, table_id)
