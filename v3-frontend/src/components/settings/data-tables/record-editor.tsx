@@ -64,7 +64,7 @@ export function RecordEditor({
   const issues = fieldIssues(
     error instanceof api.DataTablesApiError ? error : {},
   );
-  const newer = table.schema_version !== contract.table.schema_version;
+  const newer = table.schema_version > contract.table.schema_version;
   useEffect(() => {
     if (!dirty && !uncertain) return;
     const warn = (e: BeforeUnloadEvent) => {

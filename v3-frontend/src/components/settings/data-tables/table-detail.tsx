@@ -4,7 +4,11 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { getUser } from "@/lib/auth";
 import { canManageRecords } from "@/lib/data-tables-view";
-import { getTable, listFields,DataTablesApiError } from "@/lib/data-tables-api";
+import {
+  getTable,
+  listFields,
+  DataTablesApiError,
+} from "@/lib/data-tables-api";
 import type { DataTable, DataField } from "@/lib/data-tables-types";
 import { FieldsPanel } from "./fields-panel";
 import { ErrorNotice } from "./shared";
@@ -37,7 +41,11 @@ export function TableDetail({
       ]);
       if (n === seq.current) setSnapshot({ table, fields });
     } catch (e) {
-      if (n === seq.current) {setError(e);if(e instanceof DataTablesApiError&&e.status===503)setSnapshot(undefined);}
+      if (n === seq.current) {
+        setError(e);
+        if (e instanceof DataTablesApiError && e.status === 503)
+          setSnapshot(undefined);
+      }
     }
   }, [tableId]);
   useEffect(() => {

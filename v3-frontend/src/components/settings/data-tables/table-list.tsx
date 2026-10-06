@@ -36,6 +36,7 @@ export function TableList() {
     original?: DataTable;
   } | null>(null);
   const [confirmation, setConfirmation] = useState<DataTable | null>(null);
+  const [uncertain, setUncertain] = useState(false);
   const pending = useRef<TableCreate | null>(null),
     sequence = useRef(0);
   const load = useCallback(async () => {
@@ -46,7 +47,10 @@ export function TableList() {
       const d = await api.listTables({ status, page });
       if (n === sequence.current) setData(d);
     } catch (e) {
-      if (n === sequence.current) {setError(e);setData(undefined);}
+      if (n === sequence.current) {
+        setError(e);
+        setData(undefined);
+      }
     } finally {
       if (n === sequence.current) setLoading(false);
     }
@@ -77,9 +81,11 @@ export function TableList() {
         await api.createTable(pending.current);
       }
       pending.current = null;
+      setUncertain(false);
       setForm(null);
       await load();
     } catch (e) {
+      setUncertain(e instanceof api.DataTablesApiError && e.uncertain);
       if (!(e instanceof api.DataTablesApiError && e.uncertain))
         pending.current = null;
       setError(e);
@@ -105,8 +111,8 @@ export function TableList() {
       setBusy(false);
     }
   }
-  const uncertain = error instanceof api.DataTablesApiError && error.uncertain;
-  const disabled = error instanceof api.DataTablesApiError && error.status === 503;
+  const disabled =
+    error instanceof api.DataTablesApiError && error.status === 503;
   if (!allowed)
     return (
       <div className="p-6">
@@ -126,11 +132,14 @@ export function TableList() {
         title="自定义数据表"
         description="创建业务表、配置列并维护记录；公司授权角色共享访问。"
         action={
-          admin && !disabled && (
+          admin &&
+          !disabled && (
             <Button
+              disabled={busy || !!form || !!confirmation || uncertain}
               onClick={() => {
                 setError(null);
                 pending.current = null;
+                setUncertain(false);
                 setForm({ id: crypto.randomUUID(), name: "", description: "" });
               }}
             >
@@ -185,6 +194,7 @@ export function TableList() {
               onClick={() => {
                 setForm(null);
                 pending.current = null;
+                setUncertain(false);
                 setError(null);
               }}
             >

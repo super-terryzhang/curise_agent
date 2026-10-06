@@ -60,6 +60,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "订单管理", href: "/dashboard/orders", icon: FileText, roles: ["superadmin", "admin", "finance", "employee"] },
   { label: "数据管理", href: "/dashboard/data", icon: Database, roles: ["superadmin", "admin", "employee"] },
   { label: "设置中心", href: "/dashboard/settings", icon: Settings, roles: ["superadmin", "admin"] },
+  { label: "自定义数据表", href: "/dashboard/settings/data-tables", icon: Database, roles: ["employee", "finance"] },
   { label: "用户管理", href: "/dashboard/users", icon: Users, roles: ["superadmin"] },
 ];
 

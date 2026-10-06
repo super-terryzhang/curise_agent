@@ -32,6 +32,8 @@ export function FieldEditor({
   onCancel: () => void;
 }) {
   const [id] = useState(() => field?.id || crypto.randomUUID());
+  // A draft belongs to the schema it was opened against, not a later refresh.
+  const [schemaVersion] = useState(table.schema_version);
   const [label, setLabel] = useState(field?.label || ""),
     [kind, setKind] = useState<FieldType>(field?.field_type || "text");
   const [required, setRequired] = useState(field?.required || false),
@@ -103,7 +105,7 @@ export function FieldEditor({
       default_value: kind === "link" ? null : defaultValue,
       config,
       target_table_id: kind === "link" ? target || null : null,
-      expected_schema_version: table.schema_version,
+      expected_schema_version: schemaVersion,
     };
     try {
       if (field) {

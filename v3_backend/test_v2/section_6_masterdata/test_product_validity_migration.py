@@ -53,17 +53,26 @@ def _prepare_0032_schema(database_url: str) -> None:
         with engine.begin() as connection:
             connection.execute(text("DROP SCHEMA public CASCADE"))
             connection.execute(text("CREATE SCHEMA public"))
-        Base.metadata.create_all(engine)
+        # Build the historical 0032 schema, not tables introduced by 0035.
+        # Otherwise upgrade(head) would attempt to create these tables twice.
+        custom_tables = {
+            "v3_data_tables",
+            "v3_data_fields",
+            "v3_data_records",
+            "v3_data_links",
+            "v3_data_unique_values",
+            "v3_data_changes",
+        }
+        Base.metadata.create_all(
+            engine,
+            tables=[t for name, t in Base.metadata.tables.items() if name not in custom_tables],
+        )
         columns = {column["name"] for column in inspect(engine).get_columns("products")}
         with engine.begin() as connection:
             if "effective_from" not in columns:
-                connection.execute(
-                    text("ALTER TABLE products ADD COLUMN effective_from TIMESTAMP")
-                )
+                connection.execute(text("ALTER TABLE products ADD COLUMN effective_from TIMESTAMP"))
             if "effective_to" not in columns:
-                connection.execute(
-                    text("ALTER TABLE products ADD COLUMN effective_to TIMESTAMP")
-                )
+                connection.execute(text("ALTER TABLE products ADD COLUMN effective_to TIMESTAMP"))
             connection.execute(
                 text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)")
             )

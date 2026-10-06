@@ -7,7 +7,12 @@ import { expect, it, vi } from "vitest";
 import { FieldEditor } from "./field-editor";
 import * as api from "@/lib/data-tables-api";
 import { table, field } from "@/test/data-tables-fixtures";
-vi.mock("@/lib/data-tables-api");
+vi.mock("@/lib/data-tables-api", async (original) => ({
+  ...(await original<typeof api>()),
+  createField: vi.fn(),
+  updateField: vi.fn(),
+  listTables: vi.fn(),
+}));
 it("choosing number shows precision and saves string default with schema version", async () => {
   vi.mocked(api.createField).mockResolvedValue(field());
   render(<FieldEditor table={table} onSaved={vi.fn()} onCancel={vi.fn()} />);
@@ -62,4 +67,32 @@ it("field corrections after a validation rejection are used on next save", async
       expect.objectContaining({ label: "新名" }),
     ),
   );
+});
+it("a refreshed table cannot advance the version of an existing field draft", async () => {
+  vi.mocked(api.updateField).mockRejectedValue(
+    new api.DataTablesApiError(
+      409,
+      "STALE_SCHEMA",
+      "配置已更新，请重新打开字段",
+    ),
+  );
+  const props = { table, field: field(), onSaved: vi.fn(), onCancel: vi.fn() };
+  const view = render(<FieldEditor {...props} />);
+  const user = userEvent.setup();
+  await user.clear(screen.getByLabelText("字段名称"));
+  await user.type(screen.getByLabelText("字段名称"), "未保存草稿");
+  view.rerender(
+    <FieldEditor {...props} table={{ ...table, schema_version: 3 }} />,
+  );
+  await user.click(screen.getByRole("button", { name: "保存字段" }));
+  await screen.findByRole("alert");
+  expect(api.updateField).toHaveBeenLastCalledWith(
+    table.id,
+    props.field.id,
+    expect.objectContaining({ expected_schema_version: 2 }),
+  );
+  expect((screen.getByLabelText("字段名称") as HTMLInputElement).value).toBe(
+    "未保存草稿",
+  );
+  expect(props.onSaved).not.toHaveBeenCalled();
 });

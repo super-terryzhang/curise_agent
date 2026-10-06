@@ -13,9 +13,48 @@ vi.mock("@/lib/data-tables-api", async (original) => ({
   updateRecord: vi.fn(),
   searchLinkTargets: vi.fn(),
   getRecord: vi.fn(),
+  getTable: vi.fn(),
+  listFields: vi.fn(),
 }));
 vi.mock("@/lib/auth", () => ({ getUser: () => ({ role: "admin" }) }));
 beforeEach(() => vi.clearAllMocks());
+it("explicit reload after a schema conflict allows editing even when parent has not refreshed", async () => {
+  vi.mocked(api.updateRecord).mockRejectedValue(
+    new api.DataTablesApiError(409, "STALE_SCHEMA", "配置已更新"),
+  );
+  vi.mocked(api.getTable).mockResolvedValue({ ...table, schema_version: 3 });
+  vi.mocked(api.listFields).mockResolvedValue([field()]);
+  vi.mocked(api.getRecord).mockResolvedValue({
+    ...record,
+    schema_version: 3,
+    revision: 2,
+  });
+  render(
+    <RecordEditor
+      table={table}
+      fields={[field()]}
+      record={record}
+      onSaved={vi.fn()}
+      onCancel={vi.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.type(screen.getByLabelText("名称"), "草稿");
+  await user.click(screen.getByRole("button", { name: "保存记录" }));
+  await user.click(
+    await screen.findByRole("button", { name: "载入最新并重新编辑" }),
+  );
+  await user.click(screen.getByRole("button", { name: "确认放弃并刷新" }));
+  await waitFor(() =>
+    expect((screen.getByLabelText("名称") as HTMLInputElement).value).toBe(
+      "原值",
+    ),
+  );
+  expect(
+    (screen.getByRole("button", { name: "保存记录" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(false);
+});
 it("eight dynamic controls save UUID options, decimal zero and boolean false", async () => {
   const kinds = [
     "text",
