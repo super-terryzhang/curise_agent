@@ -84,13 +84,17 @@ def _link_ids(fields, *value_sets):
     }
 
 
-def _check_links(db, fields, values, targets):
+def _check_links(db, fields, values, targets, *, restoring_record_id=None):
     for f in fields:
         value = values.get(str(f.id))
         if f.status != "active" or f.field_type != "link" or value is None:
             continue
         target = targets.get(UUID(value))
-        if target is None or target.table_id != f.target_table_id or target.status != "active":
+        if (
+            target is None
+            or target.table_id != f.target_table_id
+            or (target.status != "active" and target.id != restoring_record_id)
+        ):
             raise ValidationError(
                 "INVALID_LINK_TARGET",
                 "关联记录不存在、已归档或属于其他表",
@@ -107,7 +111,9 @@ def _check_links(db, fields, values, targets):
         require_table(db, f.target_table_id)
 
 
-def _prepare(db, table_id, schema_version, values, original_record=None):
+def _prepare(
+    db, table_id, schema_version, values, original_record=None, *, restoring_record_id=None
+):
     fields = [FieldResponse.model_validate(f) for f in table_fields(db, table_id)]
     if not any(f.status == "active" for f in fields):
         raise ValidationError("NO_ACTIVE_FIELDS", "请先配置启用字段，再新增或保存记录")
@@ -148,7 +154,7 @@ def _prepare(db, table_id, schema_version, values, original_record=None):
         normalized = normalize_record(refreshed, values, create=True)
     if not _link_ids(refreshed, original, normalized).issubset(link_ids):
         raise Conflict("RECORD_CHANGED", "关联记录已被修改，请刷新后核对")
-    _check_links(db, refreshed, normalized, locked)
+    _check_links(db, refreshed, normalized, locked, restoring_record_id=restoring_record_id)
     return table, refreshed, current, original, normalized
 
 
