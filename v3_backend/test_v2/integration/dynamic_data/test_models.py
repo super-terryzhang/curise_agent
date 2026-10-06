@@ -1,7 +1,8 @@
 """Storage contracts exercised on a foreign-key-enabled isolated database."""
 
+from datetime import UTC, datetime
 from importlib import import_module
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -97,3 +98,129 @@ def test_requests_forbid_unknown_system_fields():
     for name in ("", "   ", "x" * 101):
         with pytest.raises(ValidationError):
             schemas.TableCreate(id=uuid4(), name=name)
+
+
+def test_catalog_kind_and_source_record_constraints():
+    """A duplicate system catalog key or source anchor must fail at the database."""
+    m = models()
+    engine = create_engine("sqlite://")
+    event.listen(engine, "connect", lambda conn, _: conn.execute("PRAGMA foreign_keys=ON"))
+    Base.metadata.create_all(
+        engine,
+        tables=[t for n, t in Base.metadata.tables.items() if n.startswith("v3_data_")],
+    )
+    now = datetime(2026, 10, 6, tzinfo=UTC)
+    system_table_id, other_system_table_id = uuid4(), uuid4()
+    with Session(engine) as db:
+        db.add(
+            m.DataTable(
+                id=system_table_id,
+                name="产品",
+                table_kind="system",
+                system_key="products",
+                created_by=0,
+                updated_by=0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        db.commit()
+        db.add(
+            m.DataTable(
+                id=other_system_table_id,
+                name="重复产品",
+                table_kind="system",
+                system_key="products",
+                created_by=0,
+                updated_by=0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+
+        db.add(
+            m.DataTable(
+                id=other_system_table_id,
+                name="订单",
+                table_kind="system",
+                system_key="orders",
+                created_by=0,
+                updated_by=0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        db.flush()
+        db.add_all(
+            [
+                m.DataRecord(
+                    id=uuid4(),
+                    table_id=system_table_id,
+                    source_record_id="42",
+                    values={},
+                    created_by=1,
+                    updated_by=1,
+                ),
+                m.DataRecord(
+                    id=uuid4(),
+                    table_id=system_table_id,
+                    source_record_id="42",
+                    values={},
+                    created_by=2,
+                    updated_by=2,
+                ),
+            ]
+        )
+        with pytest.raises(IntegrityError):
+            db.commit()
+    engine.dispose()
+
+
+def test_unified_response_contracts_are_explicit():
+    """Removing the new metadata would make clients guess table and field behavior."""
+    schemas = import_module("domains.dynamic_data.schemas")
+    table = schemas.TableResponse(
+        id=uuid4(),
+        name="产品",
+        description=None,
+        table_kind="system",
+        system_key="products",
+        status="active",
+        schema_version=1,
+        created_at="2026-10-06T00:00:00Z",
+        updated_at="2026-10-06T00:00:00Z",
+        created_by=0,
+        updated_by=0,
+    )
+    field = schemas.FieldResponse(
+        id=uuid4(),
+        table_id=table.id,
+        label="产品代码",
+        field_type="text",
+        required=False,
+        unique=False,
+        default_value=None,
+        config={},
+        target_table_id=None,
+        status="active",
+        sort_order=0,
+        schema_version=1,
+        created_at="2026-10-06T00:00:00Z",
+        updated_at="2026-10-06T00:00:00Z",
+        source="core",
+        locked=True,
+        system_key="code",
+    )
+    request = schemas.SystemRecordUpdate(
+        request_id=UUID("2eff29a2-a399-459f-81eb-13113595637c"),
+        source_record_id="42",
+        expected_revision=0,
+        schema_version=1,
+        values={},
+    )
+    assert (table.table_kind, table.system_key) == ("system", "products")
+    assert (field.source, field.locked, field.system_key) == ("core", True, "code")
+    assert request.expected_revision == 0

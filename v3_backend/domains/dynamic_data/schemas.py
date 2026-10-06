@@ -10,6 +10,9 @@ FieldType = Literal[
     "text", "number", "date", "datetime", "single_select", "multi_select", "boolean", "link"
 ]
 Status = Literal["active", "archived"]
+TableKind = Literal["user", "system"]
+SystemTableKey = Literal["products", "suppliers", "orders"]
+FieldSource = Literal["core", "extension"]
 
 
 class Contract(BaseModel):
@@ -116,7 +119,17 @@ class RecordUpdate(RecordAction):
     values: dict[str, Any]
 
 
+class SystemRecordUpdate(Contract):
+    request_id: UUID
+    source_record_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=0)
+    schema_version: int = Field(ge=1)
+    values: dict[str, Any]
+
+
 class TableResponse(TableCreate):
+    table_kind: TableKind
+    system_key: SystemTableKey | None
     status: Status
     schema_version: int
     display_field_id: UUID | None = None
@@ -130,6 +143,9 @@ class TableResponse(TableCreate):
 
 class FieldResponse(FieldDefinition):
     table_id: UUID
+    source: FieldSource
+    locked: bool
+    system_key: str | None
     status: Status
     sort_order: int
     schema_version: int

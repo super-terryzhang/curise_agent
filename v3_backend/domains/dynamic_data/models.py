@@ -43,7 +43,14 @@ class DataTable(Identity, Timestamps, Base):
     __tablename__ = "v3_data_tables"
     __table_args__ = (
         CheckConstraint("status IN ('active', 'archived')", name="ck_data_table_status"),
+        CheckConstraint("table_kind IN ('user', 'system')", name="ck_data_table_kind"),
+        CheckConstraint(
+            "(table_kind = 'system' AND system_key IS NOT NULL) OR "
+            "(table_kind = 'user' AND system_key IS NULL)",
+            name="ck_data_table_system_key",
+        ),
         CheckConstraint("schema_version >= 1", name="ck_data_table_version"),
+        UniqueConstraint("system_key", name="uq_data_table_system_key"),
         ForeignKeyConstraint(
             ["id", "display_field_id"],
             ["v3_data_fields.table_id", "v3_data_fields.id"],
@@ -54,6 +61,8 @@ class DataTable(Identity, Timestamps, Base):
     )
     name: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(Text)
+    table_kind: Mapped[str] = mapped_column(String(10), default="user")
+    system_key: Mapped[str | None] = mapped_column(String(30))
     status: Mapped[str] = mapped_column(String(10), default="active")
     schema_version: Mapped[int] = mapped_column(Integer, default=1)
     display_field_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
@@ -100,18 +109,36 @@ class DataField(Identity, Timestamps, Base):
     status: Mapped[str] = mapped_column(String(10), default="active")
     schema_version: Mapped[int] = mapped_column(Integer, default=1)
 
+    @property
+    def source(self) -> str:
+        return "extension"
+
+    @property
+    def locked(self) -> bool:
+        return False
+
+    @property
+    def system_key(self) -> None:
+        return None
+
 
 class DataRecord(Identity, Timestamps, Base):
     __tablename__ = "v3_data_records"
     __table_args__ = (
         UniqueConstraint("table_id", "id", name="uq_data_record_table_id"),
+        UniqueConstraint("table_id", "source_record_id", name="uq_data_record_source_record_id"),
         CheckConstraint("status IN ('active', 'archived')", name="ck_data_record_status"),
+        CheckConstraint(
+            "source_record_id IS NULL OR source_record_id <> ''",
+            name="ck_data_record_source_record_id",
+        ),
         CheckConstraint("revision >= 1 AND schema_version >= 1", name="ck_data_record_versions"),
         Index("ix_data_records_table_status", "table_id", "status", "created_at"),
     )
     table_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("v3_data_tables.id", ondelete="RESTRICT")
     )
+    source_record_id: Mapped[str | None] = mapped_column(String(100))
     values: Mapped[dict] = mapped_column(JSON_VALUE, default=dict)
     revision: Mapped[int] = mapped_column(Integer, default=1)
     schema_version: Mapped[int] = mapped_column(Integer, default=1)
