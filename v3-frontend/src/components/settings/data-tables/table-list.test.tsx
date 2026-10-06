@@ -7,7 +7,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { TableList } from "./table-list";
 import * as api from "@/lib/data-tables-api";
 import { table } from "@/test/data-tables-fixtures";
-vi.mock("@/lib/data-tables-api");
+vi.mock("@/lib/data-tables-api",async original=>({...await original<typeof api>(),listTables:vi.fn(),createTable:vi.fn()}));
 vi.mock("@/lib/auth", () => ({ getUser: () => ({ role: "admin" }) }));
 beforeEach(() => {
   vi.resetAllMocks();
@@ -64,4 +64,9 @@ it("a corrected input after definitive rejection is submitted instead of the old
       expect.objectContaining({ name: "修正输入" }),
     ),
   );
+});
+it("disabled module response cannot leave a usable create action",async()=>{
+  vi.mocked(api.listTables).mockRejectedValue(new api.DataTablesApiError(503,"MODULE_DISABLED","自定义数据表暂未启用"));
+  render(<TableList/>);await screen.findByRole("alert");
+  expect(screen.queryByRole("button",{name:"新建表"})).toBeNull();
 });

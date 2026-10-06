@@ -9,6 +9,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
+from apps.http.startup import verify_schema
 from domains.masterdata.models import Product, ProductPricePeriod
 from infrastructure.config import settings
 from infrastructure.db.base import Base
@@ -52,7 +53,14 @@ def test_upgrade_preserves_existing_tables_and_prices(pg_isolated_url, monkeypat
     )
     cfg = alembic_config()
     command.stamp(cfg, "0034_drop_product_validity")
+    monkeypatch.setattr(settings, "CUSTOM_DATA_TABLES_ENABLED", False)
+    monkeypatch.setattr(settings, "SCHEMA_RELEASE_TRANSITION", "custom_data_tables_0034_0035")
+    verify_schema(e)
     command.upgrade(cfg, "0035_custom_data_tables")
+    verify_schema(e)
+    monkeypatch.setattr(settings, "SCHEMA_RELEASE_TRANSITION", "")
+    monkeypatch.setattr(settings, "CUSTOM_DATA_TABLES_ENABLED", True)
+    verify_schema(e)
     assert snapshot() == before
     inspector = inspect(e)
     assert {t.name: [c["name"] for c in inspector.get_columns(t.name)] for t in old} == columns

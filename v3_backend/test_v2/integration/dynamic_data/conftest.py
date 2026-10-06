@@ -8,7 +8,13 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
+from infrastructure.config import settings
 from infrastructure.db.base import Base
+
+
+@pytest.fixture(autouse=True)
+def enable_custom_tables(monkeypatch):
+    monkeypatch.setattr(settings, "CUSTOM_DATA_TABLES_ENABLED", True)
 
 
 @pytest.fixture

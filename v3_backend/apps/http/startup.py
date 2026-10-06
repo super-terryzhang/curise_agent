@@ -24,6 +24,15 @@ def verify_schema(engine) -> None:
         raise RuntimeError(
             "Database schema verification failed; check release migration and connectivity"
         ) from None
+    if settings.SCHEMA_RELEASE_TRANSITION:
+        if (
+            settings.SCHEMA_RELEASE_TRANSITION != "custom_data_tables_0034_0035"
+            or settings.CUSTOM_DATA_TABLES_ENABLED
+            or expected != {"0035_custom_data_tables"}
+            or current not in ({"0034_drop_product_validity"}, {"0035_custom_data_tables"})
+        ):
+            raise RuntimeError("Invalid schema release transition or database head")
+        return
     if current != expected:
         raise RuntimeError("Database migration required before serving this application version")
 
@@ -37,9 +46,7 @@ async def lifespan(app):
         verify_schema(engine)
         from apps.jobs.inquiry_jobs import recovery_loop
 
-        recovery_task = asyncio.create_task(
-            recovery_loop(), name="arrangement-inquiry-recovery"
-        )
+        recovery_task = asyncio.create_task(recovery_loop(), name="arrangement-inquiry-recovery")
     try:
         yield
     finally:

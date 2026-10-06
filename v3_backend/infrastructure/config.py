@@ -119,6 +119,8 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE: int = 30 * 1024 * 1024  # 30 MB
 
     # ─── Feature flags ─────────────────────────────────────────
+    CUSTOM_DATA_TABLES_ENABLED: bool = False
+    SCHEMA_RELEASE_TRANSITION: Literal["", "custom_data_tables_0034_0035"] = ""
     # When true (default), POST /documents/{id}/create-order returns as
     # soon as the Order row exists (status="matching") and the Gemini
     # matching pipeline runs in the background via AsyncioRunner. The
@@ -150,6 +152,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_production(self) -> Settings:
+        if self.SCHEMA_RELEASE_TRANSITION and self.CUSTOM_DATA_TABLES_ENABLED:
+            raise ValueError("Schema release transition requires custom data tables disabled")
         if self.K_SERVICE and self.ENV not in ("production", "staging"):
             raise ValueError("Cloud Run requires an explicit production or staging ENV")
         if self.ENV in ("production", "staging"):

@@ -46,7 +46,7 @@ export function TableList() {
       const d = await api.listTables({ status, page });
       if (n === sequence.current) setData(d);
     } catch (e) {
-      if (n === sequence.current) setError(e);
+      if (n === sequence.current) {setError(e);setData(undefined);}
     } finally {
       if (n === sequence.current) setLoading(false);
     }
@@ -106,6 +106,7 @@ export function TableList() {
     }
   }
   const uncertain = error instanceof api.DataTablesApiError && error.uncertain;
+  const disabled = error instanceof api.DataTablesApiError && error.status === 503;
   if (!allowed)
     return (
       <div className="p-6">
@@ -125,7 +126,7 @@ export function TableList() {
         title="自定义数据表"
         description="创建业务表、配置列并维护记录；公司授权角色共享访问。"
         action={
-          admin && (
+          admin && !disabled && (
             <Button
               onClick={() => {
                 setError(null);
@@ -142,7 +143,7 @@ export function TableList() {
         独立于订单提取字段；不会改变产品、价格、PO 匹配或询价逻辑。
       </p>
       <ErrorNotice error={error} />
-      {form && (
+      {form && !disabled && (
         <form
           className="rounded-lg border p-4 space-y-3 max-w-2xl"
           onSubmit={(e) => {

@@ -32,6 +32,7 @@ from domains.dynamic_data.schemas import (
     TableResponse,
     TableUpdate,
 )
+from infrastructure.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,12 @@ class DataTablesRoute(APIRoute):
 
         async def handler(request):
             try:
+                if not settings.CUSTOM_DATA_TABLES_ENABLED:
+                    raise HTTPException(
+                        503,
+                        detail="自定义数据表暂未启用，请联系管理员",
+                        headers={"Cache-Control": "no-store", "Retry-After": "120"},
+                    )
                 return await original(request)
             except HTTPException as exc:
                 if isinstance(exc.detail, str):
