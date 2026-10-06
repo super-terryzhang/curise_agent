@@ -31,7 +31,7 @@
 - 稳定候选唯一一次后端全量：2050 passed / 89 skipped / 11 warnings，419.43 秒，零失败；跳过项为真实 LLM、缺失商业样本及未配置的其他专用并发数据库。
 - 前端全套：54 文件 / 287 tests passed；TypeScript、生产构建、Ruff、架构 0 违规和 `git diff --check` 通过。
 - 本地 PostgreSQL 演示 schema 已从 0035 升到 0036，保留两张用户表并新增三张系统表；另加入明确标记的 2 产品、1 供应商、2 订单合成样本。
-- 本地页面 `http://localhost:3005/dashboard/settings/data-tables` 与后端 `http://localhost:8003` 均返回 200；员工只读 HTTP 冒烟仅返回本人订单。
+- 本地页面原验收记录使用 `http://localhost:3005/dashboard/settings/data-tables`；该地址现为兼容跳转，正式入口已改为 `http://localhost:3005/dashboard/data-tables`。当时前后端均返回 200，员工只读 HTTP 冒烟仅返回本人订单。
 - 详细范围、边界和用户验收项见 [VERIFICATION.md](VERIFICATION.md)，受控发布与回退见 [RELEASE_PLAN.md](RELEASE_PLAN.md)。
 
 ## 验证原则
