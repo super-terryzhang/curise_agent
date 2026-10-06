@@ -1,59 +1,13 @@
-"use client";
+import {
+  normalizeSettingsSection,
+  SettingsCenter,
+} from "./settings-center";
 
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PageHeader } from "@/components/page-header";
-import FieldSchemaTab from "./FieldSchemaTab";
-import OrderFormatTab from "./OrderFormatTab";
-import SupplierTemplateTab from "./SupplierTemplateTab";
-import AIConfigTab from "./AIConfigTab";
-// SupplierInfoTab removed 2026-05-28 — supplier info edits live in
-// /dashboard/data → 供应商 tab. See backend apps/http/settings.py docstring.
-import DeliveryLocationTab from "./DeliveryLocationTab";
-import CompanyConfigTab from "./CompanyConfigTab";
-import { Button } from "@/components/ui/button";
-import { DATA_TABLES_PATH } from "@/lib/dashboard-routes";
-
-export default function SettingsPage() {
-  return (
-    <div className="h-full flex flex-col overflow-hidden">
-      <div className="shrink-0 px-6 pt-6">
-        <PageHeader
-          title="设置中心"
-          description="管理字段定义、订单格式、供应商模板、业务配置和 AI 配置"
-          action={<Button variant="outline" asChild><a href={DATA_TABLES_PATH}>数据表管理</a></Button>}
-        />
-      </div>
-
-      <Tabs defaultValue="fields" className="flex-1 flex flex-col overflow-hidden px-6 mt-4">
-        <TabsList className="shrink-0 w-fit">
-          <TabsTrigger value="fields">字段管理</TabsTrigger>
-          <TabsTrigger value="orders">订单格式</TabsTrigger>
-          <TabsTrigger value="suppliers">供应商模板</TabsTrigger>
-          <TabsTrigger value="delivery">配送点</TabsTrigger>
-          <TabsTrigger value="company">公司信息</TabsTrigger>
-          <TabsTrigger value="ai">AI 配置</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="fields" className="flex-1 overflow-y-auto py-6">
-          <p className="text-xs text-muted-foreground mb-4">此处配置订单提取字段与模板；产品、供应商、订单及其他业务表请进入“数据表管理”。</p>
-          <FieldSchemaTab />
-        </TabsContent>
-        <TabsContent value="orders" className="flex-1 overflow-y-auto py-6">
-          <OrderFormatTab />
-        </TabsContent>
-        <TabsContent value="suppliers" className="flex-1 overflow-y-auto py-6">
-          <SupplierTemplateTab />
-        </TabsContent>
-        <TabsContent value="delivery" className="flex-1 overflow-y-auto py-6">
-          <DeliveryLocationTab />
-        </TabsContent>
-        <TabsContent value="company" className="flex-1 overflow-y-auto py-6">
-          <CompanyConfigTab />
-        </TabsContent>
-        <TabsContent value="ai" className="flex-1 overflow-y-auto py-6">
-          <AIConfigTab />
-        </TabsContent>
-      </Tabs>
-    </div>
-  );
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ section?: string | string[] }>;
+}) {
+  const query = await searchParams;
+  return <SettingsCenter section={normalizeSettingsSection(query.section)} />;
 }
