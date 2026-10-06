@@ -12,6 +12,7 @@ from .query import (
 )
 from .records import create_record, get_record_values, update_record
 from .structures import create_field, create_table, reorder_fields, update_field, update_table
+from .system_records import save_system_record
 
 __all__ = [
     "create_field",
@@ -32,4 +33,5 @@ __all__ = [
     "list_records",
     "list_changes",
     "search_link_targets",
+    "save_system_record",
 ]

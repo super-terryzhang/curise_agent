@@ -26,6 +26,7 @@ from .system_tables import (
     get_system_record,
     list_system_records,
     system_fields,
+    visible_source_ids,
 )
 from .validation import normalize_value
 
@@ -283,13 +284,62 @@ def list_records(
     )
 
 
-def list_changes(db: Session, table_id: UUID, query: ChangeQuery) -> Page[ChangeResponse]:
-    require_table(db, table_id, active=False)
+def list_changes(
+    db: Session, table_id: UUID, query: ChangeQuery, *, actor: Actor | None = None
+) -> Page[ChangeResponse]:
+    table = require_table(db, table_id, active=False)
     statement = select(DataChange).where(DataChange.table_id == table_id)
     if query.entity_type:
         statement = statement.where(DataChange.entity_type == query.entity_type)
-    if query.record_id:
-        statement = statement.where(DataChange.record_id == query.record_id)
+    if table.table_kind != "system" and query.record_id:
+        try:
+            record_id = UUID(str(query.record_id))
+        except ValueError as exc:
+            raise NotFound("RECORD_NOT_FOUND", "记录不存在于此数据表") from exc
+        statement = statement.where(DataChange.record_id == record_id)
+    if table.table_kind == "system":
+        rows = list(db.scalars(statement.order_by(DataChange.created_at.desc(), DataChange.id.desc())))
+        anchor_ids = {row.record_id for row in rows if row.record_id is not None}
+        anchors = {
+            row.id: row
+            for row in db.scalars(select(DataRecord).where(DataRecord.id.in_(anchor_ids)))
+        }
+        visible = visible_source_ids(
+            db,
+            table,
+            {row.source_record_id for row in anchors.values() if row.source_record_id},
+            actor=actor,
+        )
+        items = []
+        for row in rows:
+            if row.record_id is None:
+                if query.record_id:
+                    continue
+                items.append(ChangeResponse.model_validate(row))
+                continue
+            anchor = anchors.get(row.record_id)
+            source_id = anchor.source_record_id if anchor else None
+            if source_id not in visible or (
+                query.record_id and source_id != str(query.record_id)
+            ):
+                continue
+            response = ChangeResponse.model_validate(row)
+            items.append(
+                response.model_copy(
+                    update={
+                        "record_id": source_id,
+                        "entity_id": source_id if row.entity_type == "record" else response.entity_id,
+                    }
+                )
+            )
+        total = len(items)
+        start = (query.page - 1) * query.page_size
+        return Page(
+            items=items[start : start + query.page_size],
+            total=total,
+            page=query.page,
+            page_size=query.page_size,
+        )
     total = db.scalar(select(func.count()).select_from(statement.subquery()))
     rows = db.scalars(
         statement.order_by(DataChange.created_at.desc(), DataChange.id.desc())

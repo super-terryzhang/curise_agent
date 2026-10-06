@@ -2,7 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import event, func, select, text
@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from domains.dynamic_data import service as s
 from domains.dynamic_data.errors import Conflict, ValidationError
-from domains.dynamic_data.models import DataChange, DataLink, DataRecord, DataUniqueValue
+from domains.dynamic_data.models import DataChange, DataLink, DataRecord, DataTable, DataUniqueValue
 from domains.dynamic_data.repository import lock_tables
 from domains.dynamic_data.schemas import (
     Actor,
@@ -21,9 +21,12 @@ from domains.dynamic_data.schemas import (
     RecordFilter,
     RecordQuery,
     RecordUpdate,
+    SystemRecordUpdate,
     TableCreate,
     TableUpdate,
 )
+from domains.masterdata.models import Category, Country, Port, Product, Supplier
+from infrastructure.db.base import Base
 
 A = Actor(id=1, role="admin")
 
@@ -249,6 +252,94 @@ def test_same_creation_uuid_is_idempotent_under_concurrency(pg_data_engine):
         assert list(pool.map(run, range(2))) == [record_id, record_id]
     with Session(e) as db:
         assert db.scalar(select(func.count()).select_from(DataRecord)) == 1
+
+
+def test_system_first_save_is_idempotent_and_one_distinct_request_wins(pg_data_engine):
+    engine = pg_data_engine
+    products_id = UUID("025588dd-ae63-5607-9e78-1179a500ed6e")
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            Country.__table__,
+            Category.__table__,
+            Port.__table__,
+            Supplier.__table__,
+            Product.__table__,
+        ],
+    )
+    with Session(engine) as db:
+        db.add(
+            DataTable(
+                id=products_id,
+                name="产品",
+                table_kind="system",
+                system_key="products",
+                created_by=0,
+                updated_by=0,
+            )
+        )
+        first = Product(product_name_en="并发产品甲", code="CONCURRENT-A")
+        second = Product(product_name_en="并发产品乙", code="CONCURRENT-B")
+        db.add_all([first, second])
+        db.commit()
+        field = s.create_field(
+            db,
+            products_id,
+            FieldCreate(
+                id=uuid4(), label="内部备注", field_type="text", expected_schema_version=1
+            ),
+            actor=A,
+        )
+        first_id, second_id = str(first.id), str(second.id)
+
+    same_request, ready = uuid4(), Barrier(2)
+
+    def save(source_id, request_id, value, barrier):
+        with Session(engine) as db:
+            barrier.wait(10)
+            try:
+                return s.save_system_record(
+                    db,
+                    products_id,
+                    SystemRecordUpdate(
+                        request_id=request_id,
+                        source_record_id=source_id,
+                        expected_revision=0,
+                        schema_version=2,
+                        values={str(field.id): value},
+                    ),
+                    actor=A,
+                ).id
+            except Conflict:
+                return None
+
+    with ThreadPoolExecutor(2) as pool:
+        assert list(
+            pool.map(
+                lambda _: save(first_id, same_request, "相同请求", ready),
+                range(2),
+            )
+        ) == [first_id, first_id]
+
+    distinct_ready = Barrier(2)
+    with ThreadPoolExecutor(2) as pool:
+        results = list(
+            pool.map(
+                lambda request_id: save(second_id, request_id, "竞争请求", distinct_ready),
+                [uuid4(), uuid4()],
+            )
+        )
+    assert results.count(second_id) == 1
+    assert results.count(None) == 1
+    with Session(engine) as db:
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(DataRecord)
+                .where(DataRecord.table_id == products_id)
+            )
+            == 2
+        )
 
 
 def test_composite_foreign_key_rejects_valid_record_in_wrong_target_table(pg_data_engine):

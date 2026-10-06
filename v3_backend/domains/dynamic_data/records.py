@@ -267,6 +267,8 @@ def create_record(
     db: Session, table_id: UUID, body: RecordCreate, *, actor: Actor
 ) -> RecordResponse:
     require_writer(actor)
+    if require_table(db, table_id, active=False).table_kind == "system":
+        raise ValidationError("SYSTEM_RECORD_WRITE", "请使用系统记录扩展信息保存接口")
     try:
         with transaction(db):
             retried = _retry(db, table_id, body, actor)
@@ -311,6 +313,8 @@ def update_record(
     db: Session, table_id: UUID, record_id: UUID, body: RecordUpdate, *, actor: Actor
 ) -> RecordResponse:
     require_writer(actor)
+    if require_table(db, table_id, active=False).table_kind == "system":
+        raise ValidationError("SYSTEM_RECORD_WRITE", "请使用系统记录扩展信息保存接口")
     with transaction(db):
         initial = require_record(db, table_id, record_id)
         table, fields, record, original, normalized = _prepare(

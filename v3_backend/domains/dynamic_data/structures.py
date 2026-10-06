@@ -96,6 +96,8 @@ def update_table(db: Session, table_id: UUID, body: TableUpdate, *, actor: Actor
     with transaction(db):
         lock_tables(db, [table_id], exclusive_ids={table_id})
         table = require_table(db, table_id)
+        if table.table_kind == "system":
+            raise ValidationError("SYSTEM_TABLE_LOCKED", "系统数据表的名称和配置不可修改")
         check_version(table, body.expected_schema_version)
         changes = body.model_dump(exclude={"expected_schema_version"}, exclude_unset=True)
         if "name" in changes and changes["name"] is None:
@@ -215,6 +217,15 @@ def create_field(db: Session, table_id: UUID, body: FieldCreate, *, actor: Actor
                 return FieldResponse.model_validate(existing)
             targets = [definition.target_table_id] if definition.target_table_id else []
             table = _lock_structure(db, table_id, body.expected_schema_version, targets)
+            if table.table_kind == "system" and definition.field_type == "link":
+                raise ValidationError(
+                    "SYSTEM_LINK_FORBIDDEN", "系统数据表的扩展字段暂不支持关联记录"
+                )
+            for target_id in targets:
+                if require_table(db, target_id).table_kind == "system":
+                    raise ValidationError(
+                        "SYSTEM_LINK_FORBIDDEN", "第一轮不支持关联到系统数据表"
+                    )
             fields = table_fields(db, table_id)
             if len(fields) >= MAX_FIELDS:
                 raise ValidationError("FIELD_LIMIT", "每张表最多 100 个字段（含归档字段）")
@@ -270,6 +281,12 @@ def update_field(
             raise ValidationError("FIELD_ARCHIVED", "字段已归档，请先恢复")
         current = FieldResponse.model_validate(initial)
         definition = validate_field_definition(body, current=current)
+        if table.table_kind == "system" and definition.field_type == "link":
+            raise ValidationError(
+                "SYSTEM_LINK_FORBIDDEN", "系统数据表的扩展字段暂不支持关联记录"
+            )
+        if definition.target_table_id and require_table(db, definition.target_table_id).table_kind == "system":
+            raise ValidationError("SYSTEM_LINK_FORBIDDEN", "第一轮不支持关联到系统数据表")
         any_records = db.scalar(
             select(func.count()).select_from(DataRecord).where(DataRecord.table_id == table_id)
         )

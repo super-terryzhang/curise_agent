@@ -119,6 +119,8 @@ def set_table_status(
     require_admin(actor)
     with transaction(db):
         table, fields = _structure_locks(db, table_id, body.expected_schema_version)
+        if table.table_kind == "system":
+            raise ValidationError("SYSTEM_TABLE_LOCKED", "系统数据表不可归档或恢复")
         desired = "active" if active else "archived"
         if table.status == desired:
             return TableResponse.model_validate(table)
@@ -235,6 +237,8 @@ def set_record_status(
 ) -> RecordResponse:
     require_writer(actor)
     with transaction(db):
+        if require_table(db, table_id, active=False).table_kind == "system":
+            raise ValidationError("SYSTEM_RECORD_LOCKED", "系统记录不可在数据表页面归档")
         initial = require_record(db, table_id, record_id)
         if active:
             table, _, record, _, _ = _prepare(

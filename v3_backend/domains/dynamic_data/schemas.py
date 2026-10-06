@@ -173,9 +173,9 @@ class ChangeResponse(Contract):
     id: UUID
     table_id: UUID
     entity_type: str
-    entity_id: UUID
+    entity_id: UUID | str
     field_id: UUID | None
-    record_id: UUID | None
+    record_id: UUID | str | None
     action: str
     before: dict | None
     after: dict | None
@@ -226,4 +226,4 @@ class ChangeQuery(Contract):
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=50, ge=1, le=100)
     entity_type: Literal["table", "field", "record"] | None = None
-    record_id: UUID | None = None
+    record_id: UUID | str | None = None

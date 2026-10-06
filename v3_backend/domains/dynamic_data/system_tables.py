@@ -200,6 +200,51 @@ def _parse_source_id(source_record_id: str | int) -> int:
     return value
 
 
+def require_source_row(
+    db: Session,
+    table: DataTable,
+    source_record_id: str | int,
+    *,
+    actor: Actor | None,
+    for_update: bool = False,
+):
+    """Load one Actor-visible source row, optionally locking it for extension writes."""
+    checked_actor = _require_actor(actor)
+    adapter = _adapter(table)
+    source_id = _parse_source_id(source_record_id)
+    statement = _visible_statement(adapter, checked_actor).where(adapter.model.id == source_id)
+    if for_update:
+        statement = statement.with_for_update()
+    row = db.scalar(statement)
+    if row is None:
+        raise NotFound("RECORD_NOT_FOUND", "记录不存在于此数据表")
+    return row
+
+
+def visible_source_ids(
+    db: Session,
+    table: DataTable,
+    source_record_ids: set[str],
+    *,
+    actor: Actor | None,
+) -> set[str]:
+    """Resolve visible IDs in one bounded query; malformed detached anchors stay hidden."""
+    checked_actor = _require_actor(actor)
+    adapter = _adapter(table)
+    parsed = []
+    for source_record_id in source_record_ids:
+        try:
+            parsed.append(_parse_source_id(source_record_id))
+        except NotFound:
+            continue
+    if not parsed:
+        return set()
+    rows = db.scalars(
+        _visible_statement(adapter, checked_actor).where(adapter.model.id.in_(parsed))
+    )
+    return {str(row.id) for row in rows}
+
+
 def _relation_labels(db: Session, adapter: SystemTableAdapter, rows: list[Any]) -> dict[str, dict[int, str]]:
     labels: dict[str, dict[int, str]] = {}
     relations = {
@@ -322,14 +367,8 @@ def get_system_record(
     *,
     actor: Actor | None,
 ) -> RecordResponse:
-    checked_actor = _require_actor(actor)
     adapter = _adapter(table)
-    source_id = _parse_source_id(source_record_id)
-    row = db.scalar(
-        _visible_statement(adapter, checked_actor).where(adapter.model.id == source_id)
-    )
-    if row is None:
-        raise NotFound("RECORD_NOT_FOUND", "记录不存在于此数据表")
+    row = require_source_row(db, table, source_record_id, actor=actor)
     labels = _relation_labels(db, adapter, [row])
     anchor = _anchors(db, table.id, [row]).get(str(row.id))
     return _record_response(table, adapter, row, labels, anchor)
