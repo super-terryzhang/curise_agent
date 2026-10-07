@@ -63,3 +63,18 @@ class BatchPreview(Contract):
     counts: BatchCounts
     rows: list[PreviewRow]
     issues: list[ImportIssue] = Field(default_factory=list)
+
+
+class CommitResult(Contract):
+    batch_id: UUID
+    status: Literal["committed"] = "committed"
+    created: int = 0
+    updated: int = 0
+    skipped: int = 0
+
+
+class RollbackResult(Contract):
+    batch_id: UUID
+    status: Literal["rolled_back"] = "rolled_back"
+    restored: int = 0
+    archived: int = 0

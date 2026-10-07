@@ -62,6 +62,34 @@ def create_period(
     source: str = "http",
     source_batch_id: int | None = None,
 ) -> dict[str, Any]:
+    try:
+        row = create_period_in_transaction(
+            db,
+            product_id,
+            body,
+            actor_id=actor_id,
+            source=source,
+            source_batch_id=source_batch_id,
+        )
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise Conflict("相同价格期间已经存在，请刷新后检查") from exc
+    db.refresh(row)
+    return serialize(row)
+
+
+def create_period_in_transaction(
+    db: Session,
+    product_id: int,
+    body: ProductPricePeriodCreate,
+    *,
+    actor_id: int | None,
+    source: str = "http",
+    source_batch_id: int | None = None,
+    bump_product_version: bool = True,
+) -> ProductPricePeriod:
+    """Create and flush a period without owning the surrounding transaction."""
     product = _lock_product(db, product_id)
     price_type = _validate_type(body.price_type)
     _validate_dates(body.effective_from, body.effective_to, price_type)
@@ -86,14 +114,10 @@ def create_period(
         updated_by=actor_id,
     )
     db.add(row)
-    product.price_version += 1
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise Conflict("相同价格期间已经存在，请刷新后检查") from exc
-    db.refresh(row)
-    return serialize(row)
+    if bump_product_version:
+        product.price_version += 1
+    db.flush()
+    return row
 
 
 def update_period(
@@ -104,6 +128,28 @@ def update_period(
     *,
     actor_id: int | None,
 ) -> dict[str, Any]:
+    try:
+        row = update_period_in_transaction(
+            db, product_id, period_id, body, actor_id=actor_id
+        )
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise Conflict("相同价格期间已经存在，请刷新后检查") from exc
+    db.refresh(row)
+    return serialize(row)
+
+
+def update_period_in_transaction(
+    db: Session,
+    product_id: int,
+    period_id: int,
+    body: ProductPricePeriodUpdate,
+    *,
+    actor_id: int | None,
+    bump_product_version: bool = True,
+) -> ProductPricePeriod:
+    """Update and flush a period without committing the caller's batch."""
     product = _lock_product(db, product_id)
     row = db.get(ProductPricePeriod, period_id)
     if row is None or row.product_id != product_id:
@@ -128,19 +174,23 @@ def update_period(
         setattr(row, field, value)
     row.updated_by = actor_id
     row.updated_at = datetime.utcnow()
-    product.price_version += 1
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise Conflict("相同价格期间已经存在，请刷新后检查") from exc
-    db.refresh(row)
-    return serialize(row)
+    if bump_product_version:
+        product.price_version += 1
+    db.flush()
+    return row
 
 
 def deactivate_period(
     db: Session, product_id: int, period_id: int, *, actor_id: int | None
 ) -> None:
+    deactivate_period_in_transaction(db, product_id, period_id, actor_id=actor_id)
+    db.commit()
+
+
+def deactivate_period_in_transaction(
+    db: Session, product_id: int, period_id: int, *, actor_id: int | None
+) -> ProductPricePeriod:
+    """Deactivate and flush a period without committing the caller's batch."""
     product = _lock_product(db, product_id)
     row = db.get(ProductPricePeriod, period_id)
     if row is None or row.product_id != product_id:
@@ -149,7 +199,8 @@ def deactivate_period(
     row.updated_by = actor_id
     row.updated_at = datetime.utcnow()
     product.price_version += 1
-    db.commit()
+    db.flush()
+    return row
 
 
 def attach_effective_prices(
@@ -272,6 +323,7 @@ def serialize(row: ProductPricePeriod) -> dict[str, Any]:
         "updated_by": row.updated_by,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "revision": row.revision,
     }
 
 
