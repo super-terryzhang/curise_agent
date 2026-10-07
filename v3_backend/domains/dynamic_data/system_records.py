@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .errors import Conflict, ValidationError
 from .history import append_change
-from .models import DataRecord, DataTable, utc_now
+from .models import DataRecord, DataTable, DataUniqueValue, utc_now
 from .permissions import require_writer
 from .records import _persist
 from .repository import creation_change, lock_tables, require_table, table_fields, transaction
@@ -22,12 +22,27 @@ from .validation import normalize_record
 def _extension_fields(db: Session, table_id: UUID) -> list[FieldResponse]:
     fields = [FieldResponse.model_validate(field) for field in table_fields(db, table_id)]
     if any(field.field_type == "link" for field in fields):
-        raise ValidationError(
-            "SYSTEM_LINK_FORBIDDEN", "系统数据表的扩展字段暂不支持关联记录"
-        )
+        raise ValidationError("SYSTEM_LINK_FORBIDDEN", "系统数据表的扩展字段暂不支持关联记录")
     if not any(field.status == "active" for field in fields):
         raise ValidationError("NO_ACTIVE_FIELDS", "请先配置启用的扩展字段，再保存扩展信息")
     return fields
+
+
+def persist_system_extension_values_in_transaction(
+    db: Session, record: DataRecord, values: dict
+) -> None:
+    """Maintain the same indexes for imported and manually edited extensions.
+
+    Caller owns the transaction and schema/product locks. Archived records retain
+    audit values but release unique-value reservations.
+    """
+    if record.status != "active":
+        db.execute(delete(DataUniqueValue).where(DataUniqueValue.record_id == record.id))
+        return
+    fields = [FieldResponse.model_validate(field) for field in table_fields(db, record.table_id)]
+    if any(field.field_type == "link" for field in fields):
+        raise ValidationError("SYSTEM_LINK_FORBIDDEN", "系统数据表的扩展字段暂不支持关联记录")
+    _persist(db, record, fields, values)
 
 
 def _request(body: SystemRecordUpdate, normalized: dict) -> dict:

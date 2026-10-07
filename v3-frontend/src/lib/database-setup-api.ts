@@ -110,7 +110,32 @@ export interface PricePeriod {
   effective_from: string;
   effective_to: string;
   status: boolean;
+  revision?: number;
 }
+
+export interface EditField {
+  key: string; label: string; type: string; required: boolean;
+  options: { value: string; label: string }[];
+}
+export interface ProductEditConfig {
+  fields: EditField[]; values: Record<string, unknown>;
+  schema_version: number; expected_revision: number; extension_revision: number;
+}
+export interface DeletionPreview {
+  can_delete: boolean; reasons: string[]; code: string;
+  expected_revision: number; expected_extension_revision: number; period_count: number;
+}
+export const getProductEditConfig = (id: number) => request<ProductEditConfig>(`/products/${id}/edit-config`);
+export const saveSetupProduct = (id: number, config: ProductEditConfig, values: Record<string, unknown>) =>
+  request<SetupProductDetail>(`/products/${id}`, { method: "PATCH", body: JSON.stringify({ expected_revision: config.expected_revision, extension_revision: config.extension_revision, schema_version: config.schema_version, values }), headers: { "Content-Type": "application/json" } });
+export const previewSetupProductDelete = (id: number) => request<DeletionPreview>(`/products/${id}/deletion`);
+export const deleteSetupProduct = (id: number, preview: DeletionPreview, confirm_code: string) =>
+  request<{ deleted: boolean }>(`/products/${id}`, { method: "DELETE", body: JSON.stringify({ expected_revision: preview.expected_revision, expected_extension_revision: preview.expected_extension_revision, confirm_code }), headers: { "Content-Type": "application/json" } });
+export interface PeriodValues { amount: number; currency: string; effective_from: string; effective_to: string; }
+export const saveSetupPeriod = (id: number, type: "purchase" | "selling", values: PeriodValues, period?: PricePeriod) =>
+  request<PricePeriod>(`/products/${id}/periods${period ? `/${period.id}` : ""}`, { method: period ? "PATCH" : "POST", body: JSON.stringify(period ? { ...values, expected_revision: period.revision } : { ...values, price_type: type }), headers: { "Content-Type": "application/json" } });
+export const deleteSetupPeriod = (id: number, period: PricePeriod) =>
+  request<{ deleted: boolean }>(`/products/${id}/periods/${period.id}`, { method: "DELETE", body: JSON.stringify({ expected_revision: period.revision }), headers: { "Content-Type": "application/json" } });
 
 export interface SetupProductDetail extends SetupProduct {
   schema_version: number | null;
@@ -149,7 +174,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       0,
       "NETWORK_ERROR",
       options?.method && options.method !== "GET"
-        ? "操作结果暂时无法确认，请先核对批次状态"
+        ? "操作结果暂时无法确认，请先刷新核对当前数据，不要重复提交"
         : "无法加载，请重试",
       Boolean(options?.method && options.method !== "GET"),
     );

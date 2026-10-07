@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from io import BytesIO
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import IntegrityError
 
 from apps.http._deps import Admin, DbDep
+from domains.dynamic_data import errors as dynamic_errors
 from domains.dynamic_data.schemas import Actor
-from domains.product_imports import service
+from domains.masterdata.errors import BadRequest, Conflict, NotFound
+from domains.masterdata.schemas import ProductPricePeriodCreate, ProductPricePeriodUpdate
+from domains.product_imports import manual, service
 from domains.product_imports.commit import ImportConflict
 from domains.product_imports.models import ImportBatch
 from infrastructure.config import settings
@@ -38,6 +45,36 @@ class DatabaseSetupRoute(APIRoute):
                 )
             try:
                 return await original(request)
+            except manual.ManualValidation as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "VALIDATION_FAILED", "message": str(exc), "issues": exc.issues},
+                ) from exc
+            except (Conflict, dynamic_errors.Conflict, IntegrityError) as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "DATA_CONFLICT",
+                        "message": str(exc)
+                        if isinstance(exc, (Conflict, dynamic_errors.Conflict))
+                        else "数据冲突，请刷新后检查关联记录",
+                        "issues": [],
+                    },
+                ) from exc
+            except BadRequest as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "VALIDATION_FAILED", "message": str(exc), "issues": []},
+                ) from exc
+            except dynamic_errors.ValidationError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": exc.code, "message": str(exc), "issues": []},
+                ) from exc
+            except NotFound as exc:
+                raise HTTPException(
+                    status_code=404, detail={"code": "NOT_FOUND", "message": str(exc), "issues": []}
+                ) from exc
             except ImportConflict as exc:
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
@@ -61,9 +98,7 @@ router = APIRouter(
 
 @router.get("/status")
 def status_info(db: DbDep, user: Admin):
-    return service.setup_status(
-        db, database_name=settings.TEMP_DATABASE_SETUP_EXPECTED_DATABASE
-    )
+    return service.setup_status(db, database_name=settings.TEMP_DATABASE_SETUP_EXPECTED_DATABASE)
 
 
 @router.get("/product-template")
@@ -121,9 +156,7 @@ def import_rows(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
-    return service.list_batch_rows(
-        db, batch_id, user.id, page=page, page_size=page_size
-    )
+    return service.list_batch_rows(db, batch_id, user.id, page=page, page_size=page_size)
 
 
 @router.post("/imports/{batch_id}/commit")
@@ -150,3 +183,72 @@ def products(
 @router.get("/products/{product_id}")
 def product_detail(product_id: int, db: DbDep, user: Admin):
     return service.get_product(db, product_id)
+
+
+class ProductEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(ge=1)
+    schema_version: int = Field(ge=1)
+    extension_revision: int | None = Field(default=None, ge=0)
+    values: dict[str, Any]
+
+
+class RevisionAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: int = Field(ge=1)
+
+
+class ProductDelete(RevisionAction):
+    confirm_code: str
+    expected_extension_revision: int = Field(default=0, ge=0)
+
+
+class PeriodCreate(ProductPricePeriodCreate):
+    model_config = ConfigDict(extra="forbid")
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+
+
+class PeriodEdit(ProductPricePeriodUpdate, RevisionAction):
+    model_config = ConfigDict(extra="forbid")
+    # The form submits the complete period; null amounts/dates are not accepted.
+    amount: float = Field(ge=0)
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+    effective_from: date
+    effective_to: date
+
+
+@router.get("/products/{product_id}/edit-config")
+def product_edit_config(product_id: int, db: DbDep, user: Admin):
+    return manual.edit_config(db, product_id)
+
+
+@router.patch("/products/{product_id}")
+def edit_product(product_id: int, body: ProductEdit, db: DbDep, user: Admin):
+    return manual.update_product(db, product_id, body, user.id)
+
+
+@router.get("/products/{product_id}/deletion")
+def preview_product_delete(product_id: int, db: DbDep, user: Admin):
+    return manual.deletion_preview(db, product_id)
+
+
+@router.delete("/products/{product_id}")
+def remove_product(product_id: int, body: ProductDelete, db: DbDep, user: Admin):
+    return manual.delete_product(db, product_id, body, user.id)
+
+
+@router.post("/products/{product_id}/periods", status_code=201)
+def create_product_period(product_id: int, body: PeriodCreate, db: DbDep, user: Admin):
+    return manual.save_period(db, product_id, body, user.id)
+
+
+@router.patch("/products/{product_id}/periods/{period_id}")
+def edit_product_period(product_id: int, period_id: int, body: PeriodEdit, db: DbDep, user: Admin):
+    return manual.save_period(db, product_id, body, user.id, period_id)
+
+
+@router.delete("/products/{product_id}/periods/{period_id}")
+def remove_product_period(
+    product_id: int, period_id: int, body: RevisionAction, db: DbDep, user: Admin
+):
+    return manual.delete_period(db, product_id, period_id, body.expected_revision, user.id)

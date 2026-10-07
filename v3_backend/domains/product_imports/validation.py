@@ -39,7 +39,9 @@ def _issue(
         severity=severity,
         code=code,
         message=message,
-        sheet=(PRODUCT_SHEET if row and row.sheet_key == "products" else PRICE_SHEET if row else None),
+        sheet=(
+            PRODUCT_SHEET if row and row.sheet_key == "products" else PRICE_SHEET if row else None
+        ),
         row=row.source_row_number if row else None,
         field=field,
         related_rows=related_rows or [],
@@ -76,9 +78,13 @@ def _reference(
         return None, []
     matches = index.get(str(raw).strip().casefold(), [])
     if not matches:
-        return None, [_issue(row, f"UNKNOWN_{label.upper()}", f"未找到启用的{label}：{raw}", field=label)]
+        return None, [
+            _issue(row, f"UNKNOWN_{label.upper()}", f"未找到启用的{label}：{raw}", field=label)
+        ]
     if len(matches) > 1:
-        return None, [_issue(row, f"AMBIGUOUS_{label.upper()}", f"{label}名称不唯一：{raw}", field=label)]
+        return None, [
+            _issue(row, f"AMBIGUOUS_{label.upper()}", f"{label}名称不唯一：{raw}", field=label)
+        ]
     return matches[0].id, []
 
 
@@ -147,9 +153,7 @@ def _extension_value(
 
 def _product_indexes(db: Session):
     products = list(
-        db.scalars(
-            select(master_models.Product).where(master_models.Product.status.is_(True))
-        )
+        db.scalars(select(master_models.Product).where(master_models.Product.status.is_(True)))
     )
     mapping = {
         normalize_product_key(product.code, product.port_id): product
@@ -215,7 +219,11 @@ def _normalize_product_row(
             existing = matched
     core: dict[str, Any] = {}
     core["code"], item = _text(
-        raw.get("product_code"), existing.code if existing else None, required=True, row=row, label="产品代码"
+        raw.get("product_code"),
+        existing.code if existing else None,
+        required=True,
+        row=row,
+        label="产品代码",
     )
     issues.extend(item)
     core["product_name_en"], item = _text(
@@ -234,12 +242,21 @@ def _normalize_product_row(
     ):
         current = getattr(existing, model_key) if existing else None
         core[model_key], item = _reference(
-            raw.get(key_name), indexes[key_name], row, label=label, required=required, existing_id=current
+            raw.get(key_name),
+            indexes[key_name],
+            row,
+            label=label,
+            required=required,
+            existing_id=current,
         )
         issues.extend(item)
     for raw_key, model_key, label in (("unit", "unit", "单位"), ("brand", "brand", "品牌")):
         core[model_key], item = _text(
-            raw.get(raw_key), getattr(existing, model_key) if existing else None, required=False, row=row, label=label
+            raw.get(raw_key),
+            getattr(existing, model_key) if existing else None,
+            required=False,
+            row=row,
+            label=label,
         )
         issues.extend(item)
     status = raw.get("status")
@@ -264,18 +281,14 @@ def _normalize_product_row(
         except (TypeError, ValueError):
             exported_revision = -1
         if exported_revision != existing.revision:
-            issues.append(
-                _issue(row, "PRODUCT_CHANGED", "产品已被其他人修改，请重新导出模板")
-            )
+            issues.append(_issue(row, "PRODUCT_CHANGED", "产品已被其他人修改，请重新导出模板"))
     if raw.get("__extension_revision") not in (None, ""):
         try:
             exported_extension_revision = int(raw["__extension_revision"])
         except (TypeError, ValueError):
             exported_extension_revision = -1
         if exported_extension_revision != (anchor.revision if anchor else 0):
-            issues.append(
-                _issue(row, "EXTENSION_CHANGED", "产品扩展信息已变化，请重新导出模板")
-            )
+            issues.append(_issue(row, "EXTENSION_CHANGED", "产品扩展信息已变化，请重新导出模板"))
     existing_extensions = dict(anchor.values) if anchor else {}
     extension_values = dict(existing_extensions)
     for field in catalog.extension_fields:
@@ -302,16 +315,16 @@ def _normalize_product_row(
         action = "create"
     else:
         current_core = {key: getattr(existing, key) for key in core}
-        action = "skip" if current_core == core and existing_extensions == extension_values else "update"
+        action = (
+            "skip" if current_core == core and existing_extensions == extension_values else "update"
+        )
     snapshot = {
         "product_revision": existing.revision if existing else None,
         "extension_revision": anchor.revision if anchor else 0,
         "schema_version": catalog.table.schema_version,
         "before": (
             {
-                "core_values": {
-                    key: getattr(existing, key) for key in core
-                },
+                "core_values": {key: getattr(existing, key) for key in core},
                 "extension_values": existing_extensions,
             }
             if existing
@@ -347,7 +360,9 @@ def _normalize_price_row(
     raw_type = str(raw.get("price_type") or "").strip()
     price_type = {"采购价": "purchase", "卖价": "selling"}.get(raw_type)
     if price_type is None:
-        issues.append(_issue(row, "INVALID_PRICE_TYPE", "价格类型只能填写采购价或卖价", field="价格类型"))
+        issues.append(
+            _issue(row, "INVALID_PRICE_TYPE", "价格类型只能填写采购价或卖价", field="价格类型")
+        )
     try:
         amount = Decimal(str(raw.get("amount")))
         if not amount.is_finite() or amount < 0 or amount > Decimal("99999999.99"):
@@ -365,7 +380,9 @@ def _normalize_price_row(
             raise ValueError
     except (TypeError, ValueError):
         start = end = date.min
-        issues.append(_issue(row, "INVALID_PERIOD", "开始日期必须早于或等于结束日期", field="开始日期"))
+        issues.append(
+            _issue(row, "INVALID_PERIOD", "开始日期必须早于或等于结束日期", field="开始日期")
+        )
     normalized = {
         "product_code": code,
         "port_id": port_id,
@@ -433,9 +450,7 @@ def _normalize_price_row(
             or exported_period.product_id != existing_product.id
             or exported_period.price_type != price_type
         ):
-            issues.append(
-                _issue(row, "PERIOD_ID_MISMATCH", "价格区间不属于当前产品或价格类型")
-            )
+            issues.append(_issue(row, "PERIOD_ID_MISMATCH", "价格区间不属于当前产品或价格类型"))
         else:
             target = exported_period
             comparison = compare_price_period(
@@ -471,9 +486,7 @@ def _normalize_price_row(
                 except (TypeError, ValueError):
                     exported_revision = -1
                 if exported_revision != exported_period.revision:
-                    issues.append(
-                        _issue(row, "PERIOD_CHANGED", "价格区间已变化，请重新导出模板")
-                    )
+                    issues.append(_issue(row, "PERIOD_CHANGED", "价格区间已变化，请重新导出模板"))
     return key, existing_product, normalized, action, target, issues, snapshot
 
 
@@ -491,31 +504,23 @@ def validate_batch(db: Session, batch_id: UUID, user_id: int) -> BatchPreview:
         )
     )
     catalog = load_product_catalog(db)
-    global_issues = [ImportIssue.model_validate(item) for item in (batch.result or {}).get("issues", [])]
+    global_issues = [
+        ImportIssue.model_validate(item) for item in (batch.result or {}).get("issues", [])
+    ]
     if batch.product_schema_version != catalog.table.schema_version and not any(
         issue.code == "STALE_SCHEMA" for issue in global_issues
     ):
-        global_issues.append(
-            _issue(None, "STALE_SCHEMA", "产品字段结构已变化，请下载最新模板")
-        )
+        global_issues.append(_issue(None, "STALE_SCHEMA", "产品字段结构已变化，请下载最新模板"))
 
     countries = list(
-        db.scalars(
-            select(master_models.Country).where(master_models.Country.status.is_(True))
-        )
+        db.scalars(select(master_models.Country).where(master_models.Country.status.is_(True)))
     )
-    ports = list(
-        db.scalars(select(master_models.Port).where(master_models.Port.status.is_(True)))
-    )
+    ports = list(db.scalars(select(master_models.Port).where(master_models.Port.status.is_(True))))
     suppliers = list(
-        db.scalars(
-            select(master_models.Supplier).where(master_models.Supplier.status.is_(True))
-        )
+        db.scalars(select(master_models.Supplier).where(master_models.Supplier.status.is_(True)))
     )
     categories = list(
-        db.scalars(
-            select(master_models.Category).where(master_models.Category.status.is_(True))
-        )
+        db.scalars(select(master_models.Category).where(master_models.Category.status.is_(True)))
     )
     indexes = {
         "country": _name_index(countries),
@@ -525,7 +530,9 @@ def validate_batch(db: Session, batch_id: UUID, user_id: int) -> BatchPreview:
         "port_rows": ports,
     }
     products, product_map = _product_indexes(db)
-    products_by_id = {product.id: product for product in products}
+    # Explicit IDs may target inactive products (for example, re-enabling one).
+    # Code/port matching above deliberately remains limited to active products.
+    products_by_id = {product.id: product for product in db.scalars(select(master_models.Product))}
     anchors = {
         record.source_record_id: record
         for record in db.scalars(
@@ -543,9 +550,9 @@ def validate_batch(db: Session, batch_id: UUID, user_id: int) -> BatchPreview:
             )
         )
     )
-    periods_by_product: dict[
-        tuple[int, str], list[master_models.ProductPricePeriod]
-    ] = defaultdict(list)
+    periods_by_product: dict[tuple[int, str], list[master_models.ProductPricePeriod]] = defaultdict(
+        list
+    )
     for period in periods:
         periods_by_product[(period.product_id, period.price_type)].append(period)
     periods_by_id = {period.id: period for period in periods}
@@ -555,16 +562,16 @@ def validate_batch(db: Session, batch_id: UUID, user_id: int) -> BatchPreview:
     staged_products: dict[tuple[str, int], ImportRow] = {}
     for row in product_rows:
         parser_issues = [ImportIssue.model_validate(issue) for issue in row.issues]
-        result = _normalize_product_row(
-            row, catalog, product_map, products_by_id, indexes, anchors
-        )
+        result = _normalize_product_row(row, catalog, product_map, products_by_id, indexes, anchors)
         key, existing, normalized, action, issues, snapshot = result
         row.normalized_values = normalized
         row.product_code_normalized = key[0] if key else None
         row.port_id = key[1] if key else None
         row.target_product_id = existing.id if existing else None
         row.snapshot = snapshot
-        row.action = "block" if any(i.severity == "block" for i in [*parser_issues, *issues]) else action
+        row.action = (
+            "block" if any(i.severity == "block" for i in [*parser_issues, *issues]) else action
+        )
         row.issues = [i.model_dump(mode="json") for i in [*parser_issues, *issues]]
         if key and key not in staged_products:
             staged_products[key] = row
@@ -621,14 +628,18 @@ def validate_batch(db: Session, batch_id: UUID, user_id: int) -> BatchPreview:
         row.target_product_id = existing_product.id if existing_product else None
         row.target_period_id = target.id if target else None
         row.snapshot = snapshot
-        row.action = "block" if any(i.severity == "block" for i in [*parser_issues, *issues]) else action
+        row.action = (
+            "block" if any(i.severity == "block" for i in [*parser_issues, *issues]) else action
+        )
         row.issues = [i.model_dump(mode="json") for i in [*parser_issues, *issues]]
 
     price_groups: dict[tuple, list[ImportRow]] = defaultdict(list)
     for row in price_rows:
         values = row.normalized_values
         if row.product_code_normalized and row.port_id and values.get("price_type"):
-            price_groups[(row.product_code_normalized, row.port_id, values["price_type"])].append(row)
+            price_groups[(row.product_code_normalized, row.port_id, values["price_type"])].append(
+                row
+            )
     for group in price_groups.values():
         for index, left in enumerate(group):
             left_start = date.fromisoformat(left.normalized_values["effective_from"])
@@ -712,8 +723,11 @@ def validate_batch(db: Session, batch_id: UUID, user_id: int) -> BatchPreview:
         create=sum(row.action == "create" for row in rows),
         update=sum(row.action == "update" for row in rows),
         skip=sum(row.action == "skip" for row in rows),
-        warning=sum(any(issue.severity == "warning" for issue in preview.issues) for preview in previews),
-        block=sum(row.action == "block" for row in rows) + sum(i.severity == "block" for i in global_issues),
+        warning=sum(
+            any(issue.severity == "warning" for issue in preview.issues) for preview in previews
+        ),
+        block=sum(row.action == "block" for row in rows)
+        + sum(i.severity == "block" for i in global_issues),
     )
     status = "failed" if counts.block else "ready"
     batch.status = status

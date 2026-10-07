@@ -27,5 +27,9 @@ describe("clean database product detail", () => {
     expect(html).toContain("已结束");
     expect(html).toContain("当前");
     expect(html).toContain("未来");
+    expect(html).toContain("编辑产品资料");
+    expect(html).toContain("新增采购价区间");
+    expect(html).toContain("新增卖价区间");
+    expect(html).toContain("删除区间");
   });
 });

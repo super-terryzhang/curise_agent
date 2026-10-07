@@ -12,7 +12,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from domains.dynamic_data import PRODUCT_TABLE_ID
+from domains.dynamic_data import errors as dynamic_errors
 from domains.dynamic_data import models as dynamic_models
+from domains.dynamic_data.service import persist_system_extension_values_in_transaction
 from domains.masterdata import models as master_models
 from domains.masterdata import price_periods as master_price_periods
 from domains.masterdata.schemas import ProductPricePeriodCreate, ProductPricePeriodUpdate
@@ -109,17 +111,13 @@ def _new_change(
 
 
 def _lock_batch(db: Session, batch_id: UUID, user_id: int) -> ImportBatch:
-    batch = db.scalar(
-        select(ImportBatch).where(ImportBatch.id == batch_id).with_for_update()
-    )
+    batch = db.scalar(select(ImportBatch).where(ImportBatch.id == batch_id).with_for_update())
     if batch is None or batch.user_id != user_id:
         raise ValueError("导入批次不存在")
     return batch
 
 
-def _verify_snapshot(
-    db: Session, row: ImportRow, table: dynamic_models.DataTable
-) -> None:
+def _verify_snapshot(db: Session, row: ImportRow, table: dynamic_models.DataTable) -> None:
     if row.snapshot.get("schema_version") not in (None, table.schema_version):
         raise ImportConflict("产品字段结构已变化，请重新上传")
     if row.target_product_id is not None and row.sheet_key == "products":
@@ -158,7 +156,14 @@ def _apply_product_row(
         db.add(product)
         db.flush()
         product_change = _new_change(
-            batch.id, sequence, "product", product.id, "create", None, _product_state(product), product.revision
+            batch.id,
+            sequence,
+            "product",
+            product.id,
+            "create",
+            None,
+            _product_state(product),
+            product.revision,
         )
         db.add(product_change)
         changes.append(product_change)
@@ -171,7 +176,14 @@ def _apply_product_row(
             setattr(product, field, value)
         db.flush()
         product_change = _new_change(
-            batch.id, sequence, "product", product.id, "update", before, _product_state(product), product.revision
+            batch.id,
+            sequence,
+            "product",
+            product.id,
+            "update",
+            before,
+            _product_state(product),
+            product.revision,
         )
         db.add(product_change)
         changes.append(product_change)
@@ -234,6 +246,7 @@ def _apply_product_row(
             db.add(extension_change)
             changes.append(extension_change)
             sequence += 1
+        persist_system_extension_values_in_transaction(db, anchor, extensions)
     return sequence, 1, changes
 
 
@@ -268,7 +281,14 @@ def _apply_price_row(
             bump_product_version=False,
         )
         change = _new_change(
-            batch.id, sequence, "price_period", period.id, "create", None, _period_state(period), period.revision
+            batch.id,
+            sequence,
+            "price_period",
+            period.id,
+            "create",
+            None,
+            _period_state(period),
+            period.revision,
         )
     else:
         period = db.get(master_models.ProductPricePeriod, row.target_period_id)
@@ -288,7 +308,14 @@ def _apply_price_row(
             bump_product_version=False,
         )
         change = _new_change(
-            batch.id, sequence, "price_period", period.id, "update", before, _period_state(period), period.revision
+            batch.id,
+            sequence,
+            "price_period",
+            period.id,
+            "update",
+            before,
+            _period_state(period),
+            period.revision,
         )
     db.add(change)
     return sequence + 1, change
@@ -372,9 +399,7 @@ def commit_batch(db: Session, batch_id: UUID, user_id: int) -> CommitResult:
                 price_product = db.get(master_models.Product, row.target_product_id)
             if price_product is not None and price_product.id not in price_product_before:
                 price_product_before[price_product.id] = _product_state(price_product)
-            sequence, _ = _apply_price_row(
-                db, batch, row, user_id, sequence, product_by_key
-            )
+            sequence, _ = _apply_price_row(db, batch, row, user_id, sequence, product_by_key)
             created += row.action == "create"
             updated += row.action == "update"
         for product_id in sorted(price_product_before):
@@ -413,6 +438,9 @@ def commit_batch(db: Session, batch_id: UUID, user_id: int) -> CommitResult:
         batch.result = {**(batch.result or {}), "commit": result.model_dump(mode="json")}
         db.commit()
         return result
+    except dynamic_errors.Conflict as exc:
+        db.rollback()
+        raise ImportConflict(str(exc)) from exc
     except IntegrityError as exc:
         db.rollback()
         raise ImportConflict("数据已被其他操作更新，请重新检查后提交") from exc
@@ -491,6 +519,7 @@ def rollback_batch(db: Session, batch_id: UUID, user_id: int) -> RollbackResult:
                     entity.updated_by = before.get("updated_by", entity.updated_by)
                     entity.revision += 1
                     restored += 1
+                persist_system_extension_values_in_transaction(db, entity, entity.values)
             else:
                 entity = db.get(master_models.Product, int(change.entity_id))
                 if change.action == "create":
@@ -499,14 +528,15 @@ def rollback_batch(db: Session, batch_id: UUID, user_id: int) -> RollbackResult:
                 else:
                     _restore_product(entity, change.before or {})
                     restored += 1
-        result = RollbackResult(
-            batch_id=batch.id, restored=restored, archived=archived
-        )
+        result = RollbackResult(batch_id=batch.id, restored=restored, archived=archived)
         batch.status = "rolled_back"
         batch.rolled_back_at = utc_now()
         batch.result = {**(batch.result or {}), "rollback": result.model_dump(mode="json")}
         db.commit()
         return result
+    except dynamic_errors.Conflict as exc:
+        db.rollback()
+        raise ImportConflict(str(exc)) from exc
     except Exception:
         db.rollback()
         raise

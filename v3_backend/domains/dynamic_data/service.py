@@ -11,8 +11,9 @@ from .query import (
     search_link_targets,
 )
 from .records import create_record, get_record_values, update_record
+from .repository import lock_tables as lock_tables_in_transaction
 from .structures import create_field, create_table, reorder_fields, update_field, update_table
-from .system_records import save_system_record
+from .system_records import persist_system_extension_values_in_transaction, save_system_record
 
 __all__ = [
     "create_field",
@@ -34,4 +35,6 @@ __all__ = [
     "list_changes",
     "search_link_targets",
     "save_system_record",
+    "persist_system_extension_values_in_transaction",
+    "lock_tables_in_transaction",
 ]
