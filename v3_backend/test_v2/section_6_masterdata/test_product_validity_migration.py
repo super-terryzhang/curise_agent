@@ -55,20 +55,33 @@ def _prepare_0032_schema(database_url: str) -> None:
             connection.execute(text("CREATE SCHEMA public"))
         # Build the historical 0032 schema, not tables introduced by 0035.
         # Otherwise upgrade(head) would attempt to create these tables twice.
-        custom_tables = {
+        future_tables = {
             "v3_data_tables",
             "v3_data_fields",
             "v3_data_records",
             "v3_data_links",
             "v3_data_unique_values",
             "v3_data_changes",
+            "v3_import_batches",
+            "v3_import_rows",
+            "v3_import_changes",
         }
         Base.metadata.create_all(
             engine,
-            tables=[t for name, t in Base.metadata.tables.items() if name not in custom_tables],
+            tables=[t for name, t in Base.metadata.tables.items() if name not in future_tables],
         )
         columns = {column["name"] for column in inspect(engine).get_columns("products")}
         with engine.begin() as connection:
+            # Base metadata follows the current application, but this fixture must
+            # represent the historical 0032 schema.  Strip structures introduced
+            # by 0037 so the migration itself remains responsible for creating
+            # them during upgrade(head).
+            connection.execute(
+                text("ALTER TABLE v3_product_price_periods DROP COLUMN revision")
+            )
+            connection.execute(
+                text("DROP INDEX IF EXISTS uq_products_active_normalized_code_port")
+            )
             if "effective_from" not in columns:
                 connection.execute(text("ALTER TABLE products ADD COLUMN effective_from TIMESTAMP"))
             if "effective_to" not in columns:
