@@ -26,6 +26,8 @@ import {
   type SetupStatus,
 } from "@/lib/database-setup-api";
 import { ProductTable } from "./product-table";
+import { DATA_TABLES_PATH } from "@/lib/dashboard-routes";
+import { STANDALONE_DATA_PREPARATION } from "@/lib/data-preparation-routes";
 
 const STEPS = ["准备", "下载模板", "上传检查", "核对变更", "确认结果"] as const;
 
@@ -152,7 +154,7 @@ export function DatabaseSetupView(props: DatabaseSetupViewProps) {
               {[["数据库", status.database_name], ["字段版本", status.schema_version ?? "—"], ["启用字段", status.field_count], ["产品", status.product_count], ["价格区间", status.price_period_count]].map(([label, value]) => <div key={label} className="bg-background px-4 py-3"><div className="text-[11px] text-muted-foreground">{label}</div><div className="mt-1 text-sm font-semibold">{value}</div></div>)}
             </div>
             <div className="border-t pt-4">
-              <Link className="text-sm font-medium text-primary hover:underline" href="/dashboard/settings/data-tables">配置产品字段</Link>
+              <Link className="text-sm font-medium text-primary hover:underline" href={DATA_TABLES_PATH}>配置产品字段</Link>
             </div>
           </>
         ) : step === 2 ? (
@@ -269,8 +271,8 @@ export default function DatabaseSetupPage() {
   return (
     <div className="h-full overflow-y-auto bg-muted/20">
       <div className="mx-auto max-w-[1600px] px-6 py-6">
-        <button className="mb-2 flex items-center gap-1 text-xs text-muted-foreground" onClick={() => router.push("/dashboard/workbench")}><ArrowLeft className="h-3.5 w-3.5" />返回工作台</button>
-        <div className="mb-4"><h1 className="text-lg font-semibold">新数据库产品准备</h1><p className="mt-1 text-xs text-muted-foreground">配置字段后，通过一个 Excel 整批准备产品资料和多个价格区间。</p></div>
+        {!STANDALONE_DATA_PREPARATION && <button className="mb-2 flex items-center gap-1 text-xs text-muted-foreground" onClick={() => router.push("/dashboard/workbench")}><ArrowLeft className="h-3.5 w-3.5" />返回工作台</button>}
+        <div className="mb-4"><h1 className="text-lg font-semibold">产品上传与数据</h1><p className="mt-1 text-xs text-muted-foreground">配置字段后，通过一个 Excel 整批准备产品资料和多个价格区间。</p></div>
         {status ? <DatabaseSetupView step={step} status={status} batch={batch} rows={rows} result={result} busy={busy} error={error} selectedFile={file} onStep={setStep} onFile={(value) => void upload(value)} onDownload={(value) => void saveBlob(value)} onRowsPage={(value) => void loadRowsPage(value)} onCommit={() => void commit()} onRollback={() => void rollback()} /> : <Card><CardContent className="flex h-40 items-center justify-center text-sm text-muted-foreground">{error || "正在读取准备状态…"}</CardContent></Card>}
         <section className="mt-6 space-y-3">
           <div className="flex items-end justify-between gap-3"><div><h2 className="text-base font-semibold">产品数据</h2><p className="mt-1 text-xs text-muted-foreground">每个“产品代码 + 港口”一行；点击查看按时间排列的价格区间。</p></div><div className="flex gap-2"><Input className="h-8 w-64" value={query} placeholder="搜索产品代码或名称" onChange={(event) => setQuery(event.target.value)} /><Button size="sm" variant="outline" onClick={() => void loadProducts()}>查询</Button></div></div>

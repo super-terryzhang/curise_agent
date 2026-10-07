@@ -7,6 +7,7 @@ import { useParams } from "next/navigation";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PREPARATION_PATH } from "@/lib/data-preparation-routes";
 import {
   Table,
   TableBody,
@@ -102,7 +103,7 @@ export default function DatabaseSetupProductPage() {
   return (
     <div className="h-full overflow-y-auto bg-muted/20">
       <div className="mx-auto max-w-6xl px-6 py-6">
-        <Link href="/dashboard/workbench/database-setup" className="mb-2 flex items-center gap-1 text-xs text-muted-foreground"><ArrowLeft className="h-3.5 w-3.5" />返回新数据库产品准备</Link>
+        <Link href={PREPARATION_PATH} className="mb-2 flex items-center gap-1 text-xs text-muted-foreground"><ArrowLeft className="h-3.5 w-3.5" />返回产品数据</Link>
         <div className="mb-4"><h1 className="text-lg font-semibold">{product?.name || "产品详情"}</h1><p className="mt-1 text-xs text-muted-foreground">一个产品对应多条互不重叠的采购价和卖价期间。</p></div>
         {product ? <ProductDetailView product={product} today={new Date().toISOString().slice(0, 10)} /> : <Card><CardContent className="flex h-40 items-center justify-center text-sm text-muted-foreground">{error || "正在读取产品…"}</CardContent></Card>}
       </div>

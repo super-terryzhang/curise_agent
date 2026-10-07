@@ -1,4 +1,4 @@
-export const DATA_TABLES_PATH = "/dashboard/data-tables";
+export const DATA_TABLES_PATH = process.env.NEXT_PUBLIC_STANDALONE_DATA_PREPARATION === "true" ? "/prepare/tables" : "/dashboard/data-tables";
 export const LEGACY_DATA_TABLES_PATH = "/dashboard/settings/data-tables";
 
 export function isPathWithin(pathname: string, basePath: string): boolean {

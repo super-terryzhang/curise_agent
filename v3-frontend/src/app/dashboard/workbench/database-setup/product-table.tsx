@@ -9,6 +9,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { SetupProduct } from "@/lib/database-setup-api";
+import { PREPARATION_PATH } from "@/lib/data-preparation-routes";
 
 function display(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
@@ -43,7 +44,7 @@ export function ProductTable({ products }: { products: SetupProduct[] }) {
               <TableCell>{display(product.extensions.find((item) => item.label === "业务分类")?.value)}</TableCell>
               <TableCell>{product.status ? "启用" : "停用"}</TableCell>
               <TableCell className="text-right">
-                <Link className="text-xs font-medium text-primary hover:underline" href={`/dashboard/workbench/database-setup/products/${product.id}`}>查看</Link>
+                <Link className="text-xs font-medium text-primary hover:underline" href={`${PREPARATION_PATH}/products/${product.id}`}>查看</Link>
               </TableCell>
             </TableRow>
           ))}

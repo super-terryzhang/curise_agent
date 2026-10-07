@@ -18,6 +18,7 @@ import {
   formatTime,
 } from "@/lib/data-tables-view";
 import { DATA_TABLES_PATH } from "@/lib/dashboard-routes";
+import { STANDALONE_DATA_PREPARATION } from "@/lib/data-preparation-routes";
 import { CELL, SELECT_CLASS, ErrorNotice, Pager } from "./shared";
 
 export function TableList() {
@@ -125,9 +126,9 @@ export function TableList() {
     <div className="p-6 space-y-5 h-full overflow-auto">
       <a
         className="text-xs text-muted-foreground underline"
-        href="/dashboard/settings"
+        href={STANDALONE_DATA_PREPARATION ? "/prepare" : "/dashboard/settings"}
       >
-        返回设置中心
+        {STANDALONE_DATA_PREPARATION ? "返回数据整理" : "返回设置中心"}
       </a>
       <PageHeader
         title="数据表管理"
