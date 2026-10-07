@@ -7,8 +7,10 @@ from io import BytesIO
 from typing import Any
 
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Font, PatternFill, Protection
 from openpyxl.utils import get_column_letter
+from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -78,7 +80,11 @@ class ChoiceStore:
         for row, value in enumerate(values, 5):
             self.sheet.cell(row, column, value)
         letter = get_column_letter(column)
-        return f"'{SYSTEM_SHEET}'!${letter}$5:${letter}${4 + len(values)}"
+        name = f"import_choices_{column}"
+        self.sheet.parent.defined_names.add(
+            DefinedName(name, attr_text=f"'{SYSTEM_SHEET}'!${letter}$5:${letter}${4 + len(values)}")
+        )
+        return name
 
 
 def _setup_sheet(sheet, title: str, guidance: str, headers: list[str]) -> None:
@@ -124,6 +130,11 @@ def _add_list_validation(sheet, column: int, formula: str | None) -> None:
     validation.error = "请选择下拉列表中的有效值"
     validation.errorTitle = "选择无效"
     validation.showErrorMessage = True
+    validation.showInputMessage = True
+    validation.promptTitle = "请选择已配置选项"
+    validation.prompt = "点击单元格右侧箭头选择；没有所需选项时，先在页面维护选项，再下载新模板。"
+    validation.showDropDown = False
+    validation.errorStyle = "stop"
     sheet.add_data_validation(validation)
     letter = get_column_letter(column)
     validation.add(f"{letter}{DATA_START_ROW}:{letter}{DATA_START_ROW + INPUT_ROWS - 1}")
@@ -294,13 +305,13 @@ def build_product_workbook(
     _setup_sheet(
         product_sheet,
         "产品资料",
-        "每个产品一行；产品代码与港口用于识别唯一产品。空白表示保留原值，清空请填写 __CLEAR__。",
+        "每个产品一行，从第5行填写；新产品必填产品代码、港口、产品名称、状态、国家。下拉列请选值；更新时空白保留，清空填 __CLEAR__。",
         product_headers,
     )
     _setup_sheet(
         price_sheet,
         "价格记录",
-        "每个价格区间一行；同一产品、同一价格类型的日期区间不能重叠。",
+        "每个价格区间一行，从第5行填写；产品代码和港口与产品资料一致。价格类型选择采购价或卖价，日期用YYYY-MM-DD；同类型区间不能重叠。可只填一个工作表，另一个保留空白。",
         price_headers,
     )
     _unlock_and_format(product_sheet, len(product_headers), {1: "@"})
@@ -333,9 +344,18 @@ def build_product_workbook(
                     for option in field.config.get("options", [])
                     if option.get("active", True)
                 ]
-                _add_list_validation(
-                    product_sheet, column, choices.add(f"扩展_{field.id}", values)
-                )
+                if field.field_type == "single_select":
+                    _add_list_validation(
+                        product_sheet, column, choices.add(f"扩展_{field.id}", values)
+                    )
+                else:
+                    hint = DataValidation(type="custom", formula1="TRUE", allow_blank=True)
+                    hint.showInputMessage = True
+                    hint.promptTitle = "多个选项用分号分隔"
+                    hint.prompt = ("可选：" + "、".join(values) + "；多个选项用中文分号分隔。")[:255]
+                    product_sheet.add_data_validation(hint)
+                    letter = get_column_letter(column)
+                    hint.add(f"{letter}{DATA_START_ROW}:{letter}{DATA_START_ROW + INPUT_ROWS - 1}")
             elif field.field_type == "boolean":
                 _add_list_validation(
                     product_sheet, column, choices.add(f"布尔_{field.id}", ["是", "否"])
@@ -351,6 +371,38 @@ def build_product_workbook(
                     product_sheet.cell(row, column).number_format = "0.######"
     _add_list_validation(price_sheet, 2, choices.add("价格港口", master_choices["port"]))
     _add_price_validations(price_sheet, choices, _currencies(db))
+
+    guidance = {
+        "product_code": "文本，例如 P-001。与港口一起定位唯一产品；价格记录填写相同代码。",
+        "port": "选择已配置的启用港口。没有所需港口时，先在页面的上传选项中新增港口，再下载模板。",
+        "product_name": "产品名称。新产品必须填写；更新已有产品可留空保留原值。",
+        "supplier": "选择已配置的启用供应商；未指定可留空。",
+        "unit": "供应商供货单位，例如 KG、CT；填写文本。",
+        "category": "选择已配置的商品分类；可留空。",
+        "brand": "品牌名称；可留空。",
+        "status": "选择启用或停用。新产品必须填写。",
+        "country": "选择已配置的启用国家。新产品必须填写。",
+        "price_type": "选择采购价或卖价。两类价格独立校验。",
+        "amount": "填写数字，范围0至99999999.99；不能填公式。",
+        "currency": "币种，填写三个大写字母，例如 JPY；有已配置币种时可选择。",
+        "effective_from": "开始日期，例如2027-01-01；同一产品同类价格区间不能重叠。",
+        "effective_to": "结束日期，例如2027-01-31；不得早于开始日期。",
+    }
+    extension_by_key = {f"extension:{field.id}": field for field in catalog.extension_fields}
+    for sheet, contracts in ((product_sheet, catalog.product_contracts), (price_sheet, PRICE_FIELDS)):
+        for column, contract in enumerate(contracts, 1):
+            help_text = guidance.get(contract.key)
+            if help_text is None:
+                field = extension_by_key[contract.key]
+                options = [o["label"] for o in field.config.get("options", []) if o.get("active", True)]
+                help_text = f"字段类型：{field.field_type}。" + ("可选值：" + "、".join(options) if options else "按字段配置填写。")
+                if field.field_type == "multi_select":
+                    help_text += "多个选项用中文分号；分隔。"
+            sheet.cell(HEADER_ROW, column).comment = Comment(
+                ("必填。" if contract.required else "选填。") + help_text, "数据整理"
+            )
+            if contract.required:
+                sheet.cell(HEADER_ROW, column).font = Font(bold=True, color="9C0006")
 
     products, relations, anchors, periods = (
         _product_rows(db, catalog, product_ids) if include_existing else ([], {}, {}, [])

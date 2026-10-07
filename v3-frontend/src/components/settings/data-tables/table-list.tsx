@@ -153,6 +153,7 @@ export function TableList() {
       <p className="text-xs text-muted-foreground">
         核心业务字段保持原有流程；此处可为数据表增加和维护扩展信息。
       </p>
+      <p className="text-xs text-muted-foreground">归档会从启用列表移除，并保留数据与历史；可切换到“已归档”恢复。当前不提供永久删除；产品、供应商和订单的核心表保持锁定。</p>
       <ErrorNotice error={error} />
       {form && !disabled && (
         <form
@@ -245,7 +246,7 @@ export function TableList() {
             }}
           >
             <option value="active">启用</option>
-            <option value="archived">归档</option>
+            <option value="archived">已归档（可恢复）</option>
           </select>
         </label>
         <Button

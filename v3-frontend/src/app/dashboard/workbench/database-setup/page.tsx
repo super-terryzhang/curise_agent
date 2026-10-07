@@ -28,6 +28,7 @@ import {
 import { ProductTable } from "./product-table";
 import { DATA_TABLES_PATH } from "@/lib/dashboard-routes";
 import { STANDALONE_DATA_PREPARATION } from "@/lib/data-preparation-routes";
+import { TemplateGuide } from "@/app/prepare/template-guide";
 
 const STEPS = ["准备", "下载模板", "上传检查", "核对变更", "确认结果"] as const;
 
@@ -105,6 +106,7 @@ export interface DatabaseSetupViewProps {
   busy: boolean;
   error: string | null;
   selectedFile: File | null;
+  progress?: string;
   onStep: (step: number) => void;
   onFile: (file: File) => void;
   onDownload: (includeExisting: boolean) => void;
@@ -154,12 +156,13 @@ export function DatabaseSetupView(props: DatabaseSetupViewProps) {
               {[["数据库", status.database_name], ["字段版本", status.schema_version ?? "—"], ["启用字段", status.field_count], ["产品", status.product_count], ["价格区间", status.price_period_count]].map(([label, value]) => <div key={label} className="bg-background px-4 py-3"><div className="text-[11px] text-muted-foreground">{label}</div><div className="mt-1 text-sm font-semibold">{value}</div></div>)}
             </div>
             <div className="border-t pt-4">
-              <Link className="text-sm font-medium text-primary hover:underline" href={DATA_TABLES_PATH}>配置产品字段</Link>
+              <div className="flex flex-wrap gap-5"><Link className="text-sm font-medium text-primary hover:underline" href={DATA_TABLES_PATH}>配置产品字段</Link>{STANDALONE_DATA_PREPARATION && <Link href="/prepare/options" className="text-sm font-medium text-primary hover:underline">维护国家、港口和供应商选项</Link>}</div>
             </div>
           </>
         ) : step === 2 ? (
           <>
             <div><h2 className="text-base font-semibold">下载当前结构的模板</h2><p className="mt-1 text-xs text-muted-foreground">一个 Excel 包含“产品资料”和“价格记录”两个工作表，请勿改名或移动表头。</p></div>
+            {STANDALONE_DATA_PREPARATION && <TemplateGuide />}
             <div className="grid gap-3 sm:grid-cols-2">
               <button className="rounded-md border bg-background p-5 text-left hover:border-primary/40" onClick={() => props.onDownload(false)}><Download className="mb-3 h-5 w-5" /><div className="text-sm font-semibold">空白模板</div><div className="mt-1 text-xs text-muted-foreground">新增产品，或为同批新产品填写多个价格区间。</div></button>
               <button className="rounded-md border bg-background p-5 text-left hover:border-primary/40" onClick={() => props.onDownload(true)}><FileSpreadsheet className="mb-3 h-5 w-5" /><div className="text-sm font-semibold">包含现有数据</div><div className="mt-1 text-xs text-muted-foreground">更新已有产品或精确修改已有价格区间。</div></button>
@@ -169,22 +172,25 @@ export function DatabaseSetupView(props: DatabaseSetupViewProps) {
         ) : step === 3 ? (
           <>
             <div><h2 className="text-base font-semibold">上传并程序检查</h2><p className="mt-1 text-xs text-muted-foreground">选择一个 .xlsx 文件；发现阻止项时整批不会写入。</p></div>
+            <p className="text-xs text-muted-foreground">自动检查：模板版本与字段格式 → 必填项与可选值 → 产品重复 → 价格区间重叠 → 数据库已有记录。通过后还需核对并确认导入。</p>
             <label className="flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed bg-background p-6 text-center">
               {busy ? <Loader2 className="h-6 w-6 animate-spin" /> : <FileSpreadsheet className="h-6 w-6 text-muted-foreground" />}
               <span className="mt-3 text-sm font-medium">{selectedFile?.name || "选择 Excel 文件"}</span>
               <input className="hidden" type="file" accept=".xlsx" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) props.onFile(file); }} />
             </label>
+            {props.progress && <p role="status" className="text-sm text-muted-foreground">{props.progress}</p>}
             {batch && <Summary batch={batch} />}
+            {batch && !busy && <p className={batch.can_commit ? "text-sm text-emerald-700" : "text-sm text-destructive"}>{batch.can_commit ? `检查完成：${batch.total_rows} 行，${batch.counts.warning} 项提醒；可进入核对。` : `检查未通过：${batch.counts.block} 项阻止；请按下方原因修改原 Excel 后重新选择文件。`}</p>}
             {rows && <IssueList rows={rows} />}
             {rows && <Pagination page={rows.page} pages={rows.pages} busy={busy} onPage={props.onRowsPage} />}
-            <div className="flex justify-between border-t pt-4"><Button variant="outline" onClick={() => props.onStep(2)}>上一步</Button><Button disabled={!batch?.can_commit || !rows || busy} onClick={() => props.onStep(4)}>核对变更</Button></div>
+            <div className="flex justify-between border-t pt-4"><Button variant="outline" disabled={busy} onClick={() => props.onStep(2)}>上一步</Button><Button disabled={!batch?.can_commit || !rows?.can_commit || busy} onClick={() => props.onStep(4)}>核对变更</Button></div>
           </>
         ) : step === 4 && batch && rows ? (
           <>
             <div><h2 className="text-base font-semibold">核对变更</h2><p className="mt-1 text-xs text-muted-foreground">左侧是当前数据，右侧是导入后的数据；确认后整批一次写入。</p></div>
             <Summary batch={batch} /><Review rows={rows} />
             <Pagination page={rows.page} pages={rows.pages} busy={busy} onPage={props.onRowsPage} />
-            <div className="flex justify-between border-t pt-4"><Button variant="outline" onClick={() => props.onStep(3)}>返回检查</Button><Button disabled={!batch.can_commit || busy} onClick={props.onCommit}>确认导入</Button></div>
+            <div className="flex justify-between border-t pt-4"><Button variant="outline" disabled={busy} onClick={() => props.onStep(3)}>返回检查</Button><Button disabled={!batch.can_commit || !rows.can_commit || busy} onClick={props.onCommit}>确认导入</Button></div>
           </>
         ) : (
           <>
@@ -210,6 +216,7 @@ export default function DatabaseSetupPage() {
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState("");
   const request = useRef(0);
 
   const loadProducts = async (q = query, page = 1) => {
@@ -236,14 +243,17 @@ export default function DatabaseSetupPage() {
     finally { setBusy(false); }
   };
   const upload = async (nextFile: File) => {
-    setFile(nextFile); setBusy(true); setError(null); setRows(null);
+    setFile(nextFile); setBusy(true); setError(null); setRows(null); setBatch(null); setResult(null);
+    setProgress("正在上传并读取 Excel…");
     try {
       const uploaded = await uploadDatabaseWorkbook(nextFile);
+      setProgress("正在检查字段、可选值、重复产品和价格区间…");
       const checked = await validateDatabaseImport(uploaded.id);
       setBatch(checked);
+      setProgress("正在读取逐行检查结果…");
       setRows(await getDatabaseImportRows(uploaded.id));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "检查失败，文件仍保留"); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setProgress(""); }
   };
   const commit = async () => {
     if (!batch) return;
@@ -273,7 +283,7 @@ export default function DatabaseSetupPage() {
       <div className="mx-auto max-w-[1600px] px-6 py-6">
         {!STANDALONE_DATA_PREPARATION && <button className="mb-2 flex items-center gap-1 text-xs text-muted-foreground" onClick={() => router.push("/dashboard/workbench")}><ArrowLeft className="h-3.5 w-3.5" />返回工作台</button>}
         <div className="mb-4"><h1 className="text-lg font-semibold">产品上传与数据</h1><p className="mt-1 text-xs text-muted-foreground">配置字段后，通过一个 Excel 整批准备产品资料和多个价格区间。</p></div>
-        {status ? <DatabaseSetupView step={step} status={status} batch={batch} rows={rows} result={result} busy={busy} error={error} selectedFile={file} onStep={setStep} onFile={(value) => void upload(value)} onDownload={(value) => void saveBlob(value)} onRowsPage={(value) => void loadRowsPage(value)} onCommit={() => void commit()} onRollback={() => void rollback()} /> : <Card><CardContent className="flex h-40 items-center justify-center text-sm text-muted-foreground">{error || "正在读取准备状态…"}</CardContent></Card>}
+        {status ? <DatabaseSetupView step={step} status={status} batch={batch} rows={rows} result={result} busy={busy} error={error} progress={progress} selectedFile={file} onStep={setStep} onFile={(value) => void upload(value)} onDownload={(value) => void saveBlob(value)} onRowsPage={(value) => void loadRowsPage(value)} onCommit={() => void commit()} onRollback={() => void rollback()} /> : <Card><CardContent className="flex h-40 items-center justify-center text-sm text-muted-foreground">{error || "正在读取准备状态…"}</CardContent></Card>}
         <section className="mt-6 space-y-3">
           <div className="flex items-end justify-between gap-3"><div><h2 className="text-base font-semibold">产品数据</h2><p className="mt-1 text-xs text-muted-foreground">每个“产品代码 + 港口”一行；点击查看按时间排列的价格区间。</p></div><div className="flex gap-2"><Input className="h-8 w-64" value={query} placeholder="搜索产品代码或名称" onChange={(event) => setQuery(event.target.value)} /><Button size="sm" variant="outline" onClick={() => void loadProducts()}>查询</Button></div></div>
           <ProductTable products={products?.items || []} />

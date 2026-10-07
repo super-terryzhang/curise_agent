@@ -120,6 +120,8 @@ def test_blank_template_has_two_business_sheets_hidden_manifest_and_formats(db):
         "__价格区间版本",
     ]
     assert "每个产品一行" in wb[PRODUCT_SHEET]["A2"].value
+    assert "第5行" in wb[PRODUCT_SHEET]["A2"].value
+    assert "必填" in wb[PRODUCT_SHEET]["A4"].comment.text
     assert "每个价格区间一行" in wb[PRICE_SHEET]["A2"].value
     assert wb[PRODUCT_SHEET][f"A{DATA_START_ROW}"].number_format == "@"
     assert wb[PRICE_SHEET][f"D{DATA_START_ROW}"].number_format == "0.00"
@@ -148,6 +150,10 @@ def test_template_uses_configured_choices_and_does_not_invent_currencies(db):
     product = wb[PRODUCT_SHEET]
     price = wb[PRICE_SHEET]
     assert validation_for(product, "B").type == "list"
+    port_validation = validation_for(product, "B")
+    assert port_validation.formula1 in wb.defined_names
+    assert "_系统信息" in wb.defined_names[port_validation.formula1].attr_text
+    assert port_validation.showDropDown is False
     assert validation_for(product, "H").type == "list"
     assert validation_for(product, "I").type == "list"
     assert validation_for(price, "C").type == "list"
