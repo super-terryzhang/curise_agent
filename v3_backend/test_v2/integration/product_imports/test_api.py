@@ -99,6 +99,7 @@ def test_complete_api_flow_and_commit_retry(
     assert payload["code"] == "API-1"
     assert payload["price_periods"][0]["amount"] == 88.0
     assert payload["extensions"][0]["label"] == "业务分类"
+    assert payload["extensions"][0]["value"] == "中标产品"
     assert "field_id" not in payload["extensions"][0]
 
 

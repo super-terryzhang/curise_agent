@@ -14,6 +14,7 @@ from apps.http._deps import Admin, DbDep
 from domains.dynamic_data.schemas import Actor
 from domains.product_imports import service
 from domains.product_imports.commit import ImportConflict
+from domains.product_imports.models import ImportBatch
 from infrastructure.config import settings
 
 logger = logging.getLogger(__name__)
@@ -105,8 +106,11 @@ async def upload_import(db: DbDep, user: Admin, file: UploadFile = File(...)):
 
 @router.post("/imports/{batch_id}/validate")
 def validate_import(batch_id: UUID, db: DbDep, user: Admin):
-    preview = service.validate_batch(db, batch_id, user.id)
-    return preview.model_dump(mode="json")
+    service.validate_batch(db, batch_id, user.id)
+    batch = db.get(ImportBatch, batch_id)
+    if batch is None:
+        raise ValueError("导入批次不存在")
+    return service.batch_summary(batch)
 
 
 @router.get("/imports/{batch_id}/rows")

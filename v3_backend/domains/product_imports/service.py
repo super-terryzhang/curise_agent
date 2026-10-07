@@ -114,8 +114,12 @@ def list_batch_rows(
                 "action": row.action,
                 "product_code": row.product_code_normalized,
                 "port_id": row.port_id,
-                "before_values": _public_values(row.snapshot.get("before"), field_by_id),
-                "normalized_values": _public_values(row.normalized_values, field_by_id),
+                "before_values": _public_values(
+                    db, row.snapshot.get("before"), field_by_id
+                ),
+                "normalized_values": _public_values(
+                    db, row.normalized_values, field_by_id
+                ),
                 "issues": row.issues,
             }
             for row in rows
@@ -123,21 +127,77 @@ def list_batch_rows(
     }
 
 
-def _public_values(raw: dict | None, field_by_id: dict[str, DataField]) -> dict | None:
+CORE_LABELS = {
+    "code": "产品代码",
+    "port_id": "港口",
+    "product_name_en": "产品名称",
+    "supplier_id": "供应商",
+    "unit": "单位",
+    "category_id": "商品分类",
+    "brand": "品牌",
+    "status": "状态",
+    "country_id": "国家",
+}
+PRICE_LABELS = {
+    "product_code": "产品代码",
+    "port_id": "港口",
+    "price_type": "价格类型",
+    "amount": "价格",
+    "currency": "币种",
+    "effective_from": "开始日期",
+    "effective_to": "结束日期",
+}
+
+
+def _extension_display(field: DataField, value):
+    options = {
+        str(option.get("id")): option.get("label")
+        for option in field.config.get("options", [])
+    }
+    if field.field_type == "single_select":
+        return options.get(str(value), value)
+    if field.field_type == "multi_select" and isinstance(value, list):
+        return [options.get(str(item), item) for item in value]
+    return value
+
+
+def _reference_display(db: Session, key: str, value):
+    models = {
+        "port_id": Port,
+        "supplier_id": Supplier,
+        "category_id": Category,
+        "country_id": Country,
+    }
+    model = models.get(key)
+    return _name(db, model, value) if model and value is not None else value
+
+
+def _public_values(
+    db: Session, raw: dict | None, field_by_id: dict[str, DataField]
+) -> dict | None:
     if raw is None:
         return None
     values = dict(raw)
+    core = values.pop("core_values", None)
+    if core is not None:
+        values["产品资料"] = {
+            CORE_LABELS.get(key, key): _reference_display(db, key, value)
+            for key, value in core.items()
+        }
     extensions = values.pop("extension_values", None)
     if extensions is not None:
         values["extensions"] = [
             {
                 "label": field_by_id[field_id].label,
                 "type": field_by_id[field_id].field_type,
-                "value": value,
+                "value": _extension_display(field_by_id[field_id], value),
             }
             for field_id, value in extensions.items()
             if field_id in field_by_id
         ]
+    if "port_id" in values:
+        values["港口"] = _reference_display(db, "port_id", values.pop("port_id"))
+    values = {PRICE_LABELS.get(key, key): value for key, value in values.items()}
     return values
 
 
@@ -204,7 +264,9 @@ def _product_summary(db: Session, product: Product) -> dict:
             {
                 "label": field.label,
                 "type": field.field_type,
-                "value": extension_values.get(str(field.id)),
+                "value": _extension_display(
+                    field, extension_values.get(str(field.id))
+                ),
             }
             for field in fields
         ],
@@ -249,7 +311,7 @@ def get_product(db: Session, product_id: int) -> dict:
             {
                 "label": field.label,
                 "type": field.field_type,
-                "value": values.get(str(field.id)),
+                "value": _extension_display(field, values.get(str(field.id))),
             }
             for field in fields
         ],
