@@ -11,11 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from domains.dynamic_data import PRODUCT_TABLE_ID
 from domains.dynamic_data import models as dynamic_models
 from domains.masterdata import models as master_models
 from domains.masterdata import price_periods as master_price_periods
 from domains.masterdata.schemas import ProductPricePeriodCreate, ProductPricePeriodUpdate
-from scripts.seed_clean_product_fields import PRODUCT_TABLE_ID
 
 from .contracts import CommitResult, RollbackResult
 from .models import ImportBatch, ImportChange, ImportRow, utc_now

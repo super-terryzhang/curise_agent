@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from domains.dynamic_data import PRODUCT_TABLE_ID
 from domains.dynamic_data import errors as dynamic_errors
 from domains.dynamic_data import models as dynamic_models
-from scripts.seed_clean_product_fields import PRODUCT_TABLE_ID
 
 from .contracts import WorkbookField
 

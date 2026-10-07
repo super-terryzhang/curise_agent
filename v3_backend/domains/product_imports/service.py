@@ -8,10 +8,10 @@ from uuid import UUID
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from domains.dynamic_data import PRODUCT_TABLE_ID
 from domains.dynamic_data import models as dynamic_models
 from domains.masterdata import models as master_models
 from domains.masterdata import price_periods as master_price_periods
-from scripts.seed_clean_product_fields import PRODUCT_TABLE_ID
 
 from .commit import commit_batch, rollback_batch
 from .contracts import ImportIssue
