@@ -57,8 +57,8 @@ def test_fresh_install_audit_refusal_and_pollution_detection(disposable_database
             admin_email="clean-admin@example.test",
             admin_password="LocalOnly!2026-Change",
         )
-        assert result["alembic_head"] == "0036_unified_data_tables"
-        assert result["model_tables"] == 51
+        assert result["alembic_head"] == "0037_temporary_product_import"
+        assert result["model_tables"] == 54
 
         audit = audit_database(
             engine,
@@ -67,9 +67,10 @@ def test_fresh_install_audit_refusal_and_pollution_detection(disposable_database
         )
         assert audit == {
             "database": database,
-            "alembic_head": "0036_unified_data_tables",
-            "tables": 53,
+            "alembic_head": "0037_temporary_product_import",
+            "tables": 56,
             "system_catalog_rows": 3,
+            "configured_field_rows": 1,
             "admin_rows": 1,
             "business_rows": 0,
         }

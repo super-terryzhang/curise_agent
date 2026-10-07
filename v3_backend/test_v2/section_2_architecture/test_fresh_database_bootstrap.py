@@ -41,6 +41,9 @@ EXPECTED_MODEL_TABLES = {
     "v3_document_folders",
     "v3_inquiries",
     "v3_inquiry_suppliers",
+    "v3_import_batches",
+    "v3_import_changes",
+    "v3_import_rows",
     "v3_line_bind_tokens",
     "v3_line_event_log",
     "v3_line_users",
@@ -112,26 +115,36 @@ def test_bootstrap_system_catalog_uses_stable_ids():
 
 
 def test_audit_snapshot_accepts_only_bootstrap_rows():
-    from scripts.audit_fresh_database import evaluate_snapshot, expected_tables
+    from scripts.audit_fresh_database import (
+        evaluate_snapshot,
+        expected_business_classification_snapshot,
+        expected_tables,
+    )
 
     counts = dict.fromkeys(expected_tables(), 0)
-    counts.update(alembic_version=1, v3_data_tables=3, users=1)
+    counts.update(alembic_version=1, v3_data_tables=3, v3_data_fields=1, users=1)
 
     issues = evaluate_snapshot(
         actual_tables=set(counts),
         row_counts=counts,
-        alembic_heads=["0036_unified_data_tables"],
+        alembic_heads=["0037_temporary_product_import"],
         system_keys=["orders", "products", "suppliers"],
+        system_table_versions={"orders": 1, "products": 2, "suppliers": 1},
+        classification_fields=[expected_business_classification_snapshot()],
         users=[("clean-admin@example.com", "superadmin", True, True)],
         expected_admin_email="clean-admin@example.com",
-        expected_head="0036_unified_data_tables",
+        expected_head="0037_temporary_product_import",
     )
 
     assert issues == []
 
 
 def test_audit_snapshot_names_every_unexpected_business_row():
-    from scripts.audit_fresh_database import evaluate_snapshot, expected_tables
+    from scripts.audit_fresh_database import (
+        evaluate_snapshot,
+        expected_business_classification_snapshot,
+        expected_tables,
+    )
 
     counts = dict.fromkeys(expected_tables(), 0)
     counts.update(
@@ -147,6 +160,8 @@ def test_audit_snapshot_names_every_unexpected_business_row():
         row_counts=counts,
         alembic_heads=["0036_unified_data_tables"],
         system_keys=["orders", "products", "suppliers"],
+        system_table_versions={"orders": 1, "products": 2, "suppliers": 1},
+        classification_fields=[expected_business_classification_snapshot()],
         users=[("clean-admin@example.com", "superadmin", True, True)],
         expected_admin_email="clean-admin@example.com",
         expected_head="0036_unified_data_tables",

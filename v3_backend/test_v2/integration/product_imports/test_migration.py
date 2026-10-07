@@ -1,10 +1,13 @@
 """0036→0037 must preserve business rows while installing import storage."""
 
 from pathlib import Path
+from uuid import UUID
 
+import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from infrastructure.config import settings
 from infrastructure.db.base import Base
@@ -26,6 +29,7 @@ def install_0036_shape(engine):
     )
     with engine.begin() as connection:
         connection.execute(text("DROP INDEX IF EXISTS uq_products_active_normalized_code_port"))
+        connection.execute(text("DROP INDEX IF EXISTS uq_data_fields_active_normalized_label"))
         connection.execute(text("ALTER TABLE v3_product_price_periods DROP COLUMN IF EXISTS revision"))
         country_id = connection.scalar(
             text("INSERT INTO countries (name,status) VALUES ('日本',true) RETURNING id")
@@ -69,6 +73,9 @@ def test_0036_to_0037_preserves_rows_and_round_trips(pg_isolated_url, monkeypatc
     assert "uq_products_active_normalized_code_port" in {
         index["name"] for index in inspector.get_indexes("products")
     }
+    assert "uq_data_fields_active_normalized_label" in {
+        index["name"] for index in inspector.get_indexes("v3_data_fields")
+    }
     with engine.connect() as connection:
         assert connection.scalar(
             text("SELECT product_name_en FROM products WHERE id=:id"), {"id": product_id}
@@ -76,6 +83,50 @@ def test_0036_to_0037_preserves_rows_and_round_trips(pg_isolated_url, monkeypatc
         assert connection.scalar(text("SELECT revision FROM v3_product_price_periods")) == 1
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == (
             "0037_temporary_product_import"
+        )
+
+    table_id = UUID("025588dd-ae63-5607-9e78-1179a500ed6e")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO v3_data_tables "
+                "(id,name,table_kind,system_key,status,schema_version,created_by,updated_by,"
+                "created_at,updated_at) "
+                "VALUES (:id,'产品','system','products','active',1,0,0,now(),now())"
+            ),
+            {"id": table_id},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO v3_data_fields "
+                "(id,table_id,label,field_type,required,\"unique\",config,sort_order,status,"
+                "schema_version,created_at,updated_at) VALUES "
+                "('10000000-0000-0000-0000-000000000001',:table,'Business Class','text',"
+                "false,false,'{}',0,'active',1,now(),now())"
+            ),
+            {"table": table_id},
+        )
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO v3_data_fields "
+                "(id,table_id,label,field_type,required,\"unique\",config,sort_order,status,"
+                "schema_version,created_at,updated_at) VALUES "
+                "('10000000-0000-0000-0000-000000000002',:table,' business class ',"
+                "'text',false,false,'{}',1,'active',1,now(),now())"
+            ),
+            {"table": table_id},
+        )
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO v3_data_fields "
+                "(id,table_id,label,field_type,required,\"unique\",config,sort_order,status,"
+                "schema_version,created_at,updated_at) VALUES "
+                "('10000000-0000-0000-0000-000000000003',:table,' business class ','text',"
+                "false,false,'{}',2,'archived',1,now(),now())"
+            ),
+            {"table": table_id},
         )
 
     command.downgrade(config, "0036_unified_data_tables")

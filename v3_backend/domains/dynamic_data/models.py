@@ -17,6 +17,8 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    and_,
+    func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -120,6 +122,16 @@ class DataField(Identity, Timestamps, Base):
     @property
     def system_key(self) -> None:
         return None
+
+
+Index(
+    "uq_data_fields_active_normalized_label",
+    DataField.table_id,
+    func.lower(func.trim(DataField.label)),
+    unique=True,
+    postgresql_where=and_(DataField.status == "active"),
+    sqlite_where=and_(DataField.status == "active"),
+)
 
 
 class DataRecord(Identity, Timestamps, Base):

@@ -29,13 +29,13 @@ def table(db):
     return s.create_table(db, TableCreate(id=uuid4(), name="生命周期"), actor=A)
 
 
-def field(db, t, kind="text", **kwargs):
+def field(db, t, kind="text", label="字段", **kwargs):
     return s.create_field(
         db,
         t.id,
         FieldCreate(
             id=uuid4(),
-            label="字段",
+            label=label,
             field_type=kind,
             expected_schema_version=db.get(DataTable, t.id).schema_version,
             **kwargs,
@@ -137,6 +137,19 @@ def test_field_restore_rechecks_required_and_clears_display_on_archive(data_db):
     with pytest.raises(ValidationError):
         s.set_field_status(db, t.id, f.id, schema(db, t), active=True, actor=A)
     assert db.get(DataField, f.id).status == "archived"
+
+
+def test_field_restore_rejects_an_active_normalized_label_duplicate(data_db):
+    db = data_db
+    t = table(db)
+    archived = field(db, t, label="业务分类")
+    s.set_field_status(db, t.id, archived.id, schema(db, t), active=False, actor=A)
+    field(db, t, label=" 业务分类 ")
+
+    with pytest.raises(Conflict, match="字段名称"):
+        s.set_field_status(db, t.id, archived.id, schema(db, t), active=True, actor=A)
+
+    assert db.get(DataField, archived.id).status == "archived"
 
 
 def test_table_can_restore_without_fields_but_record_cannot(data_db):

@@ -18,6 +18,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect
 from sqlalchemy.engine import URL, Engine, make_url
+from sqlalchemy.orm import Session
 
 from infrastructure.db.base import Base
 from infrastructure.db.model_registry import import_all_models
@@ -156,6 +157,12 @@ def bootstrap_database(
                 for table_id, key, name in SYSTEM_TABLES
             ],
         )
+
+        from scripts.seed_clean_product_fields import seed_product_business_classification
+
+        with Session(bind=connection, join_transaction_mode="create_savepoint") as db:
+            seed_product_business_classification(db, actor_id=0)
+            db.commit()
 
         if admin_email and admin_password:
             from infrastructure.security import hash_password

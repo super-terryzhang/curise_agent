@@ -19,11 +19,42 @@ from scripts.bootstrap_fresh_database import (
 )
 
 EXTRA_TABLES = {"alembic_version", "v3_product_validity_migration_audit"}
-ALLOWED_BOOTSTRAP_TABLES = {"alembic_version", "v3_data_tables", "users"}
+ALLOWED_BOOTSTRAP_TABLES = {
+    "alembic_version",
+    "v3_data_fields",
+    "v3_data_tables",
+    "users",
+}
 
 
 class AuditFailed(RuntimeError):
     pass
+
+
+def expected_business_classification_snapshot() -> dict[str, object]:
+    from scripts.seed_clean_product_fields import (
+        BUSINESS_CLASSIFICATION_FIELD_ID,
+        BUSINESS_CLASSIFICATION_OPTIONS,
+        PRODUCT_TABLE_ID,
+    )
+
+    return {
+        "id": str(BUSINESS_CLASSIFICATION_FIELD_ID),
+        "table_id": str(PRODUCT_TABLE_ID),
+        "label": "业务分类",
+        "field_type": "single_select",
+        "required": False,
+        "unique": False,
+        "default_value": str(BUSINESS_CLASSIFICATION_OPTIONS[-1][0]),
+        "config": {
+            "options": [
+                {"id": str(option_id), "label": label, "active": True}
+                for option_id, label in BUSINESS_CLASSIFICATION_OPTIONS
+            ]
+        },
+        "status": "active",
+        "schema_version": 2,
+    }
 
 
 def expected_tables() -> set[str]:
@@ -37,6 +68,8 @@ def evaluate_snapshot(
     row_counts: Mapping[str, int],
     alembic_heads: Sequence[str],
     system_keys: Sequence[str],
+    system_table_versions: Mapping[str, int],
+    classification_fields: Sequence[Mapping[str, object]],
     users: Sequence[tuple[str, str, bool, bool]],
     expected_admin_email: str | None,
     expected_head: str,
@@ -63,6 +96,20 @@ def evaluate_snapshot(
         issues.append(
             "v3_data_tables must contain exactly "
             f"{len(SYSTEM_TABLES)} rows, found {row_counts.get('v3_data_tables', 0)}"
+        )
+    expected_versions = {"orders": 1, "products": 2, "suppliers": 1}
+    if dict(system_table_versions) != expected_versions:
+        issues.append(
+            f"System table versions must be {expected_versions!r}, "
+            f"found {dict(system_table_versions)!r}"
+        )
+    expected_field = expected_business_classification_snapshot()
+    if list(classification_fields) != [expected_field]:
+        issues.append("Product business classification fixed configuration does not match")
+    if row_counts.get("v3_data_fields") != 1:
+        issues.append(
+            "v3_data_fields must contain exactly 1 configured field, "
+            f"found {row_counts.get('v3_data_fields', 0)}"
         )
 
     if expected_admin_email:
@@ -114,6 +161,44 @@ def audit_database(
             if "v3_data_tables" in actual_tables
             else []
         )
+        system_table_versions = (
+            {
+                row.system_key: row.schema_version
+                for row in connection.execute(
+                    sa.text(
+                        "SELECT system_key, schema_version FROM v3_data_tables "
+                        "WHERE table_kind = 'system' ORDER BY system_key"
+                    )
+                )
+            }
+            if "v3_data_tables" in actual_tables
+            else {}
+        )
+        classification_fields = (
+            [
+                {
+                    "id": str(row.id),
+                    "table_id": str(row.table_id),
+                    "label": row.label,
+                    "field_type": row.field_type,
+                    "required": row.required,
+                    "unique": row.unique,
+                    "default_value": row.default_value,
+                    "config": row.config,
+                    "status": row.status,
+                    "schema_version": row.schema_version,
+                }
+                for row in connection.execute(
+                    sa.text(
+                        "SELECT id, table_id, label, field_type, required, \"unique\", "
+                        "default_value, config, status, schema_version "
+                        "FROM v3_data_fields ORDER BY id"
+                    )
+                )
+            ]
+            if "v3_data_fields" in actual_tables
+            else []
+        )
         users = (
             [
                 (row.email, row.role, row.is_active, row.is_default_password)
@@ -134,6 +219,8 @@ def audit_database(
         row_counts=row_counts,
         alembic_heads=alembic_heads,
         system_keys=system_keys,
+        system_table_versions=system_table_versions,
+        classification_fields=classification_fields,
         users=users,
         expected_admin_email=expected_admin_email,
         expected_head=expected_head,
@@ -145,6 +232,7 @@ def audit_database(
         "alembic_head": expected_head,
         "tables": len(actual_tables),
         "system_catalog_rows": row_counts["v3_data_tables"],
+        "configured_field_rows": row_counts["v3_data_fields"],
         "admin_rows": row_counts["users"],
         "business_rows": 0,
     }

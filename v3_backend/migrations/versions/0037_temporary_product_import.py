@@ -30,6 +30,13 @@ def upgrade():
         unique=True,
         postgresql_where=sa.text("status AND code IS NOT NULL AND port_id IS NOT NULL"),
     )
+    op.create_index(
+        "uq_data_fields_active_normalized_label",
+        "v3_data_fields",
+        ["table_id", sa.text("lower(btrim(label))")],
+        unique=True,
+        postgresql_where=sa.text("status = 'active'"),
+    )
     op.create_table(
         "v3_import_batches",
         sa.Column("id", sa.Uuid(), primary_key=True),
@@ -133,6 +140,6 @@ def downgrade():
     op.drop_table("v3_import_rows")
     op.drop_index("ix_import_batches_user_created", table_name="v3_import_batches")
     op.drop_table("v3_import_batches")
+    op.drop_index("uq_data_fields_active_normalized_label", table_name="v3_data_fields")
     op.drop_index("uq_products_active_normalized_code_port", table_name="products")
     op.drop_column("v3_product_price_periods", "revision")
-

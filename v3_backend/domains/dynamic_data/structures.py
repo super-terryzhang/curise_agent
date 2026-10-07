@@ -43,6 +43,23 @@ def bump(table: DataTable, actor: Actor) -> None:
     table.updated_by = actor.id
 
 
+def ensure_unique_active_field_label(
+    db: Session, table_id: UUID, label: str, *, exclude_field_id: UUID | None = None
+) -> None:
+    query = select(DataField.id).where(
+        DataField.table_id == table_id,
+        DataField.status == "active",
+        func.lower(func.trim(DataField.label)) == label.strip().lower(),
+    )
+    if exclude_field_id is not None:
+        query = query.where(DataField.id != exclude_field_id)
+    if db.scalar(query) is not None:
+        raise Conflict(
+            "DUPLICATE_FIELD_LABEL",
+            "同一数据表中启用字段的字段名称不能重复（忽略首尾空格和大小写）",
+        )
+
+
 def _retry(db, model, entity_type, entity_id, table_id, request, actor):
     row = db.get(model, entity_id)
     if row is None:
@@ -229,6 +246,7 @@ def create_field(db: Session, table_id: UUID, body: FieldCreate, *, actor: Actor
             fields = table_fields(db, table_id)
             if len(fields) >= MAX_FIELDS:
                 raise ValidationError("FIELD_LIMIT", "每张表最多 100 个字段（含归档字段）")
+            ensure_unique_active_field_label(db, table_id, definition.label)
             records = _validate_existing(db, table_id, definition)
             bump(table, actor)
             row = DataField(
@@ -281,6 +299,9 @@ def update_field(
             raise ValidationError("FIELD_ARCHIVED", "字段已归档，请先恢复")
         current = FieldResponse.model_validate(initial)
         definition = validate_field_definition(body, current=current)
+        ensure_unique_active_field_label(
+            db, table_id, definition.label, exclude_field_id=field_id
+        )
         if table.table_kind == "system" and definition.field_type == "link":
             raise ValidationError(
                 "SYSTEM_LINK_FORBIDDEN", "系统数据表的扩展字段暂不支持关联记录"

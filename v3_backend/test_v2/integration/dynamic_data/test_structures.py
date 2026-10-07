@@ -161,7 +161,7 @@ def test_type_target_and_display_rules(data_db):
     db = data_db
     t, target = table(db), table(db, "目标")
     f = field(db, t.id)
-    n = field(db, t.id, kind="number")
+    n = field(db, t.id, label="数值", kind="number")
     with pytest.raises(ValidationError):
         service().update_table(
             db, t.id, TableUpdate(display_field_id=n.id, expected_schema_version=3), actor=ADMIN
@@ -253,6 +253,28 @@ def test_field_limit_includes_archived_fields(data_db):
         field(db, t.id)
     assert db.get(DataTable, t.id).schema_version == 1
     assert db.scalar(select(func.count()).select_from(DataField)) == 100
+
+
+def test_active_field_labels_are_unique_after_trimming_and_casefolding(data_db):
+    db = data_db
+    t = table(db)
+    first = field(db, t.id, label="Business Class")
+
+    with pytest.raises(Conflict, match="字段名称"):
+        field(db, t.id, label=" business class ")
+
+    second = field(db, t.id, label="另一个字段")
+    with pytest.raises(Conflict, match="字段名称"):
+        service().update_field(
+            db,
+            t.id,
+            second.id,
+            FieldUpdate(label=" BUSINESS CLASS ", expected_schema_version=3),
+            actor=ADMIN,
+        )
+
+    assert db.get(DataField, first.id).label == "Business Class"
+    assert db.get(DataField, second.id).label == "另一个字段"
 
 
 def test_option_deactivation_preserves_but_used_option_removal_rejects(data_db):

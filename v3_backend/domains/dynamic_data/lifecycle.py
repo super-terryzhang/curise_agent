@@ -29,7 +29,7 @@ from .schemas import (
     SchemaAction,
     TableResponse,
 )
-from .structures import bump, check_version
+from .structures import bump, check_version, ensure_unique_active_field_label
 from .validation import normalize_record
 
 
@@ -200,6 +200,10 @@ def set_field_status(
         if field.status == desired:
             return FieldResponse.model_validate(field)
         before = FieldResponse.model_validate(field).model_dump(mode="json")
+        if active:
+            ensure_unique_active_field_label(
+                db, table_id, field.label, exclude_field_id=field_id
+            )
         field.status = desired
         if not active and table.display_field_id == field_id:
             table.display_field_id = None
