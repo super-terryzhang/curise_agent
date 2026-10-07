@@ -35,6 +35,7 @@ from apps.http.auth import router as auth_router
 from apps.http.chat import router as chat_router
 from apps.http.data_tables import router as data_tables_router
 from apps.http.data_upload import router as data_upload_router
+from apps.http.database_setup import router as database_setup_router
 from apps.http.document_folders import router as document_folders_router
 from apps.http.documents import router as documents_router
 from apps.http.excel import router as excel_router
@@ -131,6 +132,7 @@ app.include_router(settings_phase6_stubs_router, prefix="/api")
 app.include_router(excel_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(data_upload_router, prefix="/api")
+app.include_router(database_setup_router, prefix="/api")
 app.include_router(data_tables_router, prefix="/api")
 app.include_router(artifacts_router, prefix="/api")
 app.include_router(line_bind_router, prefix="/api")

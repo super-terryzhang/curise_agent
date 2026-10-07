@@ -7,8 +7,24 @@ from pathlib import Path
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
+from sqlalchemy import text
 
 from infrastructure.config import settings
+
+
+def verify_database_setup_target(engine) -> None:
+    """Fail closed if the temporary setup module points anywhere but its clean DB."""
+    if not settings.TEMP_DATABASE_SETUP_ENABLED:
+        return
+    if settings.TEMP_DATABASE_SETUP_EXPECTED_DATABASE != "cruise_v3_clean":
+        raise RuntimeError("Temporary database setup expected clean database is invalid")
+    try:
+        with engine.connect() as connection:
+            actual = connection.scalar(text("SELECT current_database()"))
+    except Exception:
+        raise RuntimeError("Temporary database setup could not verify clean database") from None
+    if actual != "cruise_v3_clean":
+        raise RuntimeError("Temporary database setup must use the exact clean database")
 
 
 def verify_schema(engine) -> None:
@@ -45,6 +61,10 @@ def verify_schema(engine) -> None:
 @asynccontextmanager
 async def lifespan(app):
     recovery_task = None
+    if settings.TEMP_DATABASE_SETUP_ENABLED:
+        from infrastructure.db.engine import engine
+
+        verify_database_setup_target(engine)
     if settings.ENV in ("production", "staging"):
         from infrastructure.db.engine import engine
 

@@ -120,6 +120,8 @@ class Settings(BaseSettings):
 
     # ─── Feature flags ─────────────────────────────────────────
     CUSTOM_DATA_TABLES_ENABLED: bool = False
+    TEMP_DATABASE_SETUP_ENABLED: bool = False
+    TEMP_DATABASE_SETUP_EXPECTED_DATABASE: str = "cruise_v3_clean"
     SCHEMA_RELEASE_TRANSITION: Literal["", "unified_data_tables_0034_0036"] = ""
     # When true (default), POST /documents/{id}/create-order returns as
     # soon as the Order row exists (status="matching") and the Gemini

@@ -297,6 +297,16 @@ def _normalize_product_row(
         "product_revision": existing.revision if existing else None,
         "extension_revision": anchor.revision if anchor else 0,
         "schema_version": catalog.table.schema_version,
+        "before": (
+            {
+                "core_values": {
+                    key: getattr(existing, key) for key in core
+                },
+                "extension_values": existing_extensions,
+            }
+            if existing
+            else None
+        ),
     }
     return key, existing, normalized, action, issues, snapshot
 
@@ -382,7 +392,18 @@ def _normalize_price_row(
             )
             if comparison in {"skip", "update"}:
                 action, target = comparison, period
-                snapshot = {"period_revision": period.revision}
+                snapshot = {
+                    "period_revision": period.revision,
+                    "before": {
+                        "product_code": code,
+                        "port_id": port_id,
+                        "price_type": period.price_type,
+                        "amount": str(period.amount),
+                        "currency": period.currency,
+                        "effective_from": period.effective_from.isoformat(),
+                        "effective_to": period.effective_to.isoformat(),
+                    },
+                }
                 break
             if comparison == "overlap":
                 issues.append(
@@ -422,7 +443,18 @@ def _normalize_price_row(
                 },
             )
             action = "skip" if comparison == "skip" else "update"
-            snapshot = {"period_revision": exported_period.revision}
+            snapshot = {
+                "period_revision": exported_period.revision,
+                "before": {
+                    "product_code": code,
+                    "port_id": port_id,
+                    "price_type": exported_period.price_type,
+                    "amount": str(exported_period.amount),
+                    "currency": exported_period.currency,
+                    "effective_from": exported_period.effective_from.isoformat(),
+                    "effective_to": exported_period.effective_to.isoformat(),
+                },
+            }
             if raw.get("__period_revision") not in (None, ""):
                 try:
                     exported_revision = int(raw["__period_revision"])
@@ -439,6 +471,8 @@ def validate_batch(db: Session, batch_id: UUID, user_id: int) -> BatchPreview:
     batch = db.get(ImportBatch, batch_id)
     if batch is None or batch.user_id != user_id:
         raise ValueError("导入批次不存在")
+    if batch.status in {"committed", "rolled_back", "cancelled"}:
+        raise ValueError("当前批次已结束，不能重新检查")
     rows = list(
         db.scalars(
             select(ImportRow)
