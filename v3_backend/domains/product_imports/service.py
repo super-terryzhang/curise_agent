@@ -8,9 +8,9 @@ from uuid import UUID
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from domains.dynamic_data.models import DataField, DataRecord, DataTable
-from domains.masterdata.models import Category, Country, Port, Product, ProductPricePeriod, Supplier
-from domains.masterdata.price_periods import serialize as serialize_period
+from domains.dynamic_data import models as dynamic_models
+from domains.masterdata import models as master_models
+from domains.masterdata import price_periods as master_price_periods
 from scripts.seed_clean_product_fields import PRODUCT_TABLE_ID
 
 from .commit import commit_batch, rollback_batch
@@ -43,7 +43,7 @@ def batch_summary(batch: ImportBatch) -> dict:
 
 
 def setup_status(db: Session, *, database_name: str) -> dict:
-    table = db.get(DataTable, PRODUCT_TABLE_ID)
+    table = db.get(dynamic_models.DataTable, PRODUCT_TABLE_ID)
     return {
         "enabled": True,
         "mode": "temporary",
@@ -51,13 +51,23 @@ def setup_status(db: Session, *, database_name: str) -> dict:
         "schema_version": table.schema_version if table else None,
         "field_count": db.scalar(
             select(func.count())
-            .select_from(DataField)
-            .where(DataField.table_id == PRODUCT_TABLE_ID, DataField.status == "active")
+            .select_from(dynamic_models.DataField)
+            .where(
+                dynamic_models.DataField.table_id == PRODUCT_TABLE_ID,
+                dynamic_models.DataField.status == "active",
+            )
         )
         or 0,
-        "product_count": db.scalar(select(func.count()).select_from(Product)) or 0,
+        "product_count": db.scalar(
+            select(func.count())
+            .select_from(master_models.Product)
+            .where(master_models.Product.status.is_(True))
+        )
+        or 0,
         "price_period_count": db.scalar(
-            select(func.count()).select_from(ProductPricePeriod)
+            select(func.count())
+            .select_from(master_models.ProductPricePeriod)
+            .where(master_models.ProductPricePeriod.status.is_(True))
         )
         or 0,
     }
@@ -81,11 +91,13 @@ def list_batch_rows(
             .limit(page_size)
         )
     )
-    table = db.get(DataTable, PRODUCT_TABLE_ID)
+    table = db.get(dynamic_models.DataTable, PRODUCT_TABLE_ID)
     field_by_id = {
         str(field.id): field
         for field in db.scalars(
-            select(DataField).where(DataField.table_id == PRODUCT_TABLE_ID)
+            select(dynamic_models.DataField).where(
+                dynamic_models.DataField.table_id == PRODUCT_TABLE_ID
+            )
         )
     }
     schema_current = bool(table and table.schema_version == batch.product_schema_version)
@@ -149,7 +161,7 @@ PRICE_LABELS = {
 }
 
 
-def _extension_display(field: DataField, value):
+def _extension_display(field: dynamic_models.DataField, value):
     options = {
         str(option.get("id")): option.get("label")
         for option in field.config.get("options", [])
@@ -163,17 +175,17 @@ def _extension_display(field: DataField, value):
 
 def _reference_display(db: Session, key: str, value):
     models = {
-        "port_id": Port,
-        "supplier_id": Supplier,
-        "category_id": Category,
-        "country_id": Country,
+        "port_id": master_models.Port,
+        "supplier_id": master_models.Supplier,
+        "category_id": master_models.Category,
+        "country_id": master_models.Country,
     }
     model = models.get(key)
     return _name(db, model, value) if model and value is not None else value
 
 
 def _public_values(
-    db: Session, raw: dict | None, field_by_id: dict[str, DataField]
+    db: Session, raw: dict | None, field_by_id: dict[str, dynamic_models.DataField]
 ) -> dict | None:
     if raw is None:
         return None
@@ -202,18 +214,26 @@ def _public_values(
 
 
 def list_products(db: Session, *, q: str | None, page: int, page_size: int) -> dict:
-    filters = [Product.status.is_(True)]
+    filters = [master_models.Product.status.is_(True)]
     if q:
         pattern = f"%{q.strip()}%"
         filters.append(
-            or_(Product.code.ilike(pattern), Product.product_name_en.ilike(pattern))
+            or_(
+                master_models.Product.code.ilike(pattern),
+                master_models.Product.product_name_en.ilike(pattern),
+            )
         )
-    total = db.scalar(select(func.count()).select_from(Product).where(*filters)) or 0
+    total = (
+        db.scalar(
+            select(func.count()).select_from(master_models.Product).where(*filters)
+        )
+        or 0
+    )
     rows = list(
         db.scalars(
-            select(Product)
+            select(master_models.Product)
             .where(*filters)
-            .order_by(Product.code, Product.id)
+            .order_by(master_models.Product.code, master_models.Product.id)
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
@@ -232,19 +252,24 @@ def _name(db: Session, model, row_id: int | None) -> str | None:
     return row.name if row else None
 
 
-def _product_summary(db: Session, product: Product) -> dict:
+def _product_summary(db: Session, product: master_models.Product) -> dict:
     fields = list(
         db.scalars(
-            select(DataField)
-            .where(DataField.table_id == PRODUCT_TABLE_ID, DataField.status == "active")
-            .order_by(DataField.sort_order, DataField.id)
+            select(dynamic_models.DataField)
+            .where(
+                dynamic_models.DataField.table_id == PRODUCT_TABLE_ID,
+                dynamic_models.DataField.status == "active",
+            )
+            .order_by(
+                dynamic_models.DataField.sort_order, dynamic_models.DataField.id
+            )
         )
     )
     anchor = db.scalar(
-        select(DataRecord).where(
-            DataRecord.table_id == PRODUCT_TABLE_ID,
-            DataRecord.source_record_id == str(product.id),
-            DataRecord.status == "active",
+        select(dynamic_models.DataRecord).where(
+            dynamic_models.DataRecord.table_id == PRODUCT_TABLE_ID,
+            dynamic_models.DataRecord.source_record_id == str(product.id),
+            dynamic_models.DataRecord.status == "active",
         )
     )
     extension_values = anchor.values if anchor else {}
@@ -252,11 +277,11 @@ def _product_summary(db: Session, product: Product) -> dict:
         "id": product.id,
         "code": product.code,
         "name": product.product_name_en,
-        "port": _name(db, Port, product.port_id),
-        "country": _name(db, Country, product.country_id),
-        "supplier": _name(db, Supplier, product.supplier_id),
+        "port": _name(db, master_models.Port, product.port_id),
+        "country": _name(db, master_models.Country, product.country_id),
+        "supplier": _name(db, master_models.Supplier, product.supplier_id),
         "unit": product.unit,
-        "category": _name(db, Category, product.category_id),
+        "category": _name(db, master_models.Category, product.category_id),
         "brand": product.brand,
         "status": product.status,
         "revision": product.revision,
@@ -274,33 +299,38 @@ def _product_summary(db: Session, product: Product) -> dict:
 
 
 def get_product(db: Session, product_id: int) -> dict:
-    product = db.get(Product, product_id)
+    product = db.get(master_models.Product, product_id)
     if product is None:
         raise ValueError("产品不存在")
-    table = db.get(DataTable, PRODUCT_TABLE_ID)
+    table = db.get(dynamic_models.DataTable, PRODUCT_TABLE_ID)
     fields = list(
         db.scalars(
-            select(DataField)
-            .where(DataField.table_id == PRODUCT_TABLE_ID, DataField.status == "active")
-            .order_by(DataField.sort_order, DataField.id)
+            select(dynamic_models.DataField)
+            .where(
+                dynamic_models.DataField.table_id == PRODUCT_TABLE_ID,
+                dynamic_models.DataField.status == "active",
+            )
+            .order_by(
+                dynamic_models.DataField.sort_order, dynamic_models.DataField.id
+            )
         )
     )
     anchor = db.scalar(
-        select(DataRecord).where(
-            DataRecord.table_id == PRODUCT_TABLE_ID,
-            DataRecord.source_record_id == str(product.id),
-            DataRecord.status == "active",
+        select(dynamic_models.DataRecord).where(
+            dynamic_models.DataRecord.table_id == PRODUCT_TABLE_ID,
+            dynamic_models.DataRecord.source_record_id == str(product.id),
+            dynamic_models.DataRecord.status == "active",
         )
     )
     values = anchor.values if anchor else {}
     periods = list(
         db.scalars(
-            select(ProductPricePeriod)
-            .where(ProductPricePeriod.product_id == product.id)
+            select(master_models.ProductPricePeriod)
+            .where(master_models.ProductPricePeriod.product_id == product.id)
             .order_by(
-                ProductPricePeriod.price_type,
-                ProductPricePeriod.effective_from,
-                ProductPricePeriod.id,
+                master_models.ProductPricePeriod.price_type,
+                master_models.ProductPricePeriod.effective_from,
+                master_models.ProductPricePeriod.id,
             )
         )
     )
@@ -315,7 +345,7 @@ def get_product(db: Session, product_id: int) -> dict:
             }
             for field in fields
         ],
-        "price_periods": [serialize_period(period) for period in periods],
+        "price_periods": [master_price_periods.serialize(period) for period in periods],
     }
 
 __all__ = [

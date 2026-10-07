@@ -11,12 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from domains.dynamic_data.models import DataRecord, DataTable
-from domains.masterdata.models import Product, ProductPricePeriod
-from domains.masterdata.price_periods import (
-    create_period_in_transaction,
-    update_period_in_transaction,
-)
+from domains.dynamic_data import models as dynamic_models
+from domains.masterdata import models as master_models
+from domains.masterdata import price_periods as master_price_periods
 from domains.masterdata.schemas import ProductPricePeriodCreate, ProductPricePeriodUpdate
 from scripts.seed_clean_product_fields import PRODUCT_TABLE_ID
 
@@ -55,14 +52,14 @@ PRODUCT_FIELDS = (
 )
 
 
-def _product_state(row: Product) -> dict[str, Any]:
+def _product_state(row: master_models.Product) -> dict[str, Any]:
     return {field: _json_value(getattr(row, field)) for field in PRODUCT_FIELDS} | {
         "revision": row.revision,
         "price_version": row.price_version,
     }
 
 
-def _period_state(row: ProductPricePeriod) -> dict[str, Any]:
+def _period_state(row: master_models.ProductPricePeriod) -> dict[str, Any]:
     return {
         "product_id": row.product_id,
         "price_type": row.price_type,
@@ -79,7 +76,7 @@ def _period_state(row: ProductPricePeriod) -> dict[str, Any]:
     }
 
 
-def _extension_state(row: DataRecord) -> dict[str, Any]:
+def _extension_state(row: dynamic_models.DataRecord) -> dict[str, Any]:
     return {
         "values": _json_value(row.values),
         "revision": row.revision,
@@ -120,25 +117,27 @@ def _lock_batch(db: Session, batch_id: UUID, user_id: int) -> ImportBatch:
     return batch
 
 
-def _verify_snapshot(db: Session, row: ImportRow, table: DataTable) -> None:
+def _verify_snapshot(
+    db: Session, row: ImportRow, table: dynamic_models.DataTable
+) -> None:
     if row.snapshot.get("schema_version") not in (None, table.schema_version):
         raise ImportConflict("产品字段结构已变化，请重新上传")
     if row.target_product_id is not None and row.sheet_key == "products":
-        product = db.get(Product, row.target_product_id)
+        product = db.get(master_models.Product, row.target_product_id)
         if product is None or product.revision != row.snapshot.get("product_revision"):
             raise ImportConflict("产品已变化，请重新检查后提交")
         anchor = db.scalar(
-            select(DataRecord).where(
-                DataRecord.table_id == PRODUCT_TABLE_ID,
-                DataRecord.source_record_id == str(product.id),
-                DataRecord.status == "active",
+            select(dynamic_models.DataRecord).where(
+                dynamic_models.DataRecord.table_id == PRODUCT_TABLE_ID,
+                dynamic_models.DataRecord.source_record_id == str(product.id),
+                dynamic_models.DataRecord.status == "active",
             )
         )
         current_revision = anchor.revision if anchor else 0
         if current_revision != row.snapshot.get("extension_revision", 0):
             raise ImportConflict("产品扩展信息已变化，请重新检查后提交")
     if row.target_period_id is not None:
-        period = db.get(ProductPricePeriod, row.target_period_id)
+        period = db.get(master_models.ProductPricePeriod, row.target_period_id)
         if period is None or period.revision != row.snapshot.get("period_revision"):
             raise ImportConflict("价格区间已变化，请重新检查后提交")
 
@@ -149,13 +148,13 @@ def _apply_product_row(
     row: ImportRow,
     user_id: int,
     sequence: int,
-    product_by_key: dict[tuple[str, int], Product],
+    product_by_key: dict[tuple[str, int], master_models.Product],
 ) -> tuple[int, int, list[ImportChange]]:
     core = dict(row.normalized_values["core_values"])
     extensions = dict(row.normalized_values.get("extension_values") or {})
     changes: list[ImportChange] = []
     if row.action == "create":
-        product = Product(**core)
+        product = master_models.Product(**core)
         db.add(product)
         db.flush()
         product_change = _new_change(
@@ -165,7 +164,7 @@ def _apply_product_row(
         changes.append(product_change)
         sequence += 1
     else:
-        product = db.get(Product, row.target_product_id)
+        product = db.get(master_models.Product, row.target_product_id)
         assert product is not None
         before = _product_state(product)
         for field, value in core.items():
@@ -181,15 +180,15 @@ def _apply_product_row(
     key = (row.product_code_normalized, row.port_id)
     product_by_key[key] = product
     anchor = db.scalar(
-        select(DataRecord).where(
-            DataRecord.table_id == PRODUCT_TABLE_ID,
-            DataRecord.source_record_id == str(product.id),
-            DataRecord.status == "active",
+        select(dynamic_models.DataRecord).where(
+            dynamic_models.DataRecord.table_id == PRODUCT_TABLE_ID,
+            dynamic_models.DataRecord.source_record_id == str(product.id),
+            dynamic_models.DataRecord.status == "active",
         )
     )
     if extensions:
         if anchor is None:
-            anchor = DataRecord(
+            anchor = dynamic_models.DataRecord(
                 table_id=PRODUCT_TABLE_ID,
                 source_record_id=str(product.id),
                 values=extensions,
@@ -244,17 +243,17 @@ def _apply_price_row(
     row: ImportRow,
     user_id: int,
     sequence: int,
-    product_by_key: dict[tuple[str, int], Product],
+    product_by_key: dict[tuple[str, int], master_models.Product],
 ) -> tuple[int, ImportChange]:
     values = row.normalized_values
     key = (row.product_code_normalized, row.port_id)
     product = product_by_key.get(key)
     if product is None and row.target_product_id is not None:
-        product = db.get(Product, row.target_product_id)
+        product = db.get(master_models.Product, row.target_product_id)
     if product is None:
         raise ImportConflict("价格记录对应的产品已不存在")
     if row.action == "create":
-        period = create_period_in_transaction(
+        period = master_price_periods.create_period_in_transaction(
             db,
             product.id,
             ProductPricePeriodCreate(
@@ -272,10 +271,10 @@ def _apply_price_row(
             batch.id, sequence, "price_period", period.id, "create", None, _period_state(period), period.revision
         )
     else:
-        period = db.get(ProductPricePeriod, row.target_period_id)
+        period = db.get(master_models.ProductPricePeriod, row.target_period_id)
         assert period is not None
         before = _period_state(period)
-        period = update_period_in_transaction(
+        period = master_price_periods.update_period_in_transaction(
             db,
             product.id,
             period.id,
@@ -303,7 +302,9 @@ def commit_batch(db: Session, batch_id: UUID, user_id: int) -> CommitResult:
         if batch.status != "ready" or batch.block_count:
             raise ImportConflict("只有检查通过的批次才能提交")
         table = db.scalar(
-            select(DataTable).where(DataTable.id == PRODUCT_TABLE_ID).with_for_update()
+            select(dynamic_models.DataTable)
+            .where(dynamic_models.DataTable.id == PRODUCT_TABLE_ID)
+            .with_for_update()
         )
         if table is None or table.schema_version != batch.product_schema_version:
             raise ImportConflict("产品字段结构已变化，请重新上传")
@@ -323,9 +324,9 @@ def commit_batch(db: Session, batch_id: UUID, user_id: int) -> CommitResult:
         if product_ids:
             list(
                 db.scalars(
-                    select(Product)
-                    .where(Product.id.in_(product_ids))
-                    .order_by(Product.id)
+                    select(master_models.Product)
+                    .where(master_models.Product.id.in_(product_ids))
+                    .order_by(master_models.Product.id)
                     .with_for_update()
                 )
             )
@@ -335,9 +336,9 @@ def commit_batch(db: Session, batch_id: UUID, user_id: int) -> CommitResult:
         if period_ids:
             list(
                 db.scalars(
-                    select(ProductPricePeriod)
-                    .where(ProductPricePeriod.id.in_(period_ids))
-                    .order_by(ProductPricePeriod.id)
+                    select(master_models.ProductPricePeriod)
+                    .where(master_models.ProductPricePeriod.id.in_(period_ids))
+                    .order_by(master_models.ProductPricePeriod.id)
                     .with_for_update()
                 )
             )
@@ -346,7 +347,7 @@ def commit_batch(db: Session, batch_id: UUID, user_id: int) -> CommitResult:
 
         sequence = 1
         created = updated = skipped = 0
-        product_by_key: dict[tuple[str, int], Product] = {}
+        product_by_key: dict[tuple[str, int], master_models.Product] = {}
         product_changes: dict[int, ImportChange] = {}
         price_product_before: dict[int, dict[str, Any]] = {}
         for row in [item for item in rows if item.sheet_key == "products"]:
@@ -368,7 +369,7 @@ def commit_batch(db: Session, batch_id: UUID, user_id: int) -> CommitResult:
             key = (row.product_code_normalized, row.port_id)
             price_product = product_by_key.get(key)
             if price_product is None and row.target_product_id is not None:
-                price_product = db.get(Product, row.target_product_id)
+                price_product = db.get(master_models.Product, row.target_product_id)
             if price_product is not None and price_product.id not in price_product_before:
                 price_product_before[price_product.id] = _product_state(price_product)
             sequence, _ = _apply_price_row(
@@ -377,11 +378,11 @@ def commit_batch(db: Session, batch_id: UUID, user_id: int) -> CommitResult:
             created += row.action == "create"
             updated += row.action == "update"
         for product_id in sorted(price_product_before):
-            product = db.get(Product, product_id)
+            product = db.get(master_models.Product, product_id)
             product.price_version += 1
         db.flush()
         for product_id, before in price_product_before.items():
-            product = db.get(Product, product_id)
+            product = db.get(master_models.Product, product_id)
             if product_id not in product_changes:
                 change = _new_change(
                     batch.id,
@@ -398,7 +399,7 @@ def commit_batch(db: Session, batch_id: UUID, user_id: int) -> CommitResult:
                 sequence += 1
         db.flush()
         for product_id, change in product_changes.items():
-            product = db.get(Product, product_id)
+            product = db.get(master_models.Product, product_id)
             change.after = _product_state(product)
             change.expected_after_revision = product.revision
         result = CommitResult(
@@ -420,13 +421,13 @@ def commit_batch(db: Session, batch_id: UUID, user_id: int) -> CommitResult:
         raise
 
 
-def _restore_product(row: Product, state: dict[str, Any]) -> None:
+def _restore_product(row: master_models.Product, state: dict[str, Any]) -> None:
     for field in PRODUCT_FIELDS:
         setattr(row, field, state.get(field))
     row.price_version = state.get("price_version", row.price_version)
 
 
-def _restore_period(row: ProductPricePeriod, state: dict[str, Any]) -> None:
+def _restore_period(row: master_models.ProductPricePeriod, state: dict[str, Any]) -> None:
     row.product_id = state["product_id"]
     row.price_type = state["price_type"]
     row.amount = Decimal(state["amount"])
@@ -458,18 +459,18 @@ def rollback_batch(db: Session, batch_id: UUID, user_id: int) -> RollbackResult:
         # Verify every dependency before changing any row.
         for change in changes:
             if change.entity_type == "product":
-                entity = db.get(Product, int(change.entity_id))
+                entity = db.get(master_models.Product, int(change.entity_id))
             elif change.entity_type == "extension":
-                entity = db.get(DataRecord, UUID(change.entity_id))
+                entity = db.get(dynamic_models.DataRecord, UUID(change.entity_id))
             else:
-                entity = db.get(ProductPricePeriod, int(change.entity_id))
+                entity = db.get(master_models.ProductPricePeriod, int(change.entity_id))
             if entity is None or entity.revision != change.expected_after_revision:
                 raise ImportConflict("导入后数据已有后续修改，不能自动回滚")
 
         restored = archived = 0
         for change in changes:
             if change.entity_type == "price_period":
-                entity = db.get(ProductPricePeriod, int(change.entity_id))
+                entity = db.get(master_models.ProductPricePeriod, int(change.entity_id))
                 if change.action == "create":
                     entity.status = False
                     archived += 1
@@ -477,7 +478,7 @@ def rollback_batch(db: Session, batch_id: UUID, user_id: int) -> RollbackResult:
                     _restore_period(entity, change.before or {})
                     restored += 1
             elif change.entity_type == "extension":
-                entity = db.get(DataRecord, UUID(change.entity_id))
+                entity = db.get(dynamic_models.DataRecord, UUID(change.entity_id))
                 if change.action == "create":
                     entity.status = "archived"
                     entity.revision += 1
@@ -491,7 +492,7 @@ def rollback_batch(db: Session, batch_id: UUID, user_id: int) -> RollbackResult:
                     entity.revision += 1
                     restored += 1
             else:
-                entity = db.get(Product, int(change.entity_id))
+                entity = db.get(master_models.Product, int(change.entity_id))
                 if change.action == "create":
                     entity.status = False
                     archived += 1

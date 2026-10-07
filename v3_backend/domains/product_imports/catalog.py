@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from domains.dynamic_data.errors import Conflict
-from domains.dynamic_data.models import DataField, DataTable
+from domains.dynamic_data import errors as dynamic_errors
+from domains.dynamic_data import models as dynamic_models
 from scripts.seed_clean_product_fields import PRODUCT_TABLE_ID
 
 from .contracts import WorkbookField
@@ -58,9 +58,9 @@ PRICE_FIELDS = (
 
 @dataclass(frozen=True)
 class ProductCatalog:
-    table: DataTable
+    table: dynamic_models.DataTable
     core_prefix: tuple[CoreField, ...]
-    extension_fields: tuple[DataField, ...]
+    extension_fields: tuple[dynamic_models.DataField, ...]
     core_suffix: tuple[CoreField, ...]
 
     @property
@@ -85,28 +85,32 @@ class ProductCatalog:
 
 
 def load_product_catalog(db: Session) -> ProductCatalog:
-    table = db.get(DataTable, PRODUCT_TABLE_ID)
+    table = db.get(dynamic_models.DataTable, PRODUCT_TABLE_ID)
     if (
         table is None
         or table.status != "active"
         or table.table_kind != "system"
         or table.system_key != "products"
     ):
-        raise Conflict("PRODUCT_TABLE_MISSING", "产品系统数据表不存在或未启用")
+        raise dynamic_errors.Conflict("PRODUCT_TABLE_MISSING", "产品系统数据表不存在或未启用")
     extensions = tuple(
         db.scalars(
-            select(DataField)
-            .where(DataField.table_id == table.id, DataField.status == "active")
-            .order_by(DataField.sort_order, DataField.id)
+            select(dynamic_models.DataField)
+            .where(
+                dynamic_models.DataField.table_id == table.id,
+                dynamic_models.DataField.status == "active",
+            )
+            .order_by(dynamic_models.DataField.sort_order, dynamic_models.DataField.id)
         )
     )
     labels = [field.label.strip().casefold() for field in extensions]
     if len(labels) != len(set(labels)):
-        raise Conflict("DUPLICATE_FIELD_LABEL", "产品启用字段存在重名，不能生成唯一表头")
+        raise dynamic_errors.Conflict(
+            "DUPLICATE_FIELD_LABEL", "产品启用字段存在重名，不能生成唯一表头"
+        )
     return ProductCatalog(
         table=table,
         core_prefix=PRODUCT_CORE_PREFIX,
         extension_fields=extensions,
         core_suffix=PRODUCT_CORE_SUFFIX,
     )
-

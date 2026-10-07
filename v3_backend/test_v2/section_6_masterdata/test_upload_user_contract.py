@@ -85,14 +85,8 @@ def test_product_code_typed_as_number_in_excel_becomes_string(db):
     assert isinstance(sp.product_code, str)
 
 
-def test_duplicate_product_code_within_same_batch_both_create(db):
-    """用户故事：用户复制粘贴时不小心两行 product_code 相同。当前
-    系统行为是两行都创建（DB 没在 Product.code 上加 unique constraint）。
-
-    这个测试**文档化当前行为**。这是已知的非理想行为（重复 SKU 应该
-    被 dedupe），但今天的契约就是这样；改之前先 pin 住，免得有人偷偷
-    改了 dedupe 行为造成生产意外。
-    """
+def test_duplicate_product_identity_within_same_batch_keeps_one_product(db):
+    """同一港口的重复产品身份不得生成两条有效产品。"""
     blob = make_excel(
         [
             {"product_name": "Dup A", "product_code": "DUP-1"},
@@ -102,13 +96,11 @@ def test_duplicate_product_code_within_same_batch_both_create(db):
     batch = parse_excel(db, file_bytes=blob, filename="t.xlsx", user_id=1)
     resolve_and_score(db, batch_id=batch.id, user_id=1)
     result = commit_batch(db, batch_id=batch.id, user_id=1)
-    # Both rows fire _apply_create (resolve doesn't see the in-batch
-    # duplicate — it only compares against DB). So we end up with two
-    # Product rows that share `code`.
-    assert result["created"] == 2
+    assert result["created"] == 1
+    assert result["errors"] == 1
 
     products = db.query(Product).filter(Product.code == "DUP-1").all()
-    assert len(products) == 2  # confirmed: NO dedupe today
+    assert len(products) == 1
 
 
 # ─── C4: FK 多行混合 (row isolation) ────────────────────

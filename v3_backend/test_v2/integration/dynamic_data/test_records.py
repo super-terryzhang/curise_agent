@@ -35,12 +35,13 @@ def table(db):
 
 
 def field(db, table_id, kind="text", **kwargs):
+    label = kwargs.pop("label", f"值-{uuid4().hex[:8]}")
     return service().create_field(
         db,
         table_id,
         FieldCreate(
             id=uuid4(),
-            label="值",
+            label=label,
             field_type=kind,
             expected_schema_version=db.get(DataTable, table_id).schema_version,
             **kwargs,

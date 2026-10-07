@@ -75,7 +75,7 @@ def extension_field(db, table_id, *, kind="text", target_table_id=None):
         table_id,
         FieldCreate(
             id=uuid4(),
-            label="内部备注",
+            label=f"内部备注-{uuid4().hex[:8]}",
             field_type=kind,
             target_table_id=target_table_id,
             expected_schema_version=table.schema_version,

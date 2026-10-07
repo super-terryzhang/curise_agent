@@ -13,18 +13,10 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from domains.dynamic_data.models import DataRecord
-from domains.dynamic_data.permissions import require_admin
+from domains.dynamic_data import models as dynamic_models
+from domains.dynamic_data import permissions as dynamic_permissions
 from domains.dynamic_data.schemas import Actor
-from domains.masterdata.models import (
-    Category,
-    Country,
-    ExchangeRate,
-    Port,
-    Product,
-    ProductPricePeriod,
-    Supplier,
-)
+from domains.masterdata import models as master_models
 
 from .catalog import PRICE_FIELDS, CoreField, ProductCatalog, load_product_catalog
 from .contracts import WorkbookManifest
@@ -58,10 +50,10 @@ def _choice_values(db: Session, model) -> list[str]:
 def _currencies(db: Session) -> list[str]:
     values: set[str] = set()
     for statement in (
-        select(ExchangeRate.from_currency),
-        select(ExchangeRate.to_currency),
-        select(Product.currency),
-        select(ProductPricePeriod.currency),
+        select(master_models.ExchangeRate.from_currency),
+        select(master_models.ExchangeRate.to_currency),
+        select(master_models.Product.currency),
+        select(master_models.ProductPricePeriod.currency),
     ):
         values.update(
             str(value).strip().upper()
@@ -191,39 +183,39 @@ def _extension_value(field, value: Any) -> Any:
 
 
 def _product_rows(db: Session, catalog: ProductCatalog, product_ids: list[int] | None):
-    statement = select(Product)
+    statement = select(master_models.Product)
     if product_ids is not None:
-        statement = statement.where(Product.id.in_(set(product_ids)))
-    products = list(db.scalars(statement.order_by(Product.id)))
+        statement = statement.where(master_models.Product.id.in_(set(product_ids)))
+    products = list(db.scalars(statement.order_by(master_models.Product.id)))
     if not products:
         return products, {}, {}, {}
     ids = [product.id for product in products]
     relations = {
         "port": dict(
             db.execute(
-                select(Port.id, Port.name).where(
-                    Port.id.in_({p.port_id for p in products if p.port_id})
+                select(master_models.Port.id, master_models.Port.name).where(
+                    master_models.Port.id.in_({p.port_id for p in products if p.port_id})
                 )
             ).all()
         ),
         "supplier": dict(
             db.execute(
-                select(Supplier.id, Supplier.name).where(
-                    Supplier.id.in_({p.supplier_id for p in products if p.supplier_id})
+                select(master_models.Supplier.id, master_models.Supplier.name).where(
+                    master_models.Supplier.id.in_({p.supplier_id for p in products if p.supplier_id})
                 )
             ).all()
         ),
         "category": dict(
             db.execute(
-                select(Category.id, Category.name).where(
-                    Category.id.in_({p.category_id for p in products if p.category_id})
+                select(master_models.Category.id, master_models.Category.name).where(
+                    master_models.Category.id.in_({p.category_id for p in products if p.category_id})
                 )
             ).all()
         ),
         "country": dict(
             db.execute(
-                select(Country.id, Country.name).where(
-                    Country.id.in_({p.country_id for p in products if p.country_id})
+                select(master_models.Country.id, master_models.Country.name).where(
+                    master_models.Country.id.in_({p.country_id for p in products if p.country_id})
                 )
             ).all()
         ),
@@ -231,30 +223,35 @@ def _product_rows(db: Session, catalog: ProductCatalog, product_ids: list[int] |
     anchors = {
         record.source_record_id: record
         for record in db.scalars(
-            select(DataRecord).where(
-                DataRecord.table_id == catalog.table.id,
-                DataRecord.source_record_id.in_([str(product_id) for product_id in ids]),
-                DataRecord.status == "active",
+            select(dynamic_models.DataRecord).where(
+                dynamic_models.DataRecord.table_id == catalog.table.id,
+                dynamic_models.DataRecord.source_record_id.in_(
+                    [str(product_id) for product_id in ids]
+                ),
+                dynamic_models.DataRecord.status == "active",
             )
         )
         if record.source_record_id is not None
     }
     periods = list(
         db.scalars(
-            select(ProductPricePeriod)
-            .where(ProductPricePeriod.product_id.in_(ids), ProductPricePeriod.status.is_(True))
+            select(master_models.ProductPricePeriod)
+            .where(
+                master_models.ProductPricePeriod.product_id.in_(ids),
+                master_models.ProductPricePeriod.status.is_(True),
+            )
             .order_by(
-                ProductPricePeriod.product_id,
-                ProductPricePeriod.effective_from,
-                ProductPricePeriod.price_type,
-                ProductPricePeriod.id,
+                master_models.ProductPricePeriod.product_id,
+                master_models.ProductPricePeriod.effective_from,
+                master_models.ProductPricePeriod.price_type,
+                master_models.ProductPricePeriod.id,
             )
         )
     )
     return products, relations, anchors, periods
 
 
-def _core_value(field: CoreField, product: Product, relations) -> Any:
+def _core_value(field: CoreField, product: master_models.Product, relations) -> Any:
     value = getattr(product, field.attribute)
     if field.relation:
         return relations[field.relation].get(value)
@@ -270,7 +267,7 @@ def build_product_workbook(
     include_existing: bool,
     product_ids: list[int] | None = None,
 ) -> bytes:
-    require_admin(actor)
+    dynamic_permissions.require_admin(actor)
     if not include_existing and product_ids:
         raise ValueError("空白模板不能指定已有产品")
     catalog = load_product_catalog(db)
@@ -310,10 +307,10 @@ def build_product_workbook(
     _unlock_and_format(price_sheet, len(price_headers), {1: "@", 4: "0.00", 6: "yyyy-mm-dd", 7: "yyyy-mm-dd"})
 
     master_choices = {
-        "port": _choice_values(db, Port),
-        "supplier": _choice_values(db, Supplier),
-        "category": _choice_values(db, Category),
-        "country": _choice_values(db, Country),
+        "port": _choice_values(db, master_models.Port),
+        "supplier": _choice_values(db, master_models.Supplier),
+        "category": _choice_values(db, master_models.Category),
+        "country": _choice_values(db, master_models.Country),
     }
     for column, contract in enumerate(catalog.product_contracts, 1):
         if contract.key in master_choices:

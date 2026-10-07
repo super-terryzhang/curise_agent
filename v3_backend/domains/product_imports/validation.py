@@ -12,9 +12,9 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from domains.dynamic_data.models import DataField, DataRecord
-from domains.dynamic_data.validation import normalize_value
-from domains.masterdata.models import Category, Country, Port, Product, ProductPricePeriod, Supplier
+from domains.dynamic_data import models as dynamic_models
+from domains.dynamic_data import validation as dynamic_validation
+from domains.masterdata import models as master_models
 
 from .catalog import ProductCatalog, load_product_catalog
 from .contracts import BatchCounts, BatchPreview, ImportIssue, PreviewRow
@@ -96,7 +96,13 @@ def _text(raw: Any, existing: str | None, *, required: bool, row, label):
     return value, []
 
 
-def _extension_value(field: DataField, raw: Any, existing: Any, row: ImportRow, create: bool):
+def _extension_value(
+    field: dynamic_models.DataField,
+    raw: Any,
+    existing: Any,
+    row: ImportRow,
+    create: bool,
+):
     if raw in (None, ""):
         raw = field.default_value if create else existing
     elif raw == CLEAR_MARKER:
@@ -131,7 +137,7 @@ def _extension_value(field: DataField, raw: Any, existing: Any, row: ImportRow, 
     elif field.field_type == "boolean" and isinstance(raw, str):
         raw = {"是": True, "否": False}.get(raw.strip(), raw)
     try:
-        return normalize_value(field, raw), []
+        return dynamic_validation.normalize_value(field, raw), []
     except Exception as exc:
         issues = getattr(exc, "issues", [])
         message = issues[0].message if issues else f"{field.label}格式不正确"
@@ -140,7 +146,11 @@ def _extension_value(field: DataField, raw: Any, existing: Any, row: ImportRow, 
 
 
 def _product_indexes(db: Session):
-    products = list(db.scalars(select(Product).where(Product.status.is_(True))))
+    products = list(
+        db.scalars(
+            select(master_models.Product).where(master_models.Product.status.is_(True))
+        )
+    )
     mapping = {
         normalize_product_key(product.code, product.port_id): product
         for product in products
@@ -489,10 +499,24 @@ def validate_batch(db: Session, batch_id: UUID, user_id: int) -> BatchPreview:
             _issue(None, "STALE_SCHEMA", "产品字段结构已变化，请下载最新模板")
         )
 
-    countries = list(db.scalars(select(Country).where(Country.status.is_(True))))
-    ports = list(db.scalars(select(Port).where(Port.status.is_(True))))
-    suppliers = list(db.scalars(select(Supplier).where(Supplier.status.is_(True))))
-    categories = list(db.scalars(select(Category).where(Category.status.is_(True))))
+    countries = list(
+        db.scalars(
+            select(master_models.Country).where(master_models.Country.status.is_(True))
+        )
+    )
+    ports = list(
+        db.scalars(select(master_models.Port).where(master_models.Port.status.is_(True)))
+    )
+    suppliers = list(
+        db.scalars(
+            select(master_models.Supplier).where(master_models.Supplier.status.is_(True))
+        )
+    )
+    categories = list(
+        db.scalars(
+            select(master_models.Category).where(master_models.Category.status.is_(True))
+        )
+    )
     indexes = {
         "country": _name_index(countries),
         "port": _name_index(ports),
@@ -505,14 +529,23 @@ def validate_batch(db: Session, batch_id: UUID, user_id: int) -> BatchPreview:
     anchors = {
         record.source_record_id: record
         for record in db.scalars(
-            select(DataRecord).where(
-                DataRecord.table_id == catalog.table.id, DataRecord.status == "active"
+            select(dynamic_models.DataRecord).where(
+                dynamic_models.DataRecord.table_id == catalog.table.id,
+                dynamic_models.DataRecord.status == "active",
             )
         )
         if record.source_record_id is not None
     }
-    periods = list(db.scalars(select(ProductPricePeriod).where(ProductPricePeriod.status.is_(True))))
-    periods_by_product: dict[tuple[int, str], list[ProductPricePeriod]] = defaultdict(list)
+    periods = list(
+        db.scalars(
+            select(master_models.ProductPricePeriod).where(
+                master_models.ProductPricePeriod.status.is_(True)
+            )
+        )
+    )
+    periods_by_product: dict[
+        tuple[int, str], list[master_models.ProductPricePeriod]
+    ] = defaultdict(list)
     for period in periods:
         periods_by_product[(period.product_id, period.price_type)].append(period)
     periods_by_id = {period.id: period for period in periods}
@@ -625,7 +658,7 @@ def validate_batch(db: Session, batch_id: UUID, user_id: int) -> BatchPreview:
 
     price_types = defaultdict(set)
     for period in periods:
-        product = db.get(Product, period.product_id)
+        product = db.get(master_models.Product, period.product_id)
         if product and product.code and product.port_id:
             price_types[normalize_product_key(product.code, product.port_id)].add(period.price_type)
     for row in price_rows:
