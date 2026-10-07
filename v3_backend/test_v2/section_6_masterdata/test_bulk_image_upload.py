@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import io
 import zipfile
-from decimal import Decimal
 
 import pytest
 
@@ -37,7 +36,6 @@ from domains.masterdata.images.bulk_models import (
 )
 from domains.masterdata.models import ProductImage
 from test_v2.fixtures.helpers import seed_product, seed_user
-
 
 # ─── Helpers ──────────────────────────────────────────────────
 
@@ -280,18 +278,23 @@ def test_parse_unmatched_when_triple_not_in_db(db):
 
 
 def test_parse_reports_ambiguous_duplicate_product_instead_of_guessing(db):
-    """The removed product expiry date must never be used as an identity tiebreaker."""
+    """Duplicate location names remain ambiguous without violating product identity."""
     from domains.masterdata.models import Country, Port
 
     user = seed_user(db, email="duplicate-image@example.com", role="admin")
     country = Country(name="Japan")
     db.add(country)
     db.flush()
-    port = Port(name="Osaka", country_id=country.id)
-    db.add(port)
+    first_port = Port(name="Osaka", country_id=country.id)
+    second_port = Port(name="Osaka", country_id=country.id)
+    db.add_all([first_port, second_port])
     db.flush()
-    seed_product(db, code="DUP-1", name="First", country_id=country.id, port_id=port.id)
-    seed_product(db, code="DUP-1", name="Second", country_id=country.id, port_id=port.id)
+    seed_product(
+        db, code="DUP-1", name="First", country_id=country.id, port_id=first_port.id
+    )
+    seed_product(
+        db, code="DUP-1", name="Second", country_id=country.id, port_id=second_port.id
+    )
 
     batch = bulk_service.create_preview(
         db,
@@ -852,7 +855,6 @@ def test_force_cancel_allows_processing_batch(db):
 def test_heartbeat_updated_on_row_change(db):
     """`updated_at` bumps whenever any column changes. The sweep
     depends on this being fresher than `created_at` for live workers."""
-    from datetime import datetime, timedelta
 
     user = seed_user(db, email="hb@example.com", role="admin")
     zip_bytes = _make_zip({"products/USA/LA/X/a.jpg": _tiny_png()})

@@ -221,6 +221,23 @@ def test_startup_requires_current_migration(engine):
                 "'0034_drop_product_validity'"
             )
         )
+    with pytest.raises(RuntimeError, match="migration required"):
+        verify_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE alembic_version SET version_num = '0035_custom_data_tables'"))
+    with pytest.raises(RuntimeError, match="migration required"):
+        verify_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE alembic_version SET version_num = '0036_unified_data_tables'"))
+    with pytest.raises(RuntimeError, match="migration required"):
+        verify_schema(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE alembic_version SET version_num = "
+                "'0037_temporary_product_import'"
+            )
+        )
     verify_schema(engine)
 
 

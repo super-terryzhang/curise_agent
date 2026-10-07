@@ -252,14 +252,15 @@ def test_anomalies_stop_only_the_unsafe_scope(
         assert len(order.anomaly_data["pipeline"]) == 8
 
 
-def test_multiple_exact_candidates_block(db, setup_po, tmp_path):
+def test_same_code_in_another_port_does_not_create_ambiguity(db, setup_po, tmp_path):
+    db.add(Port(id=22, name="东京", code="21", country_id=9))
     db.add(
         Product(
             id=1760,
             code="P1",
             product_name_en="Conflict",
             country_id=9,
-            port_id=21,
+            port_id=22,
             supplier_id=45,
             unit="CA",
             price=10,
@@ -269,8 +270,8 @@ def test_multiple_exact_candidates_block(db, setup_po, tmp_path):
     )
     db.commit()
     result = run(setup_po, tmp_path)
-    assert result["status"] == "needs_review", result
-    assert "EXACT_UNIQUE_MATCH_REQUIRED" in [row["code"] for row in result["issues"]]
+    assert result["status"] == "completed", result
+    assert "EXACT_UNIQUE_MATCH_REQUIRED" not in [row["code"] for row in result["issues"]]
     assert db.query(Inquiry).count() == 1
 
 

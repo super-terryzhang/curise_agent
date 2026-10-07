@@ -39,6 +39,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 # Side-effect imports: register ORM models so create_all sees them
 from agent.storage import models as _agent_storage_models  # noqa: F401, E402
 from domains.document import models as _document_models  # noqa: F401, E402
+from domains.dynamic_data import models as _dynamic_data_models  # noqa: F401, E402
 from domains.identity.models import User  # noqa: E402
 from domains.line import models as _line_models  # noqa: F401, E402
 from domains.masterdata import models as _masterdata_models  # noqa: F401, E402

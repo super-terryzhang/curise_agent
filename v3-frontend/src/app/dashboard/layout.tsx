@@ -44,6 +44,11 @@ import { ChangePasswordDialog } from "@/components/change-password-dialog";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { AssistantProvider } from "@/components/assistant/AssistantProvider";
 import { AssistantSidebar } from "@/components/assistant/AssistantSidebar";
+import {
+  canonicalizeDashboardPath,
+  DATA_TABLES_PATH,
+  isPathWithin,
+} from "@/lib/dashboard-routes";
 
 type RoleName = "superadmin" | "admin" | "finance" | "employee";
 
@@ -59,6 +64,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "文档中心", href: "/dashboard/documents", icon: FolderOpen, roles: ["superadmin", "admin", "finance", "employee"] },
   { label: "订单管理", href: "/dashboard/orders", icon: FileText, roles: ["superadmin", "admin", "finance", "employee"] },
   { label: "数据管理", href: "/dashboard/data", icon: Database, roles: ["superadmin", "admin", "employee"] },
+  { label: "数据表管理", href: DATA_TABLES_PATH, icon: Database, roles: ["superadmin", "admin", "finance", "employee"] },
   { label: "设置中心", href: "/dashboard/settings", icon: Settings, roles: ["superadmin", "admin"] },
   { label: "用户管理", href: "/dashboard/users", icon: Users, roles: ["superadmin"] },
 ];
@@ -81,13 +87,14 @@ function SidebarNav({
   return (
     <nav className="flex flex-col gap-1 px-2">
       {items.map((item) => {
-        const isActive = pathname.startsWith(item.href);
+        const isActive = isPathWithin(pathname, item.href);
         const Icon = item.icon;
 
         const button = (
           <button
             key={item.href}
             onClick={() => onNavigate(item.href)}
+            aria-current={isActive ? "page" : undefined}
             className={cn(
               "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors w-full",
               isActive
@@ -134,6 +141,7 @@ export default function DashboardLayout({
     () => (user ? getVisibleNavItems(user.role) : []),
     [user],
   );
+  const navigationPathname = canonicalizeDashboardPath(pathname);
 
   useEffect(() => {
     setMounted(true);
@@ -159,12 +167,14 @@ export default function DashboardLayout({
       return;
     }
 
-    const isAllowed = visibleItems.some((item) => pathname.startsWith(item.href));
+    const isAllowed = visibleItems.some((item) =>
+      isPathWithin(navigationPathname, item.href),
+    );
     // Also allow /dashboard root
     if (!isAllowed && pathname !== "/dashboard") {
       router.replace(visibleItems[0].href);
     }
-  }, [user, pathname, visibleItems, router]);
+  }, [user, pathname, navigationPathname, visibleItems, router]);
 
   const handleLogout = async () => {
     try {
@@ -223,7 +233,7 @@ export default function DashboardLayout({
         <div className="flex-1 py-4 overflow-y-auto">
           <SidebarNav
             collapsed={collapsed}
-            pathname={pathname}
+            pathname={navigationPathname}
             onNavigate={(href) => router.push(href)}
             items={visibleItems}
           />
@@ -304,7 +314,7 @@ export default function DashboardLayout({
               <div className="py-4">
                 <SidebarNav
                   collapsed={false}
-                  pathname={pathname}
+                  pathname={navigationPathname}
                   onNavigate={(href) => router.push(href)}
                   items={visibleItems}
                 />

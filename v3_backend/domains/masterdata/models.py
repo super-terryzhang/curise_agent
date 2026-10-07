@@ -26,6 +26,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    and_,
+    func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -367,6 +369,24 @@ class ProductPricePeriod(Base):
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+    revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    __mapper_args__ = {"version_id_col": revision}
+
+
+Index(
+    "uq_products_active_normalized_code_port",
+    func.lower(func.trim(Product.code)),
+    Product.port_id,
+    unique=True,
+    postgresql_where=and_(
+        Product.status.is_(True), Product.code.is_not(None), Product.port_id.is_not(None)
+    ),
+    sqlite_where=and_(
+        Product.status.is_(True), Product.code.is_not(None), Product.port_id.is_not(None)
+    ),
+)
 
 
 class ProductImage(Base):

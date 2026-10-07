@@ -1,7 +1,8 @@
 # Local instructions and operating evidence
 CLAUDE.md
 AGENT_JOURNAL.md
-test-orders/
+# Private fixtures may be a directory or a local worktree symlink.
+/test-orders
 outputs/
 reviews/
 deployment/

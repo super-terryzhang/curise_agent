@@ -56,7 +56,7 @@ from io import BytesIO
 from typing import Any
 
 from openpyxl import load_workbook
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from domains.masterdata import price_history
@@ -1394,6 +1394,28 @@ def _ensure_direct_transaction(db: Session) -> None:
             connection.exec_driver_sql("BEGIN")
 
 
+def _stage_identity_codes(
+    db: Session, *, batch_id: int, products: list[Product]
+) -> dict[int, str | None]:
+    """Temporarily free non-deferrable product identities inside one transaction.
+
+    PostgreSQL expression indexes and the equivalent SQLite test index cannot be
+    deferred. A valid A↔B code/port swap therefore needs neutral identities while
+    all rows are applied; rollback restores the original rows if anything fails.
+    """
+    originals = {product.id: product.code for product in products}
+    for product in products:
+        placeholder = f"__batch_{batch_id}_{product.id}__"
+        db.execute(
+            update(Product)
+            .where(Product.id == product.id)
+            .values(code=placeholder)
+            .execution_options(synchronize_session=False)
+        )
+        db.expire(product, ["code"])
+    return originals
+
+
 def commit_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, int]:
     """Apply changes; Excel isolates rows, direct edits save atomically."""
     batch = _load_owned_batch(db, batch_id, user_id)
@@ -1452,6 +1474,28 @@ def commit_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, int]:
         db.rollback()
         raise BatchValidationFailed("产品已变化或仍有问题，请返回编辑并重新检查；本次没有保存")
 
+    staged_identity_before: dict[int, dict[str, Any]] = {}
+    if batch.workflow_version == 3:
+        staged_products = []
+        for row in rows:
+            target = locked_targets.get(row.match_target_id)
+            patch = _direct_basic_values(db, row)
+            if target is not None and any(
+                field in patch and patch[field] != getattr(target, field)
+                for field in ("code", "port_id")
+            ):
+                staged_products.append(target)
+                staged_identity_before[target.id] = {
+                    "code": target.code,
+                    "port_id": target.port_id,
+                }
+        if staged_products:
+            original_codes = _stage_identity_codes(
+                db, batch_id=batch.id, products=staged_products
+            )
+            for product_id, original_code in original_codes.items():
+                staged_identity_before[product_id]["code"] = original_code
+
     created = 0
     updated = 0
     skipped = 0
@@ -1505,7 +1549,18 @@ def commit_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, int]:
                     if target is None:
                         outcome = "skipped"
                     else:
-                        n = _apply_update(db, target, sp, batch.id, user_id)
+                        identity_before = staged_identity_before.get(target.id)
+                        if identity_before is None:
+                            n = _apply_update(db, target, sp, batch.id, user_id)
+                        else:
+                            n = _apply_update(
+                                db,
+                                target,
+                                sp,
+                                batch.id,
+                                user_id,
+                                identity_before=identity_before,
+                            )
                         outcome = "updated" if n > 0 else "skipped"
         except Exception as exc:
             if batch.workflow_version == 3:
@@ -1671,7 +1726,13 @@ def _price_period_errors(
 
 
 def _apply_update(
-    db: Session, target: Product, sp: StagingProduct, batch_id: int, user_id: int
+    db: Session,
+    target: Product,
+    sp: StagingProduct,
+    batch_id: int,
+    user_id: int,
+    *,
+    identity_before: dict[str, Any] | None = None,
 ) -> int:
     """Apply each changed field to a matched Product. Return number of
     fields actually changed (drives the `updated` vs `skipped` counter).
@@ -1684,6 +1745,8 @@ def _apply_update(
     would have to re-type every column every time).
     """
     before_snapshot = price_history.snapshot(target)
+    if identity_before:
+        before_snapshot.update(identity_before)
     written_logs = []
     extras = _canonical_fields(sp)
     canonical_period_intents = _canonical_period_intents(
@@ -1791,12 +1854,20 @@ def _apply_update(
         _log(field, current, new_val.isoformat() if new_val else None)
         n += 1
 
-    for field, value in _direct_basic_values(db, sp).items():
-        before = getattr(target, field)
-        if before != value:
+    direct_values = _direct_basic_values(db, sp)
+    for field, value in direct_values.items():
+        before = (
+            identity_before[field]
+            if identity_before and field in identity_before
+            else getattr(target, field)
+        )
+        if getattr(target, field) != value:
             setattr(target, field, value)
+        if before != value:
             _log(field, before, value)
             n += 1
+    if identity_before and "code" not in direct_values:
+        target.code = identity_before["code"]
 
     period_changed = False
     # Canonical price-period rows mutate the child table directly. A retained
@@ -2267,6 +2338,32 @@ def rollback_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, Any
                                      for log in group if log.action == "update" and log.field_name in IDENTITY_FIELDS}
                          for product_id, group in grouped.items()}
     identity_restores = {product_id: values for product_id, values in identity_restores.items() if values}
+    staged_rollback_codes: dict[int, str | None] = {}
+    if batch.workflow_version == 3 and identity_restores:
+        try:
+            for product_id, values in identity_restores.items():
+                target = db.get(Product, product_id)
+                if target is None:
+                    raise Conflict("产品已不存在，不能自动回滚")
+                validate_identity_restore(db, target, values, identity_restores)
+            staged_products = [
+                db.get(Product, product_id)
+                for product_id, values in identity_restores.items()
+                if {"code", "port_id"}.intersection(values)
+            ]
+            staged_products = [product for product in staged_products if product is not None]
+            if staged_products:
+                staged_rollback_codes = _stage_identity_codes(
+                    db, batch_id=batch.id, products=staged_products
+                )
+        except Exception as exc:
+            db.rollback()
+            return {
+                "deleted": 0,
+                "restored": 0,
+                "skipped": len(logs),
+                "conflicts": [{"product_id": None, "reason": str(exc)}],
+            }
     deleted = restored = skipped = 0
     conflicts = []
     for product_id, group in grouped.items():
@@ -2277,6 +2374,8 @@ def rollback_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, Any
                     raise Conflict("旧批次缺少可靠版本，不能自动回滚，请核对后重新调价")
                 target = price_history.lock_product(db, product_id, max(versions))
                 before = price_history.snapshot(target)
+                if product_id in staged_rollback_codes:
+                    before["code"] = staged_rollback_codes[product_id]
                 creating = any(log.action == "create" for log in group)
                 deleted_periods = db.query(ProductPricePeriod).filter(
                     ProductPricePeriod.product_id == product_id,
@@ -2289,7 +2388,7 @@ def rollback_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, Any
                 if not creating:
                     restore_identity = {log.field_name: _FIELD_RESTORERS[log.field_name](log.old_value)
                                         for log in group if log.action == "update" and log.field_name in IDENTITY_FIELDS}
-                    if restore_identity:
+                    if restore_identity and batch.workflow_version != 3:
                         validate_identity_restore(db, target, restore_identity,
                                                   identity_restores if batch.workflow_version == 3 else None)
                     for log in group:
@@ -2302,6 +2401,8 @@ def rollback_batch(db: Session, *, batch_id: int, user_id: int) -> dict[str, Any
                         if log.action != "update" or log.field_name not in _FIELD_RESTORERS:
                             raise Conflict("日志字段无法完整恢复，请人工核对")
                         setattr(target, log.field_name, _FIELD_RESTORERS[log.field_name](log.old_value))
+                    if product_id in staged_rollback_codes and "code" not in restore_identity:
+                        target.code = staged_rollback_codes[product_id]
                     if not canonical_period_logs and batch.workflow_version != 3:
                         sync_compatibility_periods(
                             db,

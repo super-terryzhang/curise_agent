@@ -3,6 +3,7 @@ import {
   Calculator,
   FilePenLine,
   FileSpreadsheet,
+  Database,
   Images,
   type LucideIcon,
 } from "lucide-react";
@@ -17,9 +18,20 @@ export interface WorkbenchModule {
   icon: LucideIcon;
   roles: WorkbenchRole[];
   status: "available" | "planned";
+  temporary?: boolean;
 }
 
 export const WORKBENCH_MODULES: WorkbenchModule[] = [
+  {
+    key: "database-setup",
+    title: "新数据库产品准备",
+    description: "按当前字段生成模板，整批检查并导入产品资料与价格区间。",
+    href: "/dashboard/workbench/database-setup",
+    icon: Database,
+    roles: ["superadmin", "admin"],
+    status: "available",
+    temporary: true,
+  },
   {
     key: "product-upload",
     title: "产品数据上传",
@@ -68,7 +80,10 @@ export const WORKBENCH_MODULES: WorkbenchModule[] = [
 ];
 
 export function visibleWorkbenchModules(role: string): WorkbenchModule[] {
-  return WORKBENCH_MODULES.filter((module) =>
-    module.roles.includes(role as WorkbenchRole),
+  return WORKBENCH_MODULES.filter(
+    (module) =>
+      module.roles.includes(role as WorkbenchRole) &&
+      (!module.temporary ||
+        process.env.NEXT_PUBLIC_TEMP_DATABASE_SETUP_ENABLED === "true"),
   );
 }

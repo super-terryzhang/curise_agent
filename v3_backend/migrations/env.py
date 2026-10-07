@@ -6,7 +6,6 @@ Alembic sees its tables in `Base.metadata` and can autogenerate migrations.
 
 from __future__ import annotations
 
-import importlib
 from logging.config import fileConfig
 
 from alembic import context
@@ -15,6 +14,7 @@ from sqlalchemy import engine_from_config, pool
 # v3 imports
 from infrastructure.config import settings
 from infrastructure.db.base import Base
+from infrastructure.db.model_registry import import_all_models
 
 config = context.config
 
@@ -22,30 +22,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 
-def _import_all_models() -> None:
-    """Import every domain's models so they register with `Base.metadata`.
-
-    Every nested package that defines its OWN tables (not just FK-linked
-    rows) must be listed here. Forgetting one means autogen won't see its
-    tables and a future migration silently skips it — which is exactly
-    how `v3_upload_batches` slipped into prod without a migration before
-    0010 backfilled it.
-    """
-    for module in (
-        "domains.identity.models",
-        "domains.masterdata.models",
-        "domains.masterdata.images.bulk_models",
-        "domains.masterdata.upload.models",  # added 0010_upload_pipeline
-        "domains.document.models",
-        "domains.orders.models",
-        "domains.settings.models",
-        "domains.inquiry.models",
-        "domains.line.models",
-    ):
-        importlib.import_module(module)
-
-
-_import_all_models()
+import_all_models()
 
 target_metadata = Base.metadata
 

@@ -30,4 +30,15 @@ describe("workbench module permissions", () => {
       status: "available",
     });
   });
+
+  it("shows the temporary database setup only to admins in the isolated frontend", () => {
+    process.env.NEXT_PUBLIC_TEMP_DATABASE_SETUP_ENABLED = "true";
+    expect(visibleWorkbenchModules("admin").map((module) => module.key)).toContain(
+      "database-setup",
+    );
+    expect(visibleWorkbenchModules("employee").map((module) => module.key)).not.toContain(
+      "database-setup",
+    );
+    delete process.env.NEXT_PUBLIC_TEMP_DATABASE_SETUP_ENABLED;
+  });
 });

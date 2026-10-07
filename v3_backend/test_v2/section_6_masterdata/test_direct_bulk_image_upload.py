@@ -658,12 +658,15 @@ def test_filename_auto_match_is_limited_to_selected_location(client, db):
         country_id=country.id,
         port_id=port.id,
     )
+    hidden_port = Port(name="Hidden port", country_id=country.id)
+    db.add(hidden_port)
+    db.commit()
     seed_product(
         db,
         code=first.code,
         name="Hidden by current candidate list",
         country_id=country.id,
-        port_id=port.id,
+        port_id=hidden_port.id,
     )
     batch_id = client.post("/api/data/bulk-images/direct", headers=headers).json()["id"]
     uploaded = client.post(
