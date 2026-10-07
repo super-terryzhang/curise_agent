@@ -61,16 +61,17 @@ function IssueList({ rows }: { rows: ImportRowsPage }) {
     ...rows.items.flatMap((row) => row.issues.map((issue) => ({ ...issue, sheet: issue.sheet || (row.sheet === "products" ? "产品资料" : "价格记录"), row: issue.row || row.row }))),
   ];
   if (!issues.length)
-    return <div className="rounded-md border bg-emerald-50/60 p-4 text-sm text-emerald-800">全部检查通过，可以进入核对。</div>;
+    return <div className="rounded-md border bg-muted/20 p-4 text-sm">{rows.counts.block > 0 ? "本页没有问题；其他页存在阻止项，请翻页检查。" : rows.counts.warning > 0 ? "本页没有问题；其他页有提醒，请核对后继续。" : "全部检查通过，可以进入核对。"}</div>;
   return (
     <div className="overflow-hidden rounded-md border bg-background">
-      <div className="grid grid-cols-[130px_70px_130px_1fr] border-b bg-muted/40 px-4 py-2 text-[11px] font-medium text-muted-foreground">
-        <span>工作表</span><span>行</span><span>字段</span><span>原因</span>
+      <div className="grid grid-cols-[100px_70px_100px_80px_1fr] border-b bg-muted/40 px-4 py-2 text-[11px] font-medium text-muted-foreground">
+        <span>工作表</span><span>Excel 行</span><span>字段</span><span>结果</span><span>原因</span>
       </div>
       {issues.map((issue, index) => (
-        <div key={`${issue.code}-${index}`} className="grid grid-cols-[130px_70px_130px_1fr] border-b px-4 py-3 text-sm last:border-0">
+        <div key={`${issue.code}-${index}`} className="grid grid-cols-[100px_70px_100px_80px_1fr] border-b px-4 py-3 text-sm last:border-0">
           <span>{issue.sheet || "文件"}</span><span>{issue.row || "—"}</span>
           <span>{issue.field || "—"}</span>
+          <span>{issue.severity === "block" ? "需修改" : "提醒"}</span>
           <span className={issue.severity === "block" ? "text-destructive" : "text-amber-700"}>{issue.message}</span>
         </div>
       ))}
@@ -258,7 +259,7 @@ export default function DatabaseSetupPage() {
   const commit = async () => {
     if (!batch) return;
     setBusy(true); setError(null);
-    try { setResult(await commitImportWithRecovery(batch.id)); setStep(5); await loadProducts(""); }
+    try { setResult(await commitImportWithRecovery(batch.id)); setStep(5); await loadProducts(""); setStatus(await getDatabaseSetupStatus()); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "无法确认提交结果"); }
     finally { setBusy(false); }
   };
@@ -273,7 +274,7 @@ export default function DatabaseSetupPage() {
     if (!batch) return;
     if (!window.confirm("确认回滚本批次？本批次创建的数据将归档，更新的数据将恢复到导入前。")) return;
     setBusy(true); setError(null);
-    try { await rollbackDatabaseImport(batch.id); setBatch(null); setRows(null); setResult(null); setFile(null); setStep(1); await loadProducts(""); }
+    try { await rollbackDatabaseImport(batch.id); setBatch(null); setRows(null); setResult(null); setFile(null); setStep(1); await loadProducts(""); setStatus(await getDatabaseSetupStatus()); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "回滚失败"); }
     finally { setBusy(false); }
   };
