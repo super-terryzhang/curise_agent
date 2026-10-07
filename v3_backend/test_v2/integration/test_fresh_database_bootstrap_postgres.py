@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -59,6 +60,16 @@ def test_fresh_install_audit_refusal_and_pollution_detection(disposable_database
         )
         assert result["alembic_head"] == "0037_temporary_product_import"
         assert result["model_tables"] == 54
+
+        with engine.connect() as connection:
+            temporary_password_expires_at = connection.scalar(
+                sa.text(
+                    "SELECT temporary_password_expires_at FROM users "
+                    "WHERE email = 'clean-admin@example.test'"
+                )
+            )
+        assert temporary_password_expires_at is not None
+        assert temporary_password_expires_at > datetime.now(UTC).replace(tzinfo=None)
 
         audit = audit_database(
             engine,

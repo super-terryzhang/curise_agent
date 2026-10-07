@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import os
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
 
@@ -20,6 +20,7 @@ from sqlalchemy import inspect
 from sqlalchemy.engine import URL, Engine, make_url
 from sqlalchemy.orm import Session
 
+from infrastructure.config import settings
 from infrastructure.db.base import Base
 from infrastructure.db.model_registry import import_all_models
 
@@ -177,6 +178,8 @@ def bootstrap_database(
                     is_active=True,
                     is_superuser=True,
                     is_default_password=True,
+                    temporary_password_expires_at=now
+                    + timedelta(hours=settings.TEMPORARY_PASSWORD_HOURS),
                     created_at=now,
                     updated_at=now,
                     failed_login_attempts=0,
