@@ -7,6 +7,7 @@ import importlib
 MODEL_MODULES = (
     "domains.identity.models",
     "domains.dynamic_data.models",
+    "domains.product_imports.models",
     "domains.masterdata.models",
     "domains.masterdata.images.bulk_models",
     "domains.masterdata.upload.models",
