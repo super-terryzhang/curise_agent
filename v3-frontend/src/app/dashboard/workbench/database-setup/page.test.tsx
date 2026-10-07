@@ -50,6 +50,8 @@ describe("temporary database setup workflow", () => {
     expect(html).toContain("下载模板");
     expect(html).toContain("上传检查");
     expect(html).toContain("配置产品字段");
+    expect(html).toContain("下载最新模板");
+    expect(html).toContain("上传已填写 Excel");
   });
 
   it("shows sheet row field and reason while blockers disable confirmation", async () => {

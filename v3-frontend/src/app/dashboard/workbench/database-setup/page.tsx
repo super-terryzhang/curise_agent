@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Download, FileSpreadsheet, Loader2, RotateCcw } from "lucide-react";
+import { ArrowLeft, Download, FileSpreadsheet, Loader2, RotateCcw, Upload } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -134,13 +134,25 @@ export function DatabaseSetupView(props: DatabaseSetupViewProps) {
           <div className="rounded-md border border-destructive/30 bg-destructive/5 p-5 text-sm text-destructive">临时环境未连接到指定的新数据库，导入操作已关闭。</div>
         ) : step === 1 ? (
           <>
-            <div><h2 className="text-base font-semibold">新数据库准备状态</h2><p className="mt-1 text-xs text-muted-foreground">这里只整理新数据库，不影响当前生产系统。</p></div>
+            <div><h2 className="text-base font-semibold">从这里开始</h2><p className="mt-1 text-xs text-muted-foreground">第一次使用先下载模板；已经填写好文件时，可直接上传检查。</p></div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button className="rounded-md border bg-background p-5 text-left hover:border-primary/40" onClick={() => props.onStep(2)}>
+                <Download className="mb-3 h-5 w-5" />
+                <div className="text-sm font-semibold">下载最新模板</div>
+                <div className="mt-1 text-xs text-muted-foreground">选择空白模板，或下载数据库现有内容。</div>
+              </button>
+              <button className="rounded-md border border-primary/40 bg-primary/[0.03] p-5 text-left hover:bg-primary/[0.06]" onClick={() => props.onStep(3)}>
+                <Upload className="mb-3 h-5 w-5 text-primary" />
+                <div className="text-sm font-semibold text-primary">上传已填写 Excel</div>
+                <div className="mt-1 text-xs text-muted-foreground">选择文件后立即执行程序检查，不会直接写入数据库。</div>
+              </button>
+            </div>
+            <div><h3 className="text-sm font-semibold">新数据库准备状态</h3><p className="mt-1 text-xs text-muted-foreground">这里只整理新数据库，不影响当前生产系统。</p></div>
             <div className="grid gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-5">
               {[["数据库", status.database_name], ["字段版本", status.schema_version ?? "—"], ["启用字段", status.field_count], ["产品", status.product_count], ["价格区间", status.price_period_count]].map(([label, value]) => <div key={label} className="bg-background px-4 py-3"><div className="text-[11px] text-muted-foreground">{label}</div><div className="mt-1 text-sm font-semibold">{value}</div></div>)}
             </div>
-            <div className="flex items-center justify-between border-t pt-4">
+            <div className="border-t pt-4">
               <Link className="text-sm font-medium text-primary hover:underline" href="/dashboard/settings/data-tables">配置产品字段</Link>
-              <Button onClick={() => props.onStep(2)}>开始导入</Button>
             </div>
           </>
         ) : step === 2 ? (
